@@ -29,11 +29,11 @@ export const VIEW_MODE_COUNT = 5;
 /**
  * Outil du clic gauche : 0 = injecter (fluide + impulsion directionnelle),
  * 1 = gommer la densité, 2 = tourbillon (vélocité tangentielle),
- * 3 = souffle (vélocité radiale sortante). La pression ne s'édite pas : elle est
- * entièrement re-résolue à chaque frame par la projection.
+ * 3 = souffle (jet directionnel), 4 = feu (injection de température + fumée).
+ * La pression ne s'édite pas : elle est entièrement re-résolue à chaque frame.
  */
-export type ToolId = 0 | 1 | 2 | 3;
-export const TOOL_COUNT = 4;
+export type ToolId = 0 | 1 | 2 | 3 | 4;
+export const TOOL_COUNT = 5;
 
 /**
  * État du pointeur, en coordonnées normalisées [0,1] relatives à la cible de rendu.

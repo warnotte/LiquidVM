@@ -63,6 +63,8 @@ class SelftestDriver {
     p.y = y;
     p.down = frameIndex > 55;
     this.frame.selectedFluid = (Math.floor(frameIndex / 60) % 3) as FluidId;
+    // Après la frame 160 : l'orbite passe à l'outil feu (température + fumée).
+    this.frame.tool = frameIndex >= 160 ? 4 : 0;
     // Exerce les trois modes : parois → périodique (wrap visible) → ouvert (le fluide
     // qui atteint un bord disparaît). `&hold=` fige un mode pour la bisection.
     this.frame.boundaryMode = (this.holdBoundary ??

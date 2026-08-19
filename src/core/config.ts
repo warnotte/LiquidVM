@@ -146,4 +146,11 @@ export const SIM_DEFAULTS = {
   debugVelocityScale: 300 * FORCE_SCALE,
   /** Intensité du bloom ajouté à la scène (0 = désactivé). */
   bloomStrength: 0.9,
+  /**
+   * Feu : la température vit dans le canal alpha de la texture de densités (advectée
+   * MacCormack comme les fluides). Elle refroidit vite (les flammes sont des langues
+   * transitoires) et pousse fort vers le haut — la valeur est en 1/s, la poussée est
+   * mise à l'échelle de la grille dans forces.wgsl.
+   */
+  fireCooling: 1.1,
 } as const;

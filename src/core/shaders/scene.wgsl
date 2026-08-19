@@ -66,7 +66,8 @@ fn fs_main(frag: VSOut) -> @location(0) vec4f {
   var col: vec3f;
   switch view {
     case 0u: {
-      let den = textureSampleLevel(density_tex, lin, frag.uv, 0.0).xyz;
+      let den4 = textureSampleLevel(density_tex, lin, frag.uv, 0.0);
+      let den = den4.xyz;
       col = R.color0.rgb * den.x + R.color1.rgb * den.y + R.color2.rgb * den.z;
       // Éclairage : gradient central de la densité totale → pseudo-normale.
       let e = 1.0 / vec2f(textureDimensions(density_tex));
@@ -79,6 +80,10 @@ fn fs_main(frag: VSOut) -> @location(0) vec4f {
       let presence = clamp(den.x + den.y + den.z, 0.0, 1.0);
       // Valeurs artistiques : 55 % d'ambiant pour ne pas éteindre les zones à l'ombre.
       col = col * (0.55 + 0.45 * diffuse) + vec3f(1.0, 0.98, 0.92) * (spec * 0.4 * presence);
+      // Feu : rampe de corps noir sur la température (.a) — rouge sombre → orange →
+      // blanc chaud. Les valeurs HDR > 1 nourrissent le bloom : les flammes rayonnent.
+      let heat = clamp(den4.w, 0.0, 1.7);
+      col += vec3f(heat * 1.6, heat * heat * 0.9, heat * heat * heat * 0.42);
     }
     case 1u: {
       // Grille MAC : reconstruit le vecteur au centre de l'écran-texel en échantillonnant

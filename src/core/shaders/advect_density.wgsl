@@ -1,20 +1,21 @@
-// Advection MacCormack des trois champs de densité (packés en .rgb), sur leur PROPRE
-// grille (« dye »), plus fine que celle de la vélocité : la résolution visible est
-// celle-ci, le coût de la projection reste celui de la grille de vélocité. La vélocité
-// est échantillonnée en coordonnées normalisées — les deux grilles n'ont pas à coïncider.
-// Même schéma prédicteur/correcteur clampé que advect_velocity.wgsl, plus la dissipation
-// par fluide et l'injection souris (splat gaussien, en normalisé). Les murs (grille sim)
-// ne contiennent jamais de densité ; en mode ouvert, ce qui sort du domaine disparaît.
+// Advection MacCormack des champs transportés par le fluide, sur leur PROPRE grille
+// (« dye »), plus fine que celle de la vélocité : .rgb = les trois densités de fluides,
+// .a = la TEMPÉRATURE du feu — advectée exactement comme les densités, mais avec son
+// propre taux de refroidissement (dissipation.w) et sa propre injection (outil feu).
+// La vélocité est échantillonnée en coordonnées normalisées — les grilles n'ont pas à
+// coïncider. Même schéma prédicteur/correcteur clampé que advect_velocity.wgsl.
+// Les murs (grille sim) ne contiennent ni densité ni chaleur ; en mode ouvert la bande
+// éponge absorbe tout aux bords.
 
 // Doit rester identique à SimUniformWriter (core/uniforms.ts).
 struct SimParams {
   grid: vec4f,        // xy: taille de grille vélocité (texels), zw: 1/taille
   pointer: vec4f,     // xy: position pointeur (texels sim), zw: delta du sous-pas (texels)
   impulse: vec4f,     // x: dt (s), y: bouton (0|1), z: fluide sélectionné, w: rayon splat (texels)
-  misc: vec4f,        // x: dissipation vélocité (1/s), y: force splat, z: débit densité (1/s)
-  dissipation: vec4f, // xyz: dissipation de densité par fluide (1/s)
-  buoyancy: vec4f,    // xyz: poussée par fluide (texels/s², positif = monte)
-  extra: vec4f,       // x: frontières (0 parois, 1 périodique, 2 ouvert), y: pinceau mur, z: vorticité
+  misc: vec4f,        // x: dissipation vélocité (1/s), y: force splat, z: débit densité (1/s), w: outil
+  dissipation: vec4f, // xyz: dissipation de densité par fluide (1/s), w: refroidissement du feu (1/s)
+  buoyancy: vec4f,    // xyz: poussée par fluide (texels/s²), w: temps simulé (s)
+  extra: vec4f,       // x: frontières (0 parois, 1 périodique, 2 ouvert), y: pinceau mur, z: vorticité, w: MacCormack
   dye: vec4f,         // xy: taille de la grille de densités, zw: 1/taille
 }
 
@@ -28,8 +29,7 @@ struct SimParams {
 @group(1) @binding(4) var dst_den: texture_storage_2d<rgba16float, write>;
 @group(1) @binding(5) var obstacle: texture_2d<f32>;
 
-// Bande éponge du mode ouvert (voir advect_velocity.wgsl) : la densité qui atteint
-// les bords est absorbée — visuellement, elle « sort » du monde. Position en texels sim.
+// Bande éponge du mode ouvert (voir advect_velocity.wgsl). Position en texels sim.
 fn sponge(pos: vec2f, dt: f32) -> f32 {
   if (P.extra.x < 1.5) {
     return 1.0;
@@ -48,7 +48,6 @@ fn velocity_at(uv: vec2f) -> vec2f {
   return vec2f(u, v);
 }
 
-// Coordonnée entière bornée : wrap en périodique, clamp sinon.
 fn bound_coord(q: vec2i, size: vec2i) -> vec2i {
   if (P.extra.x > 0.5 && P.extra.x < 1.5) {
     return ((q % size) + size) % size;
@@ -67,8 +66,8 @@ fn predict(@builtin(global_invocation_id) gid: vec3u) {
   // Vélocité en texels sim/s → déplacement normalisé = v·dt / taille de grille sim.
   let vel = velocity_at(uv);
   let back_uv = uv - vel * P.impulse.x * P.grid.zw;
-  let den = textureSampleLevel(src_den, lin, back_uv, 0.0).xyz;
-  textureStore(dst_hat, vec2i(gid.xy), vec4f(den, 0.0));
+  let den = textureSampleLevel(src_den, lin, back_uv, 0.0);
+  textureStore(dst_hat, vec2i(gid.xy), den);
 }
 
 // Synchronisé avec WORKGROUP_SIZE (core/config.ts).
@@ -89,28 +88,30 @@ fn correct(@builtin(global_invocation_id) gid: vec3u) {
   let vel = velocity_at(uv);
   let back_uv = uv - vel * P.impulse.x * P.grid.zw;
   let fwd_uv = uv + vel * P.impulse.x * P.grid.zw;
-  let hat = textureLoad(hat_tex, c, 0).xyz;
-  let d0 = textureLoad(src_den, c, 0).xyz;
+  let hat = textureLoad(hat_tex, c, 0);
+  let d0 = textureLoad(src_den, c, 0);
 
-  var den: vec3f;
+  var den: vec4f;
   if (P.extra.w < 0.5) {
     den = hat; // MacCormack désactivé : premier ordre
   } else {
-    let back_track = textureSampleLevel(hat_tex, lin, fwd_uv, 0.0).xyz;
+    let back_track = textureSampleLevel(hat_tex, lin, fwd_uv, 0.0);
     den = hat + 0.5 * (d0 - back_track);
     // Clamp aux extrema du stencil bilinéaire du champ d'origine à la position remontée.
     let isize = vec2i(P.dye.xy);
     let g0 = vec2i(floor(back_uv * P.dye.xy - vec2f(0.5)));
-    let s00 = textureLoad(src_den, bound_coord(g0, isize), 0).xyz;
-    let s10 = textureLoad(src_den, bound_coord(g0 + vec2i(1, 0), isize), 0).xyz;
-    let s01 = textureLoad(src_den, bound_coord(g0 + vec2i(0, 1), isize), 0).xyz;
-    let s11 = textureLoad(src_den, bound_coord(g0 + vec2i(1, 1), isize), 0).xyz;
+    let s00 = textureLoad(src_den, bound_coord(g0, isize), 0);
+    let s10 = textureLoad(src_den, bound_coord(g0 + vec2i(1, 0), isize), 0);
+    let s01 = textureLoad(src_den, bound_coord(g0 + vec2i(0, 1), isize), 0);
+    let s11 = textureLoad(src_den, bound_coord(g0 + vec2i(1, 1), isize), 0);
     den = clamp(den, min(min(s00, s10), min(s01, s11)), max(max(s00, s10), max(s01, s11)));
   }
-  den = den / (vec3f(1.0) + P.dissipation.xyz * P.impulse.x);
+  // Dissipation par fluide (.xyz) et refroidissement du feu (.w).
+  den = den / (vec4f(1.0) + P.dissipation * P.impulse.x);
 
-  // Outils souris sur la densité, en normalisé (indépendant des résolutions).
-  // Outil 0 : injecte le fluide sélectionné ; outil 1 : gomme les trois champs.
+  // Outils souris, en normalisé (indépendant des résolutions). Outil 0 : injecte le
+  // fluide sélectionné ; outil 1 : gomme tout (chaleur comprise) ; outil 4 : feu —
+  // injecte de la température et un voile de fumée (canal 2) qui la matérialise.
   if (P.impulse.y > 0.5) {
     let tool = u32(P.misc.w + 0.5);
     let off = uv - P.pointer.xy * P.grid.zw;
@@ -119,14 +120,19 @@ fn correct(@builtin(global_invocation_id) gid: vec3u) {
     if (tool == 0u) {
       var inject = vec3f(0.0);
       inject[min(u32(P.impulse.z), 2u)] = P.misc.z * P.impulse.x * falloff;
-      den += inject;
+      den = vec4f(den.xyz + inject, den.w);
     } else if (tool == 1u) {
       den = den / (1.0 + 12.0 * falloff * P.impulse.x);
+    } else if (tool == 4u) {
+      // Débits fixes (valeurs artistiques) : ~7 unités de chaleur/s au centre du splat,
+      // plus un voile de fumée qui donne un corps à la flamme.
+      den.w += 7.0 * P.impulse.x * falloff;
+      den.z += 0.5 * P.impulse.x * falloff;
     }
   }
-  // Éponge du mode ouvert, puis bornes : ≥ 0 (la correction peut sous-osciller)
-  // et plage confortable du float16.
+  // Éponge du mode ouvert, puis bornes : ≥ 0 (la correction peut sous-osciller),
+  // densités ≤ 8 (float16 confortable), température ≤ 4.
   den = den * sponge(uv * P.grid.xy, P.impulse.x);
-  den = clamp(den, vec3f(0.0), vec3f(8.0));
-  textureStore(dst_den, c, vec4f(den, 0.0));
+  den = clamp(den, vec4f(0.0), vec4f(8.0, 8.0, 8.0, 4.0));
+  textureStore(dst_den, c, den);
 }

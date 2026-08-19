@@ -79,8 +79,11 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
 
   // Buoyancy sur la face v : densité échantillonnée à la position de la face
   // (grilles découplées : conversion physique → uv par la taille de grille sim).
-  let den = textureSampleLevel(src_den, lin, pv * P.grid.zw, 0.0).xyz;
-  vel.y -= dot(den, P.buoyancy.xyz) * P.impulse.x;
+  // La température (canal .a) pousse fort vers le haut — c'est le moteur du feu ;
+  // sa poussée est mise à l'échelle de la grille comme les autres forces absolues.
+  let den = textureSampleLevel(src_den, lin, pv * P.grid.zw, 0.0);
+  let fire_buoyancy = 220.0 * (P.grid.x / 512.0);
+  vel.y -= (dot(den.xyz, P.buoyancy.xyz) + den.w * fire_buoyancy) * P.impulse.x;
 
   // Impulsion souris, par composante à sa propre position. L'outil (misc.w) choisit
   // le champ de force : 0 = drag directionnel, 2 = tourbillon (tangentiel),
@@ -88,7 +91,8 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
   if (P.impulse.y > 0.5) {
     let tool = u32(P.misc.w + 0.5);
     switch tool {
-      case 0u: {
+      case 0u, 4u: {
+        // Injection et feu partagent le drag directionnel (contrôle au geste).
         vel.x += P.pointer.z * P.misc.y * splat(pu);
         vel.y += P.pointer.w * P.misc.y * splat(pv);
       }

@@ -53,11 +53,12 @@ export class SimUniformWriter {
     d[o + 13] = input.params.splatForce;
     d[o + 14] = input.params.splatDensity;
     d[o + 15] = input.tool;
-    // dissipation: vec4f — xyz: dissipation de densité par fluide (1/s)
+    // dissipation: vec4f — xyz: dissipation de densité par fluide (1/s),
+    //                     w: refroidissement de la température du feu (1/s)
     d[o + 16] = FLUIDS[0].dissipation;
     d[o + 17] = FLUIDS[1].dissipation;
     d[o + 18] = FLUIDS[2].dissipation;
-    d[o + 19] = 0;
+    d[o + 19] = SIM_DEFAULTS.fireCooling;
     // buoyancy: vec4f — xyz: poussée par fluide (texels/s²), w: temps simulé (s) —
     // graine du hash de respawn des particules.
     d[o + 20] = FLUIDS[0].buoyancy;

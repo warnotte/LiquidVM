@@ -59,11 +59,16 @@ fn vs_main(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> 
   out.pos = vec4f(posn.x * 2.0 - 1.0, 1.0 - posn.y * 2.0, 0.0, 1.0);
 
   // Teinte du fluide local + pointe de blanc ; luminosité ∝ vitesse (normalisée par
-  // l'échelle de la vue debug vélocité, déjà proportionnelle à la grille).
-  let den = textureSampleLevel(density_tex, lin, p.posvel.xy, 0.0).xyz;
+  // l'échelle de la vue debug vélocité, déjà proportionnelle à la grille). Dans les
+  // zones chaudes (température .a), les particules deviennent des ÉTINCELLES : la
+  // rampe de corps noir domine leur couleur et le bloom fait le reste.
+  let den = textureSampleLevel(density_tex, lin, p.posvel.xy, 0.0);
   let tint = R.color0.rgb * den.x + R.color1.rgb * den.y + R.color2.rgb * den.z;
+  let heat = clamp(den.w, 0.0, 1.7);
+  let spark = vec3f(heat * 1.6, heat * heat * 0.9, heat * heat * heat * 0.42);
   let energy = clamp(speed / (R.tone.z * 0.002), 0.08, 1.0);
-  out.color = (tint * 0.7 + vec3f(0.30, 0.32, 0.36)) * (energy * fade * 0.14 * R.color0.w);
+  out.color = (tint * 0.7 + spark * 2.5 + vec3f(0.30, 0.32, 0.36)) *
+    (energy * fade * 0.14 * R.color0.w);
   return out;
 }
 
