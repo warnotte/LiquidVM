@@ -29,7 +29,7 @@ export class SimUniformWriter {
    * Remplit le slot d'un sous-pas. Le déplacement du pointeur est fractionné entre les
    * sous-pas par l'appelant (via `deltaScale`) pour que l'impulsion totale soit conservée.
    */
-  fillSlot(slot: number, dt: number, input: FrameInput, deltaScale: number): void {
+  fillSlot(slot: number, dt: number, input: FrameInput, deltaScale: number, time: number): void {
     const o = slot * SLOT_FLOATS;
     const d = this.data;
     // grid: vec4f — xy: taille de grille, zw: 1/taille
@@ -58,11 +58,12 @@ export class SimUniformWriter {
     d[o + 17] = FLUIDS[1].dissipation;
     d[o + 18] = FLUIDS[2].dissipation;
     d[o + 19] = 0;
-    // buoyancy: vec4f — xyz: poussée par fluide (texels/s², positif = monte)
+    // buoyancy: vec4f — xyz: poussée par fluide (texels/s²), w: temps simulé (s) —
+    // graine du hash de respawn des particules.
     d[o + 20] = FLUIDS[0].buoyancy;
     d[o + 21] = FLUIDS[1].buoyancy;
     d[o + 22] = FLUIDS[2].buoyancy;
-    d[o + 23] = 0;
+    d[o + 23] = time;
     // extra: vec4f — x: frontières (0 parois, 1 périodique, 2 ouvert),
     //               y: pinceau mur (-1|0|1), z: force de vorticité, w: MacCormack (0|1)
     d[o + 24] = input.boundaryMode;
@@ -98,6 +99,8 @@ export function renderUniformData(): Float32Array<ArrayBuffer> {
     d[i * 4 + 2] = c[2];
     d[i * 4 + 3] = 0;
   }
+  // color0.w = intensité des particules (réglage à chaud).
+  d[3] = 1;
   // tone: x = exposition, y = vue (ViewMode), z = échelle debug vélocité, w = force du bloom
   d[12] = SIM_DEFAULTS.exposure;
   d[RENDER_VIEW_MODE_INDEX] = 0;

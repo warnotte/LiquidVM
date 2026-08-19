@@ -60,6 +60,8 @@ export class InputController {
       macCormack: true,
       multigrid: true,
       vcycles: SIM_DEFAULTS.vcycles,
+      particles: true,
+      particleIntensity: 1,
     },
     render: {
       exposure: SIM_DEFAULTS.exposure,

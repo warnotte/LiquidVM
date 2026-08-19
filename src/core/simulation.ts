@@ -32,12 +32,14 @@ import {
   MG_COARSE_SMOOTH,
   MG_POST_SMOOTH,
   MG_PRE_SMOOTH,
+  PARTICLE_DISPATCH,
   SIM_DEFAULTS,
 } from './config';
 import { createAdvectPasses, type AdvectPasses } from './passes/advect';
 import { createClearPasses, type ClearPasses } from './passes/clear';
 import { createForcesPass, type ForcesPass } from './passes/forces';
 import { createMultigridPasses, type MultigridPasses } from './passes/multigrid';
+import { createParticlesPass, type ParticlesPass } from './passes/particles';
 import { createProjectPasses, type ProjectPasses } from './passes/project';
 import { createVorticityPasses, type VorticityPasses } from './passes/vorticity';
 import { createWallsPass, type WallsPass } from './passes/walls';
@@ -84,6 +86,9 @@ export class FluidSim {
   private lastBloom: number = SIM_DEFAULTS.bloomStrength;
   /** Mode de frontières de la frame précédente — un changement purge la pression. */
   private lastBoundaryMode: BoundaryMode = 0;
+  private lastParticleIntensity = 1;
+  /** Temps simulé cumulé (s) — graine du hash de respawn des particules. */
+  private simTime = 0;
 
   /** Index de pression courant par niveau multigrid (tableau réutilisé, zéro alloc). */
   private readonly mgIdx: number[];
@@ -96,6 +101,7 @@ export class FluidSim {
     private readonly vorticity: VorticityPasses,
     private readonly project: ProjectPasses,
     private readonly mg: MultigridPasses,
+    private readonly particles: ParticlesPass,
     private readonly walls: WallsPass,
     private readonly clear: ClearPasses,
     private readonly renderer: CompositeRenderer,
@@ -114,13 +120,14 @@ export class FluidSim {
     return withValidation(device, 'init FluidSim', async () => {
       const layouts = createLayouts(device);
       const res = createResources(device);
-      const [advect, forces, vorticity, project, mg, wallsPass, clear, renderer] =
+      const [advect, forces, vorticity, project, mg, particles, wallsPass, clear, renderer] =
         await Promise.all([
           createAdvectPasses(device, layouts, res),
           createForcesPass(device, layouts, res),
           createVorticityPasses(device, layouts, res),
           createProjectPasses(device, layouts, res),
           createMultigridPasses(device, layouts, res),
+          createParticlesPass(device, layouts, res),
           createWallsPass(device, layouts, res),
           createClearPasses(device, layouts, res),
           CompositeRenderer.create(device, layouts, res, opts.targetFormat),
@@ -151,6 +158,7 @@ export class FluidSim {
         vorticity,
         project,
         mg,
+        particles,
         wallsPass,
         clear,
         renderer,
@@ -168,8 +176,10 @@ export class FluidSim {
     if (
       input.viewMode !== this.lastViewMode ||
       input.render.exposure !== this.lastExposure ||
-      input.render.bloomStrength !== this.lastBloom
+      input.render.bloomStrength !== this.lastBloom ||
+      input.params.particleIntensity !== this.lastParticleIntensity
     ) {
+      this.renderData[3] = input.params.particleIntensity;
       this.renderData[12] = input.render.exposure;
       this.renderData[RENDER_VIEW_MODE_INDEX] = input.viewMode;
       this.renderData[15] = input.render.bloomStrength;
@@ -177,6 +187,7 @@ export class FluidSim {
       this.lastViewMode = input.viewMode;
       this.lastExposure = input.render.exposure;
       this.lastBloom = input.render.bloomStrength;
+      this.lastParticleIntensity = input.params.particleIntensity;
     }
     // dt réel × facteur de temps, clampé ; au-delà de maxDt la frame est découpée en
     // sous-pas égaux. En pause, `stepOnce` avance d'exactement une frame à 1/60 s.
@@ -199,9 +210,16 @@ export class FluidSim {
     if (slots > 0) {
       const stepDt = substeps > 0 ? dt / substeps : 0;
       for (let s = 0; s < slots; s++) {
-        this.uniforms.fillSlot(s, stepDt, input, substeps > 0 ? 1 / substeps : 1);
+        this.uniforms.fillSlot(
+          s,
+          stepDt,
+          input,
+          substeps > 0 ? 1 / substeps : 1,
+          this.simTime + s * stepDt,
+        );
       }
       this.uniforms.upload(this.device.queue, this.res.simUniforms, slots);
+      this.simTime += substeps * stepDt;
     }
 
     // Changement de mode de frontières : le warm start de pression du mode précédent
@@ -256,6 +274,7 @@ export class FluidSim {
       this.velIdx,
       this.pressIdx,
       input.viewMode,
+      input.params.particles,
     );
 
     this.submitList[0] = encoder.finish();
@@ -355,6 +374,13 @@ export class FluidSim {
     cp.setBindGroup(1, this.advect.denCorrectBind[this.velIdx][this.denIdx]);
     cp.dispatchWorkgroups(nd, nd);
     this.denIdx = flip(this.denIdx);
+
+    // 8. Particules traceuses : advection RK2 sur la vélocité projetée (in-place).
+    if (input.params.particles) {
+      cp.setPipeline(this.particles.pipeline);
+      cp.setBindGroup(1, this.particles.bind[this.velIdx]);
+      cp.dispatchWorkgroups(PARTICLE_DISPATCH);
+    }
   }
 
   /**

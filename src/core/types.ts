@@ -73,6 +73,10 @@ export interface SimTuning {
   multigrid: boolean;
   /** Nombre de V-cycles par sous-pas quand le multigrid est actif. */
   vcycles: number;
+  /** Particules traceuses affichées et advectées. */
+  particles: boolean;
+  /** Intensité lumineuse des traînées de particules (0 = invisibles). */
+  particleIntensity: number;
 }
 
 /** Paramètres de rendu réglables à chaud. */

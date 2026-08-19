@@ -11,6 +11,7 @@ import {
   DENSITY_FORMAT,
   DYE_SIZE,
   GRID_SIZE,
+  PARTICLE_COUNT,
   SCALAR_FORMAT,
   SCENE_SIZE,
   SIM_DEFAULTS,
@@ -56,6 +57,9 @@ export interface SimResources {
   readonly simUniforms: GPUBuffer;
   /** Uniform buffer de rendu (couleurs, tone-mapping) : écrit une fois à l'init. */
   readonly renderUniforms: GPUBuffer;
+  /** Particules traceuses : 2 vec4f par particule (posvel + âge/vie), zéro-initialisé —
+   *  vie = 0 vaut « non initialisée », la première passe d'advection les disperse. */
+  readonly particles: GPUBuffer;
 }
 
 function createFieldTexture(
@@ -151,6 +155,11 @@ export function createResources(device: GPUDevice): SimResources {
       label: 'render-uniforms',
       size: 64,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+    }),
+    particles: device.createBuffer({
+      label: 'particles',
+      size: PARTICLE_COUNT * 32, // 2 × vec4f par particule
+      usage: GPUBufferUsage.STORAGE,
     }),
   };
 }

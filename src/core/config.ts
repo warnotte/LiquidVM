@@ -37,6 +37,15 @@ export const DISPATCH_SIZE = Math.ceil(GRID_SIZE / WORKGROUP_SIZE);
 export const DYE_DISPATCH_SIZE = Math.ceil(DYE_SIZE / WORKGROUP_SIZE);
 
 /**
+ * Système de particules traceuses (branche expérimentale) : advectées en compute sur le
+ * champ MAC, rendues en traînées additives dans la scène HDR. Le compte est figé à
+ * l'init (taille du storage buffer) ; l'affichage et l'intensité se règlent à chaud.
+ */
+export const PARTICLE_COUNT = 1 << 20; // 1 048 576
+export const PARTICLE_WORKGROUP = 256;
+export const PARTICLE_DISPATCH = Math.ceil(PARTICLE_COUNT / PARTICLE_WORKGROUP);
+
+/**
  * Solveur multigrid (V-cycle géométrique) pour la pression : niveaux 512² → 8².
  * Le lissage est un Jacobi pondéré (ω = 0.8 dans multigrid.wgsl) — il tue les hautes
  * fréquences du résidu à chaque niveau, la hiérarchie s'occupe des basses. Deux

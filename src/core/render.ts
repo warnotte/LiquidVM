@@ -12,8 +12,9 @@
  * les 2×2×2 variantes de bind group sont pré-créées et indexées à l'encodage.
  */
 
-import { BLOOM_MID_DISPATCH, BLOOM_WIDE_DISPATCH } from './config';
+import { BLOOM_MID_DISPATCH, BLOOM_WIDE_DISPATCH, PARTICLE_COUNT } from './config';
 import bloomWGSL from './shaders/bloom.wgsl?raw';
+import particlesDrawWGSL from './shaders/particles_draw.wgsl?raw';
 import presentWGSL from './shaders/present.wgsl?raw';
 import sceneWGSL from './shaders/scene.wgsl?raw';
 import { createShaderModule, type SimLayouts } from './pipelines';
@@ -43,6 +44,9 @@ export class CompositeRenderer {
     private readonly presentBind: GPUBindGroup,
     /** Étapes de la chaîne de bloom, dans l'ordre d'encodage. */
     private readonly bloomSteps: readonly BloomStep[],
+    /** Traînées de particules, dessinées dans la scène HDR (indexé par [densité]). */
+    private readonly particlePipeline: GPURenderPipeline,
+    private readonly particleBind: Pair<GPUBindGroup>,
     sceneView: GPUTextureView,
     placeholderTarget: GPUTextureView,
   ) {
@@ -75,10 +79,11 @@ export class CompositeRenderer {
     res: SimResources,
     targetFormat: GPUTextureFormat,
   ): Promise<CompositeRenderer> {
-    const [sceneModule, bloomModule, presentModule] = await Promise.all([
+    const [sceneModule, bloomModule, presentModule, particlesModule] = await Promise.all([
       createShaderModule(device, 'scene.wgsl', sceneWGSL),
       createShaderModule(device, 'bloom.wgsl', bloomWGSL),
       createShaderModule(device, 'present.wgsl', presentWGSL),
+      createShaderModule(device, 'particles-draw.wgsl', particlesDrawWGSL),
     ]);
 
     const sceneFormat = res.scene.texture.format;
@@ -119,6 +124,42 @@ export class CompositeRenderer {
       bloomPipeline('bloom-blur-h', 'blur_h'),
       bloomPipeline('bloom-blur-v', 'blur_v'),
     ]);
+
+    // Traînées de particules : quads instanciés, blending additif dans la scène HDR.
+    const particlePipeline = await device.createRenderPipelineAsync({
+      label: 'particles-draw',
+      layout: device.createPipelineLayout({
+        label: 'particles-pipeline-layout',
+        bindGroupLayouts: [layouts.particleDraw],
+      }),
+      vertex: { module: particlesModule, entryPoint: 'vs_main' },
+      fragment: {
+        module: particlesModule,
+        entryPoint: 'fs_main',
+        targets: [
+          {
+            format: sceneFormat,
+            blend: {
+              color: { srcFactor: 'one', dstFactor: 'one', operation: 'add' },
+              alpha: { srcFactor: 'one', dstFactor: 'one', operation: 'add' },
+            },
+          },
+        ],
+      },
+      primitive: { topology: 'triangle-list' },
+    });
+    const particleBind: Pair<GPUBindGroup> = [0 as PingIndex, 1 as PingIndex].map((d) =>
+      device.createBindGroup({
+        label: `particles-bind-d${d}`,
+        layout: layouts.particleDraw,
+        entries: [
+          { binding: 0, resource: { buffer: res.renderUniforms } },
+          { binding: 1, resource: res.linearSampler },
+          { binding: 2, resource: res.density.views[d as PingIndex] },
+          { binding: 3, resource: { buffer: res.particles } },
+        ],
+      }),
+    ) as unknown as Pair<GPUBindGroup>;
 
     const sceneBind: Pair<Pair<Pair<GPUBindGroup>>> = pair((d) =>
       pair((v) =>
@@ -184,6 +225,8 @@ export class CompositeRenderer {
       sceneBind,
       presentBind,
       bloomSteps,
+      particlePipeline,
+      particleBind,
       res.scene.view,
       res.scene.view,
     );
@@ -197,11 +240,19 @@ export class CompositeRenderer {
     velocityIndex: PingIndex,
     pressureIndex: PingIndex,
     viewMode: ViewMode,
+    drawParticles: boolean,
   ): void {
     const scene = encoder.beginRenderPass(this.sceneDescriptor);
     scene.setPipeline(this.scenePipeline);
     scene.setBindGroup(0, this.sceneBind[densityIndex][velocityIndex][pressureIndex]);
     scene.draw(3);
+    // Traînées de particules par-dessus le fluide (vue fluides uniquement — les vues
+    // de debug restent des instruments propres).
+    if (drawParticles && viewMode === 0) {
+      scene.setPipeline(this.particlePipeline);
+      scene.setBindGroup(0, this.particleBind[densityIndex]);
+      scene.draw(6, PARTICLE_COUNT);
+    }
     scene.end();
 
     // Le bloom n'a de sens que sur la vue fluides — les vues de debug restent brutes.

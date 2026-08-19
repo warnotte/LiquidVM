@@ -166,6 +166,15 @@ export class DebugPanel {
         set: (x) => (r.bloomStrength = x),
         format: (x) => x.toFixed(2),
       },
+      {
+        label: 'particules',
+        min: 0,
+        max: 2.5,
+        step: 0.05,
+        get: () => p.particleIntensity,
+        set: (x) => (p.particleIntensity = x),
+        format: (x) => `×${x.toFixed(2)}`,
+      },
     ];
     for (const spec of sliders) {
       this.addSlider(spec);
@@ -177,6 +186,7 @@ export class DebugPanel {
       () => p.multigrid,
       (v) => (p.multigrid = v),
     );
+    this.addCheckbox('particules traceuses', () => p.particles, (v) => (p.particles = v));
 
     const buttons = document.createElement('div');
     buttons.className = 'panel-buttons';
