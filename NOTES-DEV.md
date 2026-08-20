@@ -80,6 +80,22 @@ typecheck strict + bundle. Aucune dépendance runtime.
 512² et 2048² : 60 FPS (vsync) · 4096² : 32–60 FPS, ~1,6 Go VRAM.
 Config actuelle : sim 1024², dye/scène 2048².
 
+## Branches garées (fonctionnelles, non mergées — décision, pas dette)
+
+- **`marbrure`** — atelier de marbrure mathématique (Lu/Jaffer) : outils goutte /
+  stylet / peigne = déformations inverses préservant les aires sur la texture
+  d'encres (`marble_warp.wgsl`), rendu « papier » pigmentaire, export PNG 2048²,
+  murs respectés par raymarch même en pause. Le tout derrière UN interrupteur
+  « mode marbrure » au panneau (pause + gravité 0 + papier + bain préparé ;
+  R = bain neuf). État : complet et vérifié (selftest `&marble` +
+  `.selftest/cdp-marblemode.mjs`, dernier commit 16758f1). Garée le 2026-08-20 :
+  l'utilité artistique n'a pas convaincu à l'essai — à re-évaluer, pas à re-coder.
+  Avant toute reprise : rebaser sur main (la branche date d'avant les évolutions
+  suivantes de main).
+- **Candidat à rapatrier seul depuis `marbrure`** : l'aperçu fantôme des outils
+  (`platform/web/preview.ts` + son câblage main.ts/styles) — il sert TOUS les
+  outils, pas que la marbrure.
+
 ## Pistes suivantes
 
 Vue debug du résidu multigrid par niveau · test smartphone (1024², vérifier les limites
