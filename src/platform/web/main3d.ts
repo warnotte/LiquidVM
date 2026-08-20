@@ -5,7 +5,7 @@
  * Mode ?selftest : rapport JSON dans #selftest + titre SELFTEST-OK/FAIL après 240 frames.
  */
 
-import { GRID3, SIM3_DEFAULTS } from '../../core3d/config3d';
+import { GRID3, INK_NAMES, SIM3_DEFAULTS } from '../../core3d/config3d';
 import { FluidSim3D, type Frame3DInput } from '../../core3d/sim3d';
 import { encodeVdb } from '../../core3d/vdb';
 import { acquireDevice } from './gpu';
@@ -49,6 +49,7 @@ async function boot(): Promise<void> {
     vcycles: SIM3_DEFAULTS.vcycles,
     jacobiIterations: SIM3_DEFAULTS.jacobiIterations,
     vorticityStrength: SIM3_DEFAULTS.vorticityStrength,
+    emitInk: 0,
     cam: {
       azimuth: SIM3_DEFAULTS.camAzimuth,
       elevation: SIM3_DEFAULTS.camElevation,
@@ -134,10 +135,10 @@ async function boot(): Promise<void> {
     }
     exporting = true;
     try {
-      const { smoke, heat } = await sim.exportVolume();
+      const { density, heat } = await sim.exportVolume();
       const data = encodeVdb(
         [
-          { name: 'density', values: smoke },
+          { name: 'density', values: density },
           { name: 'temperature', values: heat },
         ],
         GRID3,
@@ -161,6 +162,12 @@ async function boot(): Promise<void> {
       input.reset = true;
     } else if (e.code === 'KeyE') {
       void exportVdbFile();
+    } else if (e.code === 'Digit1' || e.code === 'Numpad1') {
+      input.emitInk = 0;
+    } else if (e.code === 'Digit2' || e.code === 'Numpad2') {
+      input.emitInk = 1;
+    } else if (e.code === 'Digit3' || e.code === 'Numpad3') {
+      input.emitInk = 2;
     }
   });
 
@@ -186,9 +193,9 @@ async function boot(): Promise<void> {
       hudTimer = 0;
       const solver = input.multigrid ? `MG ×${input.vcycles}` : `jacobi ${input.jacobiIterations} it.`;
       hud.innerHTML =
-        `<b>LiquidVM 3D</b> · ${GRID3}³ · ${solver} · ${Math.round(fps)} FPS` +
+        `<b>LiquidVM 3D</b> · ${GRID3}³ · encre : ${INK_NAMES[input.emitInk] ?? '?'} · ${solver} · ${Math.round(fps)} FPS` +
         `${input.paused ? ' · ⏸ pause' : ''}<br>` +
-        'glisser : orbiter · clic droit : souffler · molette : zoom · espace : pause · R : reset · E : export .vdb';
+        '1/2/3 : encre · glisser : orbiter · clic droit : souffler · molette : zoom · espace : pause · R : reset · E : export .vdb';
     }
     if (selftest && frames === SELFTEST_FRAMES) {
       const report = document.createElement('div');

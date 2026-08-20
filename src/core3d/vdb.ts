@@ -120,11 +120,15 @@ export function encodeVdb(
   voxelSize: number,
 ): Uint8Array<ArrayBuffer> {
   const leavesPerAxis = n >> LEAF_LOG2;
-  if (leavesPerAxis > 1 << INTERNAL_LOG2) {
-    throw new Error(`encodeVdb : n=${n} dépasse un nœud interne 16³ de feuilles (128 max)`);
+  // Nœuds internes 16³ nécessaires par axe (un nœud couvre 128 voxels par axe).
+  const foursPerAxis = Math.max(1, n >> (LEAF_LOG2 + INTERNAL_LOG2));
+  if (foursPerAxis > 32) {
+    throw new Error(`encodeVdb : n=${n} dépasse un nœud 32³ de nœuds 16³ (4096 max)`);
   }
   const leafCount = leavesPerAxis ** 3;
-  const estimate = 4096 + grids.length * (2048 + 32768 * 4 + 4096 * 4 + leafCount * (17 + 512 * 4));
+  const fourCount = foursPerAxis ** 3;
+  const estimate =
+    4096 + grids.length * (2048 + 32768 * 4 + fourCount * (1024 + 1 + 4096 * 4) + leafCount * (129 + 512 * 4));
   const w = new Writer(estimate);
 
   // En-tête du fichier.
@@ -174,59 +178,83 @@ export function encodeVdb(
     w.i32(0);
     w.i32(0); // origine du nœud 32³
 
-    // Nœud interne 32³ : seul l'enfant (0,0,0) est actif (bit 0).
-    // Masques de 32768 bits = 4096 octets chacun (512 mots u64).
-    w.u8(1);
-    w.zeros(4095); // masque d'enfants : bit 0
+    // Nœud interne 32³ : les foursPerAxis³ premiers enfants 16³ actifs.
+    // Masques de 32768 bits = 4096 octets (512 mots u64) ; bit = z | y<<5 | x<<10.
+    const mask5 = new Uint8Array(4096);
+    for (let x = 0; x < foursPerAxis; x++) {
+      for (let y = 0; y < foursPerAxis; y++) {
+        for (let z = 0; z < foursPerAxis; z++) {
+          const bit = z | (y << 5) | (x << 10);
+          mask5[bit >> 3]! |= 1 << (bit & 7);
+        }
+      }
+    }
+    w.bytes(mask5);
     w.zeros(4096); // masque de valeurs : vide
     w.u8(6); // non compressé
     w.zeros(32768 * 4); // tuiles f32 (toutes inactives)
 
-    // Nœud interne 16³ : les leavesPerAxis³ premières feuilles actives.
-    // Indexation des bits : z | y<<4 | x<<8.
-    const childMask = new Uint8Array(512);
-    for (let x = 0; x < leavesPerAxis; x++) {
-      for (let y = 0; y < leavesPerAxis; y++) {
-        for (let z = 0; z < leavesPerAxis; z++) {
+    // Feuilles actives d'un nœud 16³ (borné par la grille) ; bit = z | y<<4 | x<<8.
+    const leavesInFour = Math.min(leavesPerAxis, 1 << INTERNAL_LOG2);
+    const mask4 = new Uint8Array(512);
+    for (let x = 0; x < leavesInFour; x++) {
+      for (let y = 0; y < leavesInFour; y++) {
+        for (let z = 0; z < leavesInFour; z++) {
           const bit = z | (y << 4) | (x << 8);
-          childMask[bit >> 3]! |= 1 << (bit & 7);
+          mask4[bit >> 3]! |= 1 << (bit & 7);
         }
       }
     }
-    w.bytes(childMask.subarray(0, 512));
-    w.zeros(512); // masque de valeurs : vide
-    w.u8(6);
-    w.zeros(4096 * 4); // tuiles f32
-
-    // Feuilles (topologie) : masque de valeurs plein (512 bits = 64 octets = 8 u64),
-    // par index de bit croissant.
     const fullMask = new Uint8Array(64).fill(0xff);
-    for (let i = 0; i < leafCount; i++) {
-      w.bytes(fullMask);
-    }
 
-    // Données : pour chaque feuille (même ordre), masque + octet 6 + 512 f32.
-    // Ordre des voxels dans la feuille : index = vx<<6 | vy<<3 | vz.
-    for (let bit = 0; bit < 4096; bit++) {
-      const lx = bit >> 8;
-      const ly = (bit >> 4) & 15;
-      const lz = bit & 15;
-      if (lx >= leavesPerAxis || ly >= leavesPerAxis || lz >= leavesPerAxis) {
-        continue;
-      }
-      w.bytes(fullMask);
-      w.u8(6);
-      const ox = lx << LEAF_LOG2;
-      const oy = ly << LEAF_LOG2;
-      const oz = lz << LEAF_LOG2;
-      for (let vx = 0; vx < 8; vx++) {
-        for (let vy = 0; vy < 8; vy++) {
-          for (let vz = 0; vz < 8; vz++) {
-            w.f32(grid.values[((oz + vz) * n + (oy + vy)) * n + (ox + vx)]!);
+    // Parcours des nœuds 16³ actifs par index de bit croissant (x, puis y, puis z).
+    const forEachFour = (fn: (fx: number, fy: number, fz: number) => void): void => {
+      for (let fx = 0; fx < foursPerAxis; fx++) {
+        for (let fy = 0; fy < foursPerAxis; fy++) {
+          for (let fz = 0; fz < foursPerAxis; fz++) {
+            fn(fx, fy, fz);
           }
         }
       }
-    }
+    };
+    const forEachLeaf = (fn: (lx: number, ly: number, lz: number) => void): void => {
+      for (let lx = 0; lx < leavesInFour; lx++) {
+        for (let ly = 0; ly < leavesInFour; ly++) {
+          for (let lz = 0; lz < leavesInFour; lz++) {
+            fn(lx, ly, lz);
+          }
+        }
+      }
+    };
+
+    // Topologie : chaque nœud 16³ actif (masques + tuiles), puis les masques de
+    // ses feuilles — l'ordre de parcours de l'écriture EST celui de la lecture.
+    forEachFour(() => {
+      w.bytes(mask4);
+      w.zeros(512); // masque de valeurs : vide
+      w.u8(6);
+      w.zeros(4096 * 4); // tuiles f32
+      forEachLeaf(() => w.bytes(fullMask));
+    });
+
+    // Données : même parcours, chaque feuille = masque + octet 6 + 512 f32.
+    // Ordre des voxels dans la feuille : index = vx<<6 | vy<<3 | vz.
+    forEachFour((fx, fy, fz) => {
+      forEachLeaf((lx, ly, lz) => {
+        w.bytes(fullMask);
+        w.u8(6);
+        const ox = ((fx << INTERNAL_LOG2) + lx) << LEAF_LOG2;
+        const oy = ((fy << INTERNAL_LOG2) + ly) << LEAF_LOG2;
+        const oz = ((fz << INTERNAL_LOG2) + lz) << LEAF_LOG2;
+        for (let vx = 0; vx < 8; vx++) {
+          for (let vy = 0; vy < 8; vy++) {
+            for (let vz = 0; vz < 8; vz++) {
+              w.f32(grid.values[((oz + vz) * n + (oy + vy)) * n + (ox + vx)]!);
+            }
+          }
+        }
+      });
+    });
   }
   return w.finish();
 }

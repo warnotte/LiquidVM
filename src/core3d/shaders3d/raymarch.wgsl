@@ -40,8 +40,19 @@ fn box_hit(ro: vec3f, rd: vec3f) -> vec2f {
   return vec2f(max(max(tmin.x, tmin.y), tmin.z), min(min(tmax.x, tmax.y), tmax.z));
 }
 
+// Palette des trois encres (canaux xyz) — dupliquée depuis config3d.ts.
+const INK0 = vec3f(0.35, 0.60, 1.00);
+const INK1 = vec3f(1.00, 0.30, 0.80);
+const INK2 = vec3f(1.00, 0.85, 0.55);
+
 fn extinction(s: vec4f) -> f32 {
-  return s.x * 22.0 + s.w * 5.0;
+  return (s.x + s.y + s.z) * 22.0 + s.w * 5.0;
+}
+
+// Albédo du voxel : mélange des couleurs d'encres pondéré par leurs concentrations.
+fn ink_albedo(s: vec4f) -> vec3f {
+  let total = s.x + s.y + s.z;
+  return (INK0 * s.x + INK1 * s.y + INK2 * s.z) / max(total, 1e-4);
 }
 
 fn blackbody(heat: f32) -> vec3f {
@@ -105,7 +116,7 @@ fn fs_main(frag: VSOut) -> @location(0) vec4f {
           occ += extinction(ss);
         }
         let shade = exp(-occ * shadow_step * 0.9);
-        let albedo = vec3f(0.60, 0.64, 0.72);
+        let albedo = ink_albedo(s);
         let lo = blackbody(s.w) * 2.2 +
           albedo * R.light.w * (shade * 0.92 + 0.08) * min(ext, 3.0) * 0.28;
         let a = 1.0 - exp(-ext * step_len);

@@ -4,8 +4,12 @@
  * zéro allocation par frame, zéro lecture GPU→CPU, un seul CommandEncoder.
  */
 
-/** Côté de la grille cubique (voxels). 128³ ≈ 2,1 M de cellules. */
-export const GRID3 = 128;
+/** Côté de la grille cubique (voxels). 256³ ≈ 16,8 M de cellules. */
+export const GRID3 = 256;
+
+/** Les forces absolues (voxels/s²) sont calibrées à 128³ — cette échelle les
+ *  convertit pour que le comportement PHYSIQUE reste identique à toute résolution. */
+export const SCALE3 = GRID3 / 128;
 
 /** Workgroups 4×4×4 = 64 threads ; dispatch cubique. */
 export const WG3 = 4;
@@ -16,6 +20,15 @@ export const MG3_COARSEST_SIZE = 8;
 export const MG3_PRE_SMOOTH = 2;
 export const MG3_POST_SMOOTH = 2;
 export const MG3_COARSE_SMOOTH = 16;
+
+/** Palette des trois encres (canaux xyz de la densité) : bleu, magenta, ambre.
+ *  Dupliquée dans raymarch.wgsl (les shaders sont autonomes, comme en 2D). */
+export const INK_COLORS = [
+  [0.35, 0.6, 1.0],
+  [1.0, 0.3, 0.8],
+  [1.0, 0.85, 0.55],
+] as const;
+export const INK_NAMES = ['bleu', 'magenta', 'ambre'] as const;
 
 export const SIM3_DEFAULTS = {
   /** Solveur de pression : multigrid par défaut, Jacobi en repli comparatif. */

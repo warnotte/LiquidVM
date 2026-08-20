@@ -5,8 +5,11 @@
 struct Params {
   misc: vec4f,      // x: dt, y: temps, z: N, w: force de vorticité
   emitter: vec4f,   // xyz: centre (voxels), w: rayon (voxels)
-  emit_vals: vec4f, // x: débit chaleur, y: débit fumée, z: impulsion ↑, w: impulsion latérale
-  diss: vec4f,      // x: dissipation vélocité, y: fumée, z: refroidissement, w: buoyancy
+  emit_vals: vec4f, // x: débit chaleur, y: débit d'encre, z: impulsion ↑, w: impulsion latérale
+  diss: vec4f,      // x: dissipation vélocité, y: encres, z: refroidissement, w: buoyancy
+  blow_origin: vec4f,
+  blow_dir: vec4f,
+  blow_force: vec4f, // w: index de l'encre émise (0/1/2)
 }
 
 @group(0) @binding(0) var<uniform> P: Params;
@@ -79,11 +82,22 @@ fn correct(@builtin(global_invocation_id) gid: vec3u) {
   // Dissipations : la fumée s'estompe lentement, la chaleur se refroidit vite.
   val = vec4f(val.xyz / (1.0 + P.diss.y * dt), val.w / (1.0 + P.diss.z * dt));
 
-  // Émetteur gaussien : chaleur + fumée.
+  // Émetteur gaussien : chaleur + l'encre sélectionnée (canal xyz selon l'index).
   let d = distance(center, P.emitter.xyz) / max(P.emitter.w, 1e-3);
   let g = exp(-d * d * 3.0);
-  val.w = min(val.w + P.emit_vals.x * dt * g, 2.0);
-  val.x = min(val.x + P.emit_vals.y * dt * g, 3.0);
+  let ink = u32(P.blow_force.w + 0.5);
+  var inject = vec3f(0.0);
+  if (ink == 0u) {
+    inject.x = 1.0;
+  } else if (ink == 1u) {
+    inject.y = 1.0;
+  } else {
+    inject.z = 1.0;
+  }
+  val = vec4f(
+    min(val.xyz + inject * (P.emit_vals.y * dt * g), vec3f(3.0)),
+    min(val.w + P.emit_vals.x * dt * g, 2.0),
+  );
 
   textureStore(den_dst, gid, max(val, vec4f(0.0)));
 }

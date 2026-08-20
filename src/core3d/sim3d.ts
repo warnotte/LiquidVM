@@ -21,6 +21,7 @@ import {
   MG3_COARSEST_SIZE,
   MG3_PRE_SMOOTH,
   MG3_POST_SMOOTH,
+  SCALE3,
   SIM3_DEFAULTS,
   WG3,
 } from './config3d';
@@ -39,6 +40,8 @@ export interface Frame3DInput {
   jacobiIterations: number;
   /** Force du vorticity confinement ε (0 = physique brute), réglable à chaud. */
   vorticityStrength: number;
+  /** Encre émise par l'émetteur : 0 = bleu, 1 = magenta, 2 = ambre. */
+  emitInk: number;
   /** Caméra orbitale autour du centre de la boîte. */
   cam: { azimuth: number; elevation: number; radius: number };
   /** Souffle du pointeur (clic droit + glisser) : position NDC [-1,1] et delta NDC
@@ -743,7 +746,7 @@ export class FluidSim3D {
    * lecture GPU→CPU du moteur 3D, hors boucle de frame (même exception
    * documentée que l'export PNG du 2D). Alloue un staging buffer par appel.
    */
-  async exportVolume(): Promise<{ smoke: Float32Array; heat: Float32Array }> {
+  async exportVolume(): Promise<{ density: Float32Array; heat: Float32Array }> {
     const n = GRID3;
     const texels = n * n * n;
     const buffer = this.device.createBuffer({
@@ -760,14 +763,16 @@ export class FluidSim3D {
     this.device.queue.submit([encoder.finish()]);
     await buffer.mapAsync(GPUMapMode.READ);
     const halves = new Uint16Array(buffer.getMappedRange());
-    const smoke = new Float32Array(texels);
+    const density = new Float32Array(texels);
     const heat = new Float32Array(texels);
     for (let i = 0; i < texels; i++) {
-      smoke[i] = halfToFloat(halves[i * 4]!);
+      // Densité totale = somme des trois encres (xyz) ; chaleur = w.
+      density[i] =
+        halfToFloat(halves[i * 4]!) + halfToFloat(halves[i * 4 + 1]!) + halfToFloat(halves[i * 4 + 2]!);
       heat[i] = halfToFloat(halves[i * 4 + 3]!);
     }
     buffer.destroy();
-    return { smoke, heat };
+    return { density, heat };
   }
 
   /**
@@ -845,12 +850,13 @@ export class FluidSim3D {
     d[7] = GRID3 * D.emitterRadius;
     d[8] = D.emitHeat;
     d[9] = D.emitSmoke;
-    d[10] = D.emitUpVelocity;
-    d[11] = D.emitWobbleVelocity;
+    // Forces absolues calibrées à 128³ → remises à l'échelle de la grille.
+    d[10] = D.emitUpVelocity * SCALE3;
+    d[11] = D.emitWobbleVelocity * SCALE3;
     d[12] = D.velocityDissipation;
     d[13] = D.smokeDissipation;
     d[14] = D.heatCooling;
-    d[15] = D.buoyancy;
+    d[15] = D.buoyancy * SCALE3;
     // Souffle du pointeur : rayon caméra→scène reconstruit depuis la base déjà
     // écrite dans renderData (même frame — voir l'ordre des écritures).
     const b = input.blow;
@@ -884,6 +890,8 @@ export class FluidSim3D {
     } else {
       d[23] = 0;
     }
+    // blow_force.w détourné : index de l'encre émise (lu par advect_density3d).
+    d[27] = input.emitInk;
     this.device.queue.writeBuffer(this.simUniforms, 0, d);
   }
 
