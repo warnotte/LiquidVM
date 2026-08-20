@@ -27,8 +27,10 @@ export class CameraFlow {
     if (this.video) {
       return;
     }
+    // 640×480 : le flux optique s'en moque (il rééchantillonne à 256² de toute façon),
+    // mais MediaPipe a besoin de cette résolution pour des landmarks de mains précis.
     const stream = await navigator.mediaDevices.getUserMedia({
-      video: { width: { ideal: 320 }, height: { ideal: 240 } },
+      video: { width: { ideal: 640 }, height: { ideal: 480 } },
       audio: false,
     });
     const video = document.createElement('video');

@@ -20,20 +20,64 @@ const MODEL_URL =
   'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task';
 
 /** Points de repère MediaPipe utilisés (parmi les 21 du squelette de main). */
-const WRIST = 0;
 const THUMB_TIP = 4;
+const INDEX_MCP = 5;
 const INDEX_TIP = 8;
-const MIDDLE_MCP = 9;
+const PINKY_MCP = 17;
+
+/**
+ * Filtre One-Euro (Casiez 2012) — le standard des interfaces de pointage : lisse fort
+ * quand la main est lente (tue le tremblement du squelette), lisse peu quand elle est
+ * rapide (pas de latence perceptible). Bien meilleur qu'une moyenne exponentielle fixe.
+ */
+class OneEuroFilter {
+  private prev = 0;
+  private dPrev = 0;
+  private initialized = false;
+
+  constructor(
+    private readonly minCutoff = 1.2,
+    private readonly beta = 0.03,
+    private readonly dCutoff = 1.0,
+  ) {}
+
+  private static alpha(cutoff: number, dt: number): number {
+    const tau = 1 / (2 * Math.PI * cutoff);
+    return 1 / (1 + tau / dt);
+  }
+
+  filter(x: number, dt: number): number {
+    if (!this.initialized) {
+      this.initialized = true;
+      this.prev = x;
+      return x;
+    }
+    const dx = (x - this.prev) / dt;
+    this.dPrev += OneEuroFilter.alpha(this.dCutoff, dt) * (dx - this.dPrev);
+    const cutoff = this.minCutoff + this.beta * Math.abs(this.dPrev);
+    const y = this.prev + OneEuroFilter.alpha(cutoff, dt) * (x - this.prev);
+    this.prev = y;
+    return y;
+  }
+
+  reset(): void {
+    this.initialized = false;
+    this.dPrev = 0;
+  }
+}
 
 export class HandTracking {
   private landmarker: HandLandmarker | null = null;
   private readonly cursor: HTMLDivElement;
+  private readonly filterX = new OneEuroFilter();
+  private readonly filterY = new OneEuroFilter();
   private smoothX = 0.5;
   private smoothY = 0.5;
   private hasPrev = false;
   private pinching = false;
   private lastVideoTime = -1;
   private lastSeen = 0;
+  private lastDetect = 0;
   active = false;
 
   constructor(parent: HTMLElement) {
@@ -51,6 +95,10 @@ export class HandTracking {
         baseOptions: { modelAssetPath: MODEL_URL, delegate: 'GPU' },
         runningMode: 'VIDEO',
         numHands: 1,
+        // Seuils de suivi abaissés : le tracker reste accroché pendant les mouvements
+        // rapides au lieu de re-détecter (ce qui fait sursauter le curseur).
+        minHandPresenceConfidence: 0.4,
+        minTrackingConfidence: 0.35,
       });
     }
     this.active = true;
@@ -94,13 +142,18 @@ export class HandTracking {
     this.lastSeen = nowMs;
 
     // Index = pointeur (miroir horizontal : la webcam se vit comme un miroir),
-    // lissage exponentiel contre le tremblement du squelette.
+    // filtre One-Euro contre le tremblement du squelette, sans latence sur les gestes vifs.
+    const dt = Math.min(Math.max((nowMs - this.lastDetect) / 1000, 1 / 120), 0.25);
+    this.lastDetect = nowMs;
     const tip = lm[INDEX_TIP]!;
     const x = Math.min(Math.max(1 - tip.x, 0), 1);
     const y = Math.min(Math.max(tip.y, 0), 1);
-    const s = this.hasPrev ? 0.45 : 1;
-    this.smoothX += (x - this.smoothX) * s;
-    this.smoothY += (y - this.smoothY) * s;
+    if (!this.hasPrev) {
+      this.filterX.reset();
+      this.filterY.reset();
+    }
+    this.smoothX = this.filterX.filter(x, dt);
+    this.smoothY = this.filterY.filter(y, dt);
 
     const p = input.frame.pointer;
     if (this.hasPrev) {
@@ -111,15 +164,15 @@ export class HandTracking {
     p.y = this.smoothY;
     this.hasPrev = true;
 
-    // Pincement pouce-index = clic, normalisé par la taille de la main (distance
-    // poignet → base du majeur) pour être indépendant de la distance à la caméra.
-    // Hystérésis : on pince à < 0,40, on relâche à > 0,55 — pas de clignotement.
+    // Pincement pouce-index = clic, normalisé par la LARGEUR DE PAUME (base de
+    // l'index → base de l'auriculaire) — plus stable que poignet→majeur quand la
+    // main s'incline vers la caméra. Hystérésis : pincer < 0,55, relâcher > 0,75.
     const thumb = lm[THUMB_TIP]!;
-    const wrist = lm[WRIST]!;
-    const mcp = lm[MIDDLE_MCP]!;
-    const handSize = Math.hypot(wrist.x - mcp.x, wrist.y - mcp.y) + 1e-6;
-    const pinchRatio = Math.hypot(thumb.x - tip.x, thumb.y - tip.y) / handSize;
-    const wantPress = this.pinching ? pinchRatio < 0.55 : pinchRatio < 0.4;
+    const indexMcp = lm[INDEX_MCP]!;
+    const pinkyMcp = lm[PINKY_MCP]!;
+    const palmWidth = Math.hypot(indexMcp.x - pinkyMcp.x, indexMcp.y - pinkyMcp.y) + 1e-6;
+    const pinchRatio = Math.hypot(thumb.x - tip.x, thumb.y - tip.y) / palmWidth;
+    const wantPress = this.pinching ? pinchRatio < 0.75 : pinchRatio < 0.55;
     if (wantPress !== this.pinching) {
       this.pinching = wantPress;
       if (wantPress) {
