@@ -9,19 +9,21 @@ import {
   BOUNDARY_MODE_COUNT,
   VIEW_MODE_COUNT,
   type BoundaryMode,
-  type FluidId,
+  type SubstanceId,
   type FrameInput,
   type ToolId,
   type ViewMode,
 } from '../../core/types';
 
-const FLUID_KEYS: Readonly<Record<string, FluidId>> = {
+const SUBSTANCE_KEYS: Readonly<Record<string, SubstanceId>> = {
   Digit1: 0,
   Numpad1: 0,
   Digit2: 1,
   Numpad2: 1,
   Digit3: 2,
   Numpad3: 2,
+  Digit4: 3,
+  Numpad4: 3,
 };
 
 export type UITool = 0 | 1 | 2 | 3 | 4 | 5;
@@ -34,6 +36,9 @@ export const UI_TOOL_LABELS = [
   'mur',
   'gomme mur',
 ] as const;
+/** Index des outils UI qui ne sont pas des outils fluides du core. */
+const UI_TOOL_WALL = 4;
+const UI_TOOL_WALL_ERASE = 5;
 
 export class InputController {
   private activePointerId: number | null = null;
@@ -60,6 +65,8 @@ export class InputController {
       macCormack: true,
       multigrid: true,
       vcycles: SIM_DEFAULTS.vcycles,
+      particles: true,
+      particleIntensity: 1,
     },
     render: {
       exposure: SIM_DEFAULTS.exposure,
@@ -88,7 +95,7 @@ export class InputController {
 
   setTool(tool: UITool): void {
     this.currentUITool = tool;
-    if (tool < 4) {
+    if (tool < UI_TOOL_WALL) {
       this.frame.tool = tool as ToolId;
     }
   }
@@ -140,18 +147,16 @@ export class InputController {
       this.frame.pointer.erase = e.shiftKey;
     } else {
       // Clic gauche ou toucher tactile principal
-      if (this.currentUITool === 4) {
-        // Mode Mur
+      if (this.currentUITool === UI_TOOL_WALL) {
         this.frame.pointer.down = false;
         this.frame.pointer.wall = true;
         this.frame.pointer.erase = false;
-      } else if (this.currentUITool === 5) {
-        // Mode Gomme de mur
+      } else if (this.currentUITool === UI_TOOL_WALL_ERASE) {
         this.frame.pointer.down = false;
         this.frame.pointer.wall = true;
         this.frame.pointer.erase = true;
       } else {
-        // Outils fluides (injecter, gommer densité, tourbillon, souffle)
+        // Outils fluides (injecter, gommer densité, tourbillon, souffle, feu)
         this.frame.pointer.down = true;
         this.frame.pointer.wall = false;
         this.frame.pointer.erase = false;
@@ -165,9 +170,13 @@ export class InputController {
       return;
     }
     this.updatePosition(e, true);
-    if (e.button === 2 || this.currentUITool === 4 || this.currentUITool === 5) {
+    if (
+      e.button === 2 ||
+      this.currentUITool === UI_TOOL_WALL ||
+      this.currentUITool === UI_TOOL_WALL_ERASE
+    ) {
       if (this.frame.pointer.wall) {
-        this.frame.pointer.erase = this.currentUITool === 5 || e.shiftKey;
+        this.frame.pointer.erase = this.currentUITool === UI_TOOL_WALL_ERASE || e.shiftKey;
       }
     }
   };
@@ -187,9 +196,9 @@ export class InputController {
     if (e.target instanceof HTMLInputElement) {
       return;
     }
-    const fluid = FLUID_KEYS[e.code];
-    if (fluid !== undefined) {
-      this.frame.selectedFluid = fluid;
+    const substance = SUBSTANCE_KEYS[e.code];
+    if (substance !== undefined) {
+      this.frame.selectedFluid = substance;
       return;
     }
     switch (e.code) {

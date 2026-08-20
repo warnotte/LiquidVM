@@ -7,8 +7,16 @@
 /** Index de ping-pong (deux textures par champ). */
 export type PingIndex = 0 | 1;
 
-/** Identifiant d'un des trois fluides. */
+/** Identifiant d'un des trois fluides (index dans FLUIDS). */
 export type FluidId = 0 | 1 | 2;
+
+/**
+ * MATIÈRE déposée par l'outil « injecter » : les trois fluides, ou le feu (3) —
+ * qui n'est pas un fluide transporté mais une injection de température.
+ * Le modèle mental de l'interface : la matière dit QUOI déposer, l'outil dit COMMENT agir.
+ */
+export type SubstanceId = 0 | 1 | 2 | 3;
+export const SUBSTANCE_FIRE: SubstanceId = 3;
 
 /**
  * Mode de frontières du domaine :
@@ -27,10 +35,10 @@ export type ViewMode = 0 | 1 | 2 | 3 | 4;
 export const VIEW_MODE_COUNT = 5;
 
 /**
- * Outil du clic gauche : 0 = injecter (fluide + impulsion directionnelle),
- * 1 = gommer la densité, 2 = tourbillon (vélocité tangentielle),
- * 3 = souffle (vélocité radiale sortante). La pression ne s'édite pas : elle est
- * entièrement re-résolue à chaque frame par la projection.
+ * Outil du clic gauche : 0 = injecter (la matière sélectionnée + impulsion du geste),
+ * 1 = gommer (densités et chaleur), 2 = tourbillon (vélocité tangentielle),
+ * 3 = souffle (jet directionnel). La pression ne s'édite pas : elle est entièrement
+ * re-résolue à chaque frame.
  */
 export type ToolId = 0 | 1 | 2 | 3;
 export const TOOL_COUNT = 4;
@@ -73,6 +81,10 @@ export interface SimTuning {
   multigrid: boolean;
   /** Nombre de V-cycles par sous-pas quand le multigrid est actif. */
   vcycles: number;
+  /** Particules traceuses affichées et advectées. */
+  particles: boolean;
+  /** Intensité lumineuse des traînées de particules (0 = invisibles). */
+  particleIntensity: number;
 }
 
 /** Paramètres de rendu réglables à chaud. */
@@ -84,7 +96,8 @@ export interface RenderTuning {
 /** Tout ce que le core reçoit de l'extérieur à chaque frame. */
 export interface FrameInput {
   pointer: PointerInput;
-  selectedFluid: FluidId;
+  /** Matière déposée par l'outil « injecter » (fluides 0-2 ou feu = 3). */
+  selectedFluid: SubstanceId;
   boundaryMode: BoundaryMode;
   /** Outil actif du clic gauche. */
   tool: ToolId;

@@ -30,6 +30,9 @@ export interface SimLayouts {
   readonly vorticity: GPUBindGroupLayout;
   /** Pinceau à murs : storage read-write sur le champ d'obstacles. */
   readonly walls: GPUBindGroupLayout;
+  /** Particules : advection compute (buffer rw) et rendu (buffer read-only en vertex). */
+  readonly particleAdvect: GPUBindGroupLayout;
+  readonly particleDraw: GPUBindGroupLayout;
   /** Layouts des passes de clear (group(0) dédié, formats différents). */
   readonly clearRgba: GPUBindGroupLayout;
   readonly clearScalar: GPUBindGroupLayout;
@@ -129,6 +132,27 @@ export function createLayouts(device: GPUDevice): SimLayouts {
           binding: 0,
           visibility: COMPUTE,
           storageTexture: { access: 'read-write', format: SCALAR_FORMAT },
+        },
+      ],
+    }),
+    particleAdvect: device.createBindGroupLayout({
+      label: 'particle-advect-layout',
+      entries: [
+        { binding: 0, visibility: COMPUTE, buffer: { type: 'storage' } },
+        sampledFloat(1),
+        sampledScalar(2),
+      ],
+    }),
+    particleDraw: device.createBindGroupLayout({
+      label: 'particle-draw-layout',
+      entries: [
+        { binding: 0, visibility: GPUShaderStage.VERTEX, buffer: { type: 'uniform' } },
+        { binding: 1, visibility: GPUShaderStage.VERTEX, sampler: { type: 'filtering' } },
+        { binding: 2, visibility: GPUShaderStage.VERTEX, texture: { sampleType: 'float' } },
+        {
+          binding: 3,
+          visibility: GPUShaderStage.VERTEX,
+          buffer: { type: 'read-only-storage' },
         },
       ],
     }),

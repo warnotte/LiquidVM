@@ -37,6 +37,15 @@ export const DISPATCH_SIZE = Math.ceil(GRID_SIZE / WORKGROUP_SIZE);
 export const DYE_DISPATCH_SIZE = Math.ceil(DYE_SIZE / WORKGROUP_SIZE);
 
 /**
+ * Système de particules traceuses (branche expérimentale) : advectées en compute sur le
+ * champ MAC, rendues en traînées additives dans la scène HDR. Le compte est figé à
+ * l'init (taille du storage buffer) ; l'affichage et l'intensité se règlent à chaud.
+ */
+export const PARTICLE_COUNT = 1 << 20; // 1 048 576
+export const PARTICLE_WORKGROUP = 256;
+export const PARTICLE_DISPATCH = Math.ceil(PARTICLE_COUNT / PARTICLE_WORKGROUP);
+
+/**
  * Solveur multigrid (V-cycle géométrique) pour la pression : niveaux 512² → 8².
  * Le lissage est un Jacobi pondéré (ω = 0.8 dans multigrid.wgsl) — il tue les hautes
  * fréquences du résidu à chaque niveau, la hiérarchie s'occupe des basses. Deux
@@ -90,6 +99,9 @@ export interface FluidProps {
   readonly dissipation: number;
 }
 
+/** Noms des matières injectables : les trois fluides + le feu (touches 1/2/3/4). */
+export const SUBSTANCE_NAMES = ['eau', 'encre', 'fumée', 'feu'] as const;
+
 /** Les trois fluides (touches 1/2/3). Valeurs artistiques, ajustées à l'œil. */
 export const FLUIDS: readonly [FluidProps, FluidProps, FluidProps] = [
   { name: 'eau', color: [0.15, 0.55, 1.0], buoyancy: -40 * FORCE_SCALE, dissipation: 0.03 },
@@ -137,4 +149,11 @@ export const SIM_DEFAULTS = {
   debugVelocityScale: 300 * FORCE_SCALE,
   /** Intensité du bloom ajouté à la scène (0 = désactivé). */
   bloomStrength: 0.9,
+  /**
+   * Feu : la température vit dans le canal alpha de la texture de densités (advectée
+   * MacCormack comme les fluides). Elle refroidit vite (les flammes sont des langues
+   * transitoires) et pousse fort vers le haut — la valeur est en 1/s, la poussée est
+   * mise à l'échelle de la grille dans forces.wgsl.
+   */
+  fireCooling: 1.1,
 } as const;
