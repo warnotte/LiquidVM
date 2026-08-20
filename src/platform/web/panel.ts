@@ -31,6 +31,7 @@ export class DebugPanel {
     onCameraToggle?: (on: boolean) => void,
     hands?: { get: () => boolean; set: (on: boolean) => void },
     onExport?: () => void,
+    marbleMode?: { get: () => boolean; set: (on: boolean) => void },
   ) {
     const frame = input.frame;
     this.root = document.createElement('div');
@@ -229,18 +230,17 @@ export class DebugPanel {
     if (hands) {
       this.addCheckbox('mains : index = pointeur, pincer = cliquer', hands.get, hands.set);
     }
+    if (marbleMode) {
+      // Un seul interrupteur : bain figé + gravité 0 + rendu papier + bain préparé.
+      // R = bain neuf. Gouttes, stylet et peigne font le reste.
+      this.addCheckbox('mode marbrure (R = bain neuf)', marbleMode.get, marbleMode.set);
+    }
 
     const buttons = document.createElement('div');
     buttons.className = 'panel-buttons';
     this.addButton(buttons, '⏭ pas (N)', () => (frame.stepOnce = true));
     this.addButton(buttons, '↺ reset (R)', () => (frame.reset = true));
     this.addButton(buttons, '▨ murs off (X)', () => (frame.clearWalls = true));
-    this.addButton(buttons, '🪣 fond', () => {
-      // Couvre le bain de l'encre sélectionnée — le geste d'ouverture du marbreur.
-      const m = frame.marble;
-      m.pending = true;
-      m.tool = 3;
-    });
     if (onExport) {
       this.addButton(buttons, '⬇ PNG', onExport);
     }

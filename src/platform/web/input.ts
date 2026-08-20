@@ -62,7 +62,7 @@ export class InputController {
     stepOnce: false,
     pressureIterations: SIM_DEFAULTS.pressureIterations,
     viewMode: 0,
-    marble: { pending: false, tool: 0, ax: 0, ay: 0, bx: 0, by: 0 },
+    marble: { pending: false, tool: 0, substance: 0, ax: 0, ay: 0, bx: 0, by: 0 },
     params: {
       velocityDissipation: SIM_DEFAULTS.velocityDissipation,
       vorticityStrength: SIM_DEFAULTS.vorticityStrength,
@@ -205,6 +205,7 @@ export class InputController {
           const m = this.frame.marble;
           m.pending = true;
           m.tool = 0;
+          m.substance = this.frame.selectedFluid;
           m.ax = m.bx = this.frame.pointer.x;
           m.ay = m.by = this.frame.pointer.y;
         }
@@ -233,6 +234,7 @@ export class InputController {
         m.ax = prevX;
         m.ay = prevY;
         m.tool = this.currentUITool === UI_TOOL_MARBLE_TINE ? 1 : 2;
+        m.substance = this.frame.selectedFluid;
         m.pending = true;
       }
       m.bx = this.frame.pointer.x;

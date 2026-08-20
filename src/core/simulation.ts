@@ -325,8 +325,8 @@ export class FluidSim {
       m[9] = 0;
       m[10] = 0;
       m[11] = 0;
-      if (input.selectedFluid < 3) {
-        m[8 + input.selectedFluid] = SIM_DEFAULTS.marbleInk;
+      if (input.marble.substance < 3) {
+        m[8 + input.marble.substance] = SIM_DEFAULTS.marbleInk;
       } else {
         // Goutte de feu : chaleur + un voile de fumée pour lui donner un corps.
         m[10] = 0.3;

@@ -32,6 +32,12 @@ typecheck strict + bundle. Aucune dépendance runtime.
 - **Formats** : vélocité/densité/curl `rgba16float` (filtrable ET storage — `rg16float`
   n'est pas storage-capable) ; pression/divergence/obstacles `r32float` (storage mais
   NON filtrable → `textureLoad` uniquement).
+- **Mode marbrure** (branche `marbrure`) : UN interrupteur dans le panneau qui bascule
+  tout — pause, gravité encres 0, rendu papier, outil goutte, bain d'eau appliqué
+  automatiquement (le « fond » n'existe plus comme concept UI). R = bain neuf (clear +
+  fond dans la même frame, l'ordre d'encodage le garantit). Les warps (`marble_warp.wgsl`)
+  respectent les murs par raymarch 16 pas, même en pause. Une opération de marbrure max
+  par frame ; l'op capture sa matière à l'événement (`marble.substance`).
 
 ## Vérifier (indispensable après tout changement de shader)
 

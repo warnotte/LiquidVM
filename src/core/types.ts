@@ -143,8 +143,10 @@ export interface FrameInput {
    */
   marble: {
     pending: boolean;
-    /** 3 = remplir tout le bain de l'encre sélectionnée (« fond »). */
+    /** 3 = couvrir tout le bain (utilisé par le mode marbrure : bain neuf). */
     tool: 0 | 1 | 2 | 3;
+    /** Matière de l'opération — capturée à l'événement, indépendante de la sélection. */
+    substance: SubstanceId;
     ax: number;
     ay: number;
     bx: number;

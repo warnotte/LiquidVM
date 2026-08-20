@@ -70,9 +70,9 @@ class SelftestDriver {
       }
       p.wall = false;
       if (frameIndex === 15) {
-        this.frame.selectedFluid = 0; // fond d'eau
         m.pending = true;
         m.tool = 3;
+        m.substance = 0; // bain d'eau
       }
       // Gouttes CONCENTRIQUES : chaque goutte repousse les précédentes en anneaux —
       // le motif « pierre » classique, que le peigne tirera ensuite en chevrons.
@@ -86,9 +86,9 @@ class SelftestDriver {
       for (const [f, x, y] of drops) {
         if (frameIndex === f) {
           // Alternance encre / fumée sur le fond d'eau : anneaux bien contrastés.
-          this.frame.selectedFluid = (((f / 25) | 0) % 2 === 0 ? 1 : 2) as SubstanceId;
           m.pending = true;
           m.tool = 0;
+          m.substance = (((f / 25) | 0) % 2 === 0 ? 1 : 2) as SubstanceId;
           m.ax = m.bx = x;
           m.ay = m.by = y;
         }
@@ -97,6 +97,7 @@ class SelftestDriver {
         const y = 0.15 + ((frameIndex - 170) / 60) * 0.7;
         m.pending = true;
         m.tool = 2;
+        m.substance = 0;
         m.ax = 0.5;
         m.ay = y - 0.012;
         m.bx = 0.5;
@@ -258,12 +259,41 @@ async function boot(): Promise<void> {
         })
         .catch((err: unknown) => console.warn('[export]', err));
     };
+    // MODE MARBRURE : un seul interrupteur qui bascule tout l'espace de travail —
+    // bain figé, gravité des encres coupée, rendu papier, outil goutte, et le bain
+    // est automatiquement couvert d'eau (le « fond » du marbreur devient invisible :
+    // entrer dans le mode prépare le bain, R en donne un neuf).
+    let marbleMode = false;
+    const freshBath = (): void => {
+      const m = input.frame.marble;
+      m.pending = true;
+      m.tool = 3;
+      m.substance = 0; // bain d'eau
+    };
+    const setMarbleMode = (on: boolean): void => {
+      marbleMode = on;
+      const f = input.frame;
+      if (on) {
+        f.paused = true;
+        f.params.buoyancyScale = 0;
+        f.render.paper = true;
+        f.selectedFluid = 1; // première goutte contrastée (encre sur bain d'eau)
+        input.setTool(6); // goutte
+        freshBath();
+      } else {
+        f.paused = false;
+        f.params.buoyancyScale = 1;
+        f.render.paper = false;
+        input.setTool(0);
+      }
+    };
     const panel = new DebugPanel(
       document.body,
       input,
       toggleCamera,
       { get: () => hands.active, set: toggleHands },
       exportPNG,
+      { get: () => marbleMode, set: setMarbleMode },
     );
     const toolbar = new MobileToolbar(document.body, input, () => panel.toggle());
     // Aperçu fantôme de l'outil actif : taille et forme réelles sous le curseur.
@@ -294,6 +324,11 @@ async function boot(): Promise<void> {
       last = now;
       driver?.drive(frameCount);
 
+      // En mode marbrure, un reset (R) donne un bain neuf : le clear et le fond
+      // s'encodent dans la même frame, dans cet ordre.
+      if (marbleMode && input.frame.reset) {
+        freshBath();
+      }
       if (input.frame.params.cameraFlow) {
         camera.copyFrame(device, sim.cameraTexture);
       }
