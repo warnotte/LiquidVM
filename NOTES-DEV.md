@@ -104,7 +104,23 @@ Config actuelle : sim 1024², dye/scène 2048².
   (`platform/web/preview.ts` + son câblage main.ts/styles) — il sert TOUS les
   outils, pas que la marbrure.
 
+## Chantier 3D (branche `3d`)
+
+- **Page séparée `3d.html`** (`src/platform/web/main3d.ts`) — l'appli 2D n'est pas
+  touchée. `src/core3d/` : même doctrine que core/ (zéro DOM, zéro alloc/frame, un
+  encoder, bind groups pré-créés), `config3d.ts` (GRID3 = 128) + `sim3d.ts` (tout
+  l'orchestrateur) + `shaders3d/`.
+- **État** : MAC 3D semi-lagrangien, poussée thermique, projection Jacobi 36 it.
+  (boîte fermée, Neumann par clamp), émetteur de panache feu/fumée balancé,
+  ray-marching (Beer-Lambert + corps noir + ombre interne 6 pas + liseré de boîte),
+  caméra orbitale (glisser/molette), espace/R, `?selftest`. 60 FPS à 128³ desktop.
+- **Prochaines briques, dans l'ordre prévu** : MacCormack 3D + confinement de
+  vorticité 3D (le panache actuel est laminaire — c'est le raffineur attendu) ;
+  multigrid 3D (36 Jacobi ne convergent que les hautes fréquences — utiliser la vue
+  résidu MG du 2D comme modèle d'instrumentation) ; interaction (souffler dans le
+  volume au pointeur) ; encres colorées (canaux yz réservés dans la densité).
+
 ## Pistes suivantes
 
-Test smartphone (1024², vérifier les limites WebGPU mobiles) · sim 3D ~128³ + rendu
-volumétrique (la vraie « vue de côté ») — chantier ouvert sur la branche `3d`.
+Test smartphone (1024², vérifier les limites WebGPU mobiles) · suite du chantier 3D
+ci-dessus.

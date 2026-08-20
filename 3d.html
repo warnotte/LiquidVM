@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>LiquidVM 3D</title>
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        background: #0b0c10;
+        font-family: 'Cascadia Code', 'Consolas', monospace;
+      }
+      canvas {
+        display: block;
+        width: 100%;
+        height: 100%;
+        cursor: grab;
+      }
+      canvas.dragging {
+        cursor: grabbing;
+      }
+      .hud {
+        position: fixed;
+        left: 16px;
+        bottom: 16px;
+        color: #aab2c5;
+        font-size: 12px;
+        line-height: 1.7;
+        background: rgba(16, 18, 26, 0.82);
+        border: 1px solid rgba(120, 130, 160, 0.25);
+        border-radius: 8px;
+        padding: 10px 14px;
+        pointer-events: none;
+        user-select: none;
+      }
+      .hud b {
+        color: #e6e9f2;
+        font-weight: 600;
+      }
+      .fatal {
+        position: fixed;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: #14060a;
+        color: #ffd7d7;
+        font-size: 16px;
+        padding: 40px;
+        text-align: center;
+        z-index: 99;
+      }
+      .fatal > div {
+        max-width: 640px;
+        line-height: 1.6;
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="canvas3d"></canvas>
+    <div class="hud" id="hud3d">démarrage…</div>
+    <script type="module" src="/src/platform/web/main3d.ts"></script>
+  </body>
+</html>
