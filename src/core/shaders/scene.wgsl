@@ -10,7 +10,8 @@ struct RenderParams {
   color0: vec4f, // rgb: couleur fluide 0 (eau)
   color1: vec4f, // rgb: couleur fluide 1 (encre)
   color2: vec4f, // rgb: couleur fluide 2 (fumée)
-  tone: vec4f,   // x: exposition, y: vue (0–4), z: échelle debug vélocité, w: force du bloom
+  tone: vec4f,   // x: exposition, y: vue (0–5), z: échelle debug vélocité, w: force du bloom
+  style: vec4f,  // x: rendu papier (0|1)
 }
 
 @group(0) @binding(0) var<uniform> R: RenderParams;
@@ -70,6 +71,23 @@ fn fs_main(frag: VSOut) -> @location(0) vec4f {
     case 0u: {
       let den4 = textureSampleLevel(density_tex, lin, frag.uv, 0.0);
       let den = den4.xyz;
+      if (R.style.x > 0.5) {
+        // RENDU PAPIER : fond crème, encres opaques superposées en PIGMENTS
+        // (multiplicatif — deux encres se mélangent en s'assombrissant, comme la
+        // gouache), gaufrage subtil par le gradient de densité, brûlures du feu.
+        col = vec3f(0.94, 0.91, 0.84);
+        col *= mix(vec3f(1.0), R.color0.rgb, clamp(den.x * 0.9, 0.0, 1.0));
+        col *= mix(vec3f(1.0), R.color1.rgb, clamp(den.y * 0.9, 0.0, 1.0));
+        col *= mix(vec3f(1.0), R.color2.rgb, clamp(den.z * 0.9, 0.0, 1.0));
+        col *= mix(vec3f(1.0), vec3f(1.0, 0.5, 0.22), clamp(den4.w * 0.5, 0.0, 0.85));
+        let e2 = 1.0 / vec2f(textureDimensions(density_tex));
+        let gx2 = total_density(frag.uv + vec2f(e2.x, 0.0)) - total_density(frag.uv - vec2f(e2.x, 0.0));
+        let gy2 = total_density(frag.uv + vec2f(0.0, e2.y)) - total_density(frag.uv - vec2f(0.0, e2.y));
+        let n2 = normalize(vec3f(-gx2 * 2.0, -gy2 * 2.0, 1.0));
+        let diff2 = clamp(dot(n2, normalize(vec3f(-0.45, -0.65, 0.6))), 0.0, 1.0);
+        col *= 0.86 + 0.14 * diff2;
+        return vec4f(col, 1.0);
+      }
       col = R.color0.rgb * den.x + R.color1.rgb * den.y + R.color2.rgb * den.z;
       // Éclairage : gradient central de la densité totale → pseudo-normale.
       let e = 1.0 / vec2f(textureDimensions(density_tex));

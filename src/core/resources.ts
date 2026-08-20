@@ -173,7 +173,7 @@ export function createResources(device: GPUDevice): SimResources {
     }),
     renderUniforms: device.createBuffer({
       label: 'render-uniforms',
-      size: 64,
+      size: 80, // 5 × vec4f : couleurs ×3, tone, style
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     }),
     particles: device.createBuffer({

@@ -33,6 +33,12 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
   let p = (vec2f(gid.xy) + vec2f(0.5)) / vec2f(dims);
   let tool = u32(OP.params.x + 0.5);
 
+  // Outil 3 : « fond » — couvre tout le bain de l'encre sélectionnée.
+  if (tool == 3u) {
+    textureStore(dst_den, c, OP.ink);
+    return;
+  }
+
   var src = p;
   if (tool == 0u) {
     // Goutte : disque d'encre neuve, anneaux repoussés autour.

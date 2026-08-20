@@ -27,6 +27,7 @@ import { HandTracking } from './hands';
 import { InputController } from './input';
 import { Overlay, showFatalError } from './overlay';
 import { DebugPanel, TOOL_LABELS } from './panel';
+import { ToolPreview } from './preview';
 import { MobileToolbar } from './toolbar';
 
 const SELFTEST_REPORT_FRAME = 200;
@@ -54,20 +55,29 @@ class SelftestDriver {
   drive(frameIndex: number): void {
     const p = this.frame.pointer;
     if (this.marbleMode) {
-      // Scénario marbrure : bain figé, cinq gouttes (motif « pierre »), puis un coup
-      // de peigne vertical qui tire les anneaux en chevrons.
+      // Scénario marbrure : rendu papier, bain figé couvert d'eau, cinq gouttes
+      // (anneaux du motif « pierre »), puis un coup de peigne vertical (chevrons).
       this.frame.paused = frameIndex > 5;
+      this.frame.render.paper = frameIndex > 3;
       const m = this.frame.marble;
+      if (frameIndex === 15) {
+        this.frame.selectedFluid = 0; // fond d'eau
+        m.pending = true;
+        m.tool = 3;
+      }
+      // Gouttes CONCENTRIQUES : chaque goutte repousse les précédentes en anneaux —
+      // le motif « pierre » classique, que le peigne tirera ensuite en chevrons.
       const drops: readonly [number, number, number][] = [
         [30, 0.5, 0.5],
-        [55, 0.38, 0.42],
-        [80, 0.6, 0.55],
-        [105, 0.47, 0.62],
-        [130, 0.55, 0.38],
+        [55, 0.5, 0.5],
+        [80, 0.5, 0.5],
+        [105, 0.5, 0.5],
+        [130, 0.5, 0.5],
       ];
       for (const [f, x, y] of drops) {
         if (frameIndex === f) {
-          this.frame.selectedFluid = ((f / 25) % 3 | 0) as SubstanceId;
+          // Alternance encre / fumée sur le fond d'eau : anneaux bien contrastés.
+          this.frame.selectedFluid = (((f / 25) | 0) % 2 === 0 ? 1 : 2) as SubstanceId;
           m.pending = true;
           m.tool = 0;
           m.ax = m.bx = x;
@@ -247,6 +257,13 @@ async function boot(): Promise<void> {
       exportPNG,
     );
     const toolbar = new MobileToolbar(document.body, input, () => panel.toggle());
+    // Aperçu fantôme de l'outil actif : taille et forme réelles sous le curseur.
+    const preview = new ToolPreview(document.body);
+    canvas.addEventListener('pointermove', (e) => {
+      preview.move(e.clientX, e.clientY);
+      preview.refresh(input, canvas);
+    });
+    canvas.addEventListener('pointerleave', () => preview.hide());
     const driver = selftest ? new SelftestDriver(input.frame) : null;
     if (selftest) {
       // Poignées de debug pour l'outillage CDP : mutation des réglages en plein vol.

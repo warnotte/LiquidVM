@@ -8,6 +8,7 @@ struct RenderParams {
   color1: vec4f, // rgb: couleur fluide 1 (encre), w: encart caméra actif (0|1)
   color2: vec4f, // rgb: couleur fluide 2 (fumée), w: aspect du canvas (l/h)
   tone: vec4f,   // x: exposition, y: vue, z: échelle debug vélocité, w: force du bloom
+  style: vec4f,  // x: rendu papier (0|1) — la scène arrive déjà en couleurs d'affichage
 }
 
 @group(0) @binding(0) var<uniform> R: RenderParams;
@@ -56,7 +57,7 @@ fn obstacle_mask(uv: vec2f) -> f32 {
 fn fs_main(frag: VSOut) -> @location(0) vec4f {
   var col = textureSample(scene_tex, lin, frag.uv).rgb;
   let view = u32(R.tone.y + 0.5);
-  if (view == 0u) {
+  if (view == 0u && R.style.x < 0.5) {
     let glow = textureSample(bloom_mid, lin, frag.uv).rgb * 0.7 +
       textureSample(bloom_wide, lin, frag.uv).rgb * 0.55;
     col += glow * R.tone.w;

@@ -220,6 +220,7 @@ export class DebugPanel {
       (v) => (p.multigrid = v),
     );
     this.addCheckbox('particules traceuses', () => p.particles, (v) => (p.particles = v));
+    this.addCheckbox('rendu papier (marbrure)', () => r.paper, (v) => (r.paper = v));
     if (onCameraToggle) {
       // L'état réel (p.cameraFlow) n'est vrai qu'une fois la permission accordée et le
       // flux démarré — refresh() resynchronise la case si la demande échoue.
@@ -234,6 +235,12 @@ export class DebugPanel {
     this.addButton(buttons, '⏭ pas (N)', () => (frame.stepOnce = true));
     this.addButton(buttons, '↺ reset (R)', () => (frame.reset = true));
     this.addButton(buttons, '▨ murs off (X)', () => (frame.clearWalls = true));
+    this.addButton(buttons, '🪣 fond', () => {
+      // Couvre le bain de l'encre sélectionnée — le geste d'ouverture du marbreur.
+      const m = frame.marble;
+      m.pending = true;
+      m.tool = 3;
+    });
     if (onExport) {
       this.addButton(buttons, '⬇ PNG', onExport);
     }

@@ -104,6 +104,9 @@ export interface SimTuning {
 export interface RenderTuning {
   exposure: number;
   bloomStrength: number;
+  /** Rendu « papier marbré » : fond crème, encres opaques superposées en pigments
+   *  (multiplicatif), sans bloom ni tone-mapping — le look du papier, pas du néon. */
+  paper: boolean;
   /** Rapport largeur/hauteur du canvas (mis à jour par la plateforme au resize) —
    *  sert à garder l'encart caméra carré à l'écran. */
   aspect: number;
@@ -140,7 +143,8 @@ export interface FrameInput {
    */
   marble: {
     pending: boolean;
-    tool: 0 | 1 | 2;
+    /** 3 = remplir tout le bain de l'encre sélectionnée (« fond »). */
+    tool: 0 | 1 | 2 | 3;
     ax: number;
     ay: number;
     bx: number;

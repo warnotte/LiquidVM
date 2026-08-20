@@ -96,6 +96,7 @@ export class FluidSim {
   private lastFlowGate = 0;
   private lastCameraInset = false;
   private lastAspect = 0;
+  private lastPaper = false;
   private lastViewMode: ViewMode = 0;
   // Suivis en nombres JS (comparer à la Float32Array échouerait par perte de précision).
   private lastExposure: number = SIM_DEFAULTS.exposure;
@@ -241,7 +242,8 @@ export class FluidSim {
       input.render.bloomStrength !== this.lastBloom ||
       input.params.particleIntensity !== this.lastParticleIntensity ||
       input.params.cameraFlow !== this.lastCameraInset ||
-      input.render.aspect !== this.lastAspect
+      input.render.aspect !== this.lastAspect ||
+      input.render.paper !== this.lastPaper
     ) {
       this.renderData[3] = input.params.particleIntensity;
       this.renderData[7] = input.params.cameraFlow ? 1 : 0; // encart caméra
@@ -249,6 +251,7 @@ export class FluidSim {
       this.renderData[12] = input.render.exposure;
       this.renderData[RENDER_VIEW_MODE_INDEX] = input.viewMode;
       this.renderData[15] = input.render.bloomStrength;
+      this.renderData[16] = input.render.paper ? 1 : 0;
       this.device.queue.writeBuffer(this.res.renderUniforms, 0, this.renderData);
       this.lastViewMode = input.viewMode;
       this.lastExposure = input.render.exposure;
@@ -256,6 +259,7 @@ export class FluidSim {
       this.lastParticleIntensity = input.params.particleIntensity;
       this.lastCameraInset = input.params.cameraFlow;
       this.lastAspect = input.render.aspect;
+      this.lastPaper = input.render.paper;
     }
     // Réglages du flux optique (gain, porte de bruit) — écrits au changement seulement.
     if (

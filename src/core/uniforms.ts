@@ -92,7 +92,8 @@ export class SimUniformWriter {
 export const RENDER_VIEW_MODE_INDEX = 13;
 
 export function renderUniformData(): Float32Array<ArrayBuffer> {
-  const d = new Float32Array(16);
+  // 5 vec4 : color0..2, tone, style (x = rendu papier).
+  const d = new Float32Array(20);
   for (let i = 0; i < 3; i++) {
     const c = FLUIDS[i]!.color;
     d[i * 4 + 0] = c[0];

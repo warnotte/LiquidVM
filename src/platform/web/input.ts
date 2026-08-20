@@ -83,6 +83,7 @@ export class InputController {
     render: {
       exposure: SIM_DEFAULTS.exposure,
       bloomStrength: SIM_DEFAULTS.bloomStrength,
+      paper: false,
       aspect: 1,
     },
   };
