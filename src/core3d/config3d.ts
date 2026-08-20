@@ -14,6 +14,11 @@ export const DISPATCH3 = Math.ceil(GRID3 / WG3);
 export const SIM3_DEFAULTS = {
   /** Itérations de Jacobi par frame (multigrid 3D : chantier suivant). */
   jacobiIterations: 36,
+  /** Force du vorticity confinement (ε). Défaut 0 : à 128³, le gradient de |ω| à
+   *  ±1 voxel injecte du grain à l'échelle de la grille dès ε≈3 (calibré par
+   *  captures EPS-*) — MacCormack seul donne un panache turbulent superbe. À
+   *  réactiver quand le gradient sera lissé (piste : flouter |ω| avant ∇). */
+  vorticityStrength: 0,
   /** Dissipations (1/s) : vélocité, fumée, refroidissement de la chaleur. */
   velocityDissipation: 0.03,
   smokeDissipation: 0.10,

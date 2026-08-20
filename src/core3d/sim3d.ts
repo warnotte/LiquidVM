@@ -9,6 +9,7 @@
 import advectVelWGSL from './shaders3d/advect_velocity3d.wgsl?raw';
 import advectDenWGSL from './shaders3d/advect_density3d.wgsl?raw';
 import forcesWGSL from './shaders3d/forces3d.wgsl?raw';
+import vorticityWGSL from './shaders3d/vorticity3d.wgsl?raw';
 import projectWGSL from './shaders3d/project3d.wgsl?raw';
 import raymarchWGSL from './shaders3d/raymarch.wgsl?raw';
 import clearWGSL from './shaders3d/clear3d.wgsl?raw';
@@ -23,6 +24,8 @@ export interface Frame3DInput {
   /** Vidange des champs (consommé par la frame courante). */
   reset: boolean;
   jacobiIterations: number;
+  /** Force du vorticity confinement ε (0 = physique brute), réglable à chaud. */
+  vorticityStrength: number;
   /** Caméra orbitale autour du centre de la boîte. */
   cam: { azimuth: number; elevation: number; radius: number };
   exposure: number;
@@ -79,9 +82,13 @@ export class FluidSim3D {
     private readonly renderUniforms: GPUBuffer,
     private readonly group0: GPUBindGroup,
     private readonly pipelines: {
-      advectVel: GPUComputePipeline;
+      velPredict: GPUComputePipeline;
+      velCorrect: GPUComputePipeline;
       forces: GPUComputePipeline;
-      advectDen: GPUComputePipeline;
+      curl: GPUComputePipeline;
+      confine: GPUComputePipeline;
+      denPredict: GPUComputePipeline;
+      denCorrect: GPUComputePipeline;
       divergence: GPUComputePipeline;
       jacobi: GPUComputePipeline;
       gradient: GPUComputePipeline;
@@ -90,9 +97,13 @@ export class FluidSim3D {
       render: GPURenderPipeline;
     },
     private readonly binds: {
-      advectVel: Pair<GPUBindGroup>;
+      velPredict: Pair<GPUBindGroup>; // [vel] → scratch
+      velCorrect: Pair<GPUBindGroup>; // [vel] (+scratch) → flip(vel)
       forces: Pair<Pair<GPUBindGroup>>; // [vel][den]
-      advectDen: Pair<Pair<GPUBindGroup>>; // [den][vel]
+      curl: Pair<GPUBindGroup>; // [vel] → curl
+      confine: Pair<GPUBindGroup>; // [vel] (+curl) → flip(vel)
+      denPredict: Pair<Pair<GPUBindGroup>>; // [den][vel] → scratch
+      denCorrect: Pair<Pair<GPUBindGroup>>; // [den][vel] (+scratch) → flip(den)
       divergence: Pair<GPUBindGroup>; // [vel]
       jacobi: Pair<GPUBindGroup>; // [press]
       gradient: Pair<Pair<GPUBindGroup>>; // [press][vel]
@@ -108,6 +119,10 @@ export class FluidSim3D {
       const density = pair((i) => tex3d(device, `den3d-${i}`, 'rgba16float'));
       const pressure = pair((i) => tex3d(device, `press3d-${i}`, 'r32float'));
       const divergence = tex3d(device, 'div3d', 'r32float');
+      // MacCormack : prédicteurs φ̂ ; vorticité : rotationnel vectoriel aux centres.
+      const velScratch = tex3d(device, 'vel3d-hat', 'rgba16float');
+      const denScratch = tex3d(device, 'den3d-hat', 'rgba16float');
+      const curlTex = tex3d(device, 'curl3d', 'rgba16float');
 
       const sampler = device.createSampler({
         label: 'lin3d',
@@ -136,17 +151,33 @@ export class FluidSim3D {
             { binding: 1, visibility: COMPUTE, sampler: { type: 'filtering' } },
           ],
         }),
-        advectVel: device.createBindGroupLayout({
-          label: 'advect-vel-3d',
-          entries: [sampled3d(0), storage3d(1, 'rgba16float')],
+        velPredict: device.createBindGroupLayout({
+          label: 'vel-predict-3d',
+          entries: [sampled3d(0), storage3d(2, 'rgba16float')],
+        }),
+        velCorrect: device.createBindGroupLayout({
+          label: 'vel-correct-3d',
+          entries: [sampled3d(0), sampled3d(1), storage3d(2, 'rgba16float')],
         }),
         forces: device.createBindGroupLayout({
           label: 'forces-3d',
           entries: [sampled3d(0), sampled3d(1), storage3d(2, 'rgba16float')],
         }),
-        advectDen: device.createBindGroupLayout({
-          label: 'advect-den-3d',
-          entries: [sampled3d(0), sampled3d(1), storage3d(2, 'rgba16float')],
+        curl: device.createBindGroupLayout({
+          label: 'curl-3d',
+          entries: [sampled3d(0), storage3d(1, 'rgba16float')],
+        }),
+        confine: device.createBindGroupLayout({
+          label: 'confine-3d',
+          entries: [sampled3d(0), sampled3d(2), storage3d(3, 'rgba16float')],
+        }),
+        denPredict: device.createBindGroupLayout({
+          label: 'den-predict-3d',
+          entries: [sampled3d(0), sampled3d(1), storage3d(3, 'rgba16float')],
+        }),
+        denCorrect: device.createBindGroupLayout({
+          label: 'den-correct-3d',
+          entries: [sampled3d(0), sampled3d(1), sampled3d(2), storage3d(3, 'rgba16float')],
         }),
         divergence: device.createBindGroupLayout({
           label: 'divergence-3d',
@@ -178,14 +209,16 @@ export class FluidSim3D {
         }),
       };
 
-      const [advectVelM, advectDenM, forcesM, projectM, raymarchM, clearM] = await Promise.all([
-        createShaderModule(device, 'advect_velocity3d.wgsl', advectVelWGSL),
-        createShaderModule(device, 'advect_density3d.wgsl', advectDenWGSL),
-        createShaderModule(device, 'forces3d.wgsl', forcesWGSL),
-        createShaderModule(device, 'project3d.wgsl', projectWGSL),
-        createShaderModule(device, 'raymarch.wgsl', raymarchWGSL),
-        createShaderModule(device, 'clear3d.wgsl', clearWGSL),
-      ]);
+      const [advectVelM, advectDenM, forcesM, vorticityM, projectM, raymarchM, clearM] =
+        await Promise.all([
+          createShaderModule(device, 'advect_velocity3d.wgsl', advectVelWGSL),
+          createShaderModule(device, 'advect_density3d.wgsl', advectDenWGSL),
+          createShaderModule(device, 'forces3d.wgsl', forcesWGSL),
+          createShaderModule(device, 'vorticity3d.wgsl', vorticityWGSL),
+          createShaderModule(device, 'project3d.wgsl', projectWGSL),
+          createShaderModule(device, 'raymarch.wgsl', raymarchWGSL),
+          createShaderModule(device, 'clear3d.wgsl', clearWGSL),
+        ]);
 
       const compute = (
         label: string,
@@ -202,11 +235,15 @@ export class FluidSim3D {
           compute: { module, entryPoint },
         });
 
-      const [advectVel, forces, advectDen, divergencePipe, jacobi, gradient, clearRgba, clearScalar, render] =
+      const [velPredict, velCorrect, forces, curlPipe, confine, denPredict, denCorrect, divergencePipe, jacobi, gradient, clearRgba, clearScalar, render] =
         await Promise.all([
-          compute('advect-vel-3d', L.advectVel, advectVelM, 'main'),
+          compute('vel-predict-3d', L.velPredict, advectVelM, 'predict'),
+          compute('vel-correct-3d', L.velCorrect, advectVelM, 'correct'),
           compute('forces-3d', L.forces, forcesM, 'main'),
-          compute('advect-den-3d', L.advectDen, advectDenM, 'main'),
+          compute('curl-3d', L.curl, vorticityM, 'curl'),
+          compute('confine-3d', L.confine, vorticityM, 'confine'),
+          compute('den-predict-3d', L.denPredict, advectDenM, 'predict'),
+          compute('den-correct-3d', L.denCorrect, advectDenM, 'correct'),
           compute('divergence-3d', L.divergence, projectM, 'divergence'),
           compute('jacobi-3d', L.jacobi, projectM, 'jacobi'),
           compute('gradient-3d', L.gradient, projectM, 'gradient'),
@@ -239,13 +276,24 @@ export class FluidSim3D {
       });
 
       const binds = {
-        advectVel: pair((v) =>
+        velPredict: pair((v) =>
           device.createBindGroup({
-            label: `advect-vel-3d-${v}`,
-            layout: L.advectVel,
+            label: `vel-predict-3d-${v}`,
+            layout: L.velPredict,
             entries: [
               { binding: 0, resource: velocity[v] },
-              { binding: 1, resource: velocity[flip(v)] },
+              { binding: 2, resource: velScratch },
+            ],
+          }),
+        ),
+        velCorrect: pair((v) =>
+          device.createBindGroup({
+            label: `vel-correct-3d-${v}`,
+            layout: L.velCorrect,
+            entries: [
+              { binding: 0, resource: velocity[v] },
+              { binding: 1, resource: velScratch },
+              { binding: 2, resource: velocity[flip(v)] },
             ],
           }),
         ),
@@ -262,15 +310,50 @@ export class FluidSim3D {
             }),
           ),
         ),
-        advectDen: pair((d) =>
+        curl: pair((v) =>
+          device.createBindGroup({
+            label: `curl-3d-${v}`,
+            layout: L.curl,
+            entries: [
+              { binding: 0, resource: velocity[v] },
+              { binding: 1, resource: curlTex },
+            ],
+          }),
+        ),
+        confine: pair((v) =>
+          device.createBindGroup({
+            label: `confine-3d-${v}`,
+            layout: L.confine,
+            entries: [
+              { binding: 0, resource: velocity[v] },
+              { binding: 2, resource: curlTex },
+              { binding: 3, resource: velocity[flip(v)] },
+            ],
+          }),
+        ),
+        denPredict: pair((d) =>
           pair((v) =>
             device.createBindGroup({
-              label: `advect-den-3d-d${d}-v${v}`,
-              layout: L.advectDen,
+              label: `den-predict-3d-d${d}-v${v}`,
+              layout: L.denPredict,
               entries: [
                 { binding: 0, resource: density[d] },
                 { binding: 1, resource: velocity[v] },
-                { binding: 2, resource: density[flip(d)] },
+                { binding: 3, resource: denScratch },
+              ],
+            }),
+          ),
+        ),
+        denCorrect: pair((d) =>
+          pair((v) =>
+            device.createBindGroup({
+              label: `den-correct-3d-d${d}-v${v}`,
+              layout: L.denCorrect,
+              entries: [
+                { binding: 0, resource: density[d] },
+                { binding: 1, resource: velocity[v] },
+                { binding: 2, resource: denScratch },
+                { binding: 3, resource: density[flip(d)] },
               ],
             }),
           ),
@@ -341,7 +424,21 @@ export class FluidSim3D {
         simUniforms,
         renderUniforms,
         group0,
-        { advectVel, forces, advectDen, divergence: divergencePipe, jacobi, gradient, clearRgba, clearScalar, render },
+        {
+          velPredict,
+          velCorrect,
+          forces,
+          curl: curlPipe,
+          confine,
+          denPredict,
+          denCorrect,
+          divergence: divergencePipe,
+          jacobi,
+          gradient,
+          clearRgba,
+          clearScalar,
+          render,
+        },
         binds,
       );
     });
@@ -353,7 +450,7 @@ export class FluidSim3D {
     const running = !input.paused && dt > 0;
     if (running) {
       this.simTime += dt;
-      this.writeSimUniforms(dt);
+      this.writeSimUniforms(dt, input.vorticityStrength);
     }
     this.writeRenderUniforms(input, aspect);
 
@@ -375,8 +472,12 @@ export class FluidSim3D {
       }
       if (running) {
         cp.setBindGroup(0, this.group0);
-        cp.setPipeline(this.pipelines.advectVel);
-        cp.setBindGroup(1, this.binds.advectVel[this.velIdx]);
+        // Advection MacCormack de la vélocité : prédicteur → scratch, correcteur clampé.
+        cp.setPipeline(this.pipelines.velPredict);
+        cp.setBindGroup(1, this.binds.velPredict[this.velIdx]);
+        cp.dispatchWorkgroups(n, n, n);
+        cp.setPipeline(this.pipelines.velCorrect);
+        cp.setBindGroup(1, this.binds.velCorrect[this.velIdx]);
         cp.dispatchWorkgroups(n, n, n);
         this.velIdx = flip(this.velIdx);
 
@@ -384,6 +485,18 @@ export class FluidSim3D {
         cp.setBindGroup(1, this.binds.forces[this.velIdx][this.denIdx]);
         cp.dispatchWorkgroups(n, n, n);
         this.velIdx = flip(this.velIdx);
+
+        // Vorticity confinement : rotationnel vectoriel puis force de renforcement.
+        // Passes sautées à ε = 0 (défaut — voir config3d.ts sur le grain de grille).
+        if (input.vorticityStrength > 0) {
+          cp.setPipeline(this.pipelines.curl);
+          cp.setBindGroup(1, this.binds.curl[this.velIdx]);
+          cp.dispatchWorkgroups(n, n, n);
+          cp.setPipeline(this.pipelines.confine);
+          cp.setBindGroup(1, this.binds.confine[this.velIdx]);
+          cp.dispatchWorkgroups(n, n, n);
+          this.velIdx = flip(this.velIdx);
+        }
 
         cp.setPipeline(this.pipelines.divergence);
         cp.setBindGroup(1, this.binds.divergence[this.velIdx]);
@@ -402,8 +515,12 @@ export class FluidSim3D {
         cp.dispatchWorkgroups(n, n, n);
         this.velIdx = flip(this.velIdx);
 
-        cp.setPipeline(this.pipelines.advectDen);
-        cp.setBindGroup(1, this.binds.advectDen[this.denIdx][this.velIdx]);
+        // Advection MacCormack des densités + injection de l'émetteur au correcteur.
+        cp.setPipeline(this.pipelines.denPredict);
+        cp.setBindGroup(1, this.binds.denPredict[this.denIdx][this.velIdx]);
+        cp.dispatchWorkgroups(n, n, n);
+        cp.setPipeline(this.pipelines.denCorrect);
+        cp.setBindGroup(1, this.binds.denCorrect[this.denIdx][this.velIdx]);
         cp.dispatchWorkgroups(n, n, n);
         this.denIdx = flip(this.denIdx);
       }
@@ -423,12 +540,13 @@ export class FluidSim3D {
     this.device.queue.submit(this.submitList);
   }
 
-  private writeSimUniforms(dt: number): void {
+  private writeSimUniforms(dt: number, vorticityStrength: number): void {
     const d = this.simData;
     const D = SIM3_DEFAULTS;
     d[0] = dt;
     d[1] = this.simTime;
     d[2] = GRID3;
+    d[3] = vorticityStrength;
     // Émetteur : bas de la boîte, centre légèrement mobile.
     d[4] = GRID3 * (0.5 + 0.05 * Math.sin(this.simTime * 0.9));
     d[5] = GRID3 * 0.08;

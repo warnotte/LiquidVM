@@ -45,6 +45,7 @@ async function boot(): Promise<void> {
     paused: false,
     reset: false,
     jacobiIterations: SIM3_DEFAULTS.jacobiIterations,
+    vorticityStrength: SIM3_DEFAULTS.vorticityStrength,
     cam: {
       azimuth: SIM3_DEFAULTS.camAzimuth,
       elevation: SIM3_DEFAULTS.camElevation,

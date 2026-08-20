@@ -1,43 +1,95 @@
-// Advection semi-lagrangienne de la vélocité sur grille MAC 3D.
-// Convention : le texel (i,j,k) porte u à la face gauche (i, j+½, k+½),
-// v à la face basse (i+½, j, k+½), w à la face arrière (i+½, j+½, k).
-// Chaque composante est advectée depuis SA position de face, échantillonnée avec
-// SON demi-décalage. Boîte fermée : les faces frontières (i=0 / j=0 / k=0) sont
-// zéroées à l'écriture ; les faces opposées n'existent pas (schéma compact) et
-// valent 0 dans la divergence — murs gratuits sur les six côtés.
+// Advection MacCormack de la vélocité sur grille MAC 3D — deux entry points.
+// predict : semi-lagrangien φ̂ = A(φ) vers la texture scratch (aux).
+// correct : φ̃ = A⁻¹(φ̂) (re-advection en remontant le temps), φ' = φ̂ + ½(φ − φ̃),
+// clampé au min/max du stencil trilinéaire du point rétro-advecté (Selle 2008) —
+// l'ordre 2 sans les oscillations. Dissipation et murs appliqués au correcteur.
+// Convention MAC : texel (i,j,k) → u à (i, j+½, k+½), v à (i+½, j, k+½), w à (i+½, j+½, k).
 
 struct Params {
-  misc: vec4f,      // x: dt, y: temps, z: N, w: libre
-  emitter: vec4f,   // xyz: centre (voxels), w: rayon (voxels)
-  emit_vals: vec4f, // x: débit chaleur, y: débit fumée, z: impulsion ↑, w: impulsion latérale
-  diss: vec4f,      // x: dissipation vélocité, y: dissipation fumée, z: refroidissement, w: buoyancy
+  misc: vec4f,      // x: dt, y: temps, z: N, w: force de vorticité
+  emitter: vec4f,
+  emit_vals: vec4f,
+  diss: vec4f,      // x: dissipation vélocité, y: fumée, z: refroidissement, w: buoyancy
 }
 
 @group(0) @binding(0) var<uniform> P: Params;
 @group(0) @binding(1) var lin: sampler;
 @group(1) @binding(0) var vel_src: texture_3d<f32>;
-@group(1) @binding(1) var vel_dst: texture_storage_3d<rgba16float, write>;
+@group(1) @binding(1) var aux: texture_3d<f32>;
+@group(1) @binding(2) var vel_dst: texture_storage_3d<rgba16float, write>;
 
+const OFF_U = vec3f(0.5, 0.0, 0.0);
+const OFF_V = vec3f(0.0, 0.5, 0.0);
+const OFF_W = vec3f(0.0, 0.0, 0.5);
+
+fn n_size() -> i32 {
+  return i32(P.misc.z);
+}
 fn inv_n() -> vec3f {
-  return vec3f(1.0) / vec3f(f32(P.misc.z));
+  return vec3f(1.0) / vec3f(P.misc.z);
 }
 
-fn sample_u(p: vec3f) -> f32 {
-  return textureSampleLevel(vel_src, lin, (p + vec3f(0.5, 0.0, 0.0)) * inv_n(), 0.0).x;
+fn src_u(p: vec3f) -> f32 {
+  return textureSampleLevel(vel_src, lin, (p + OFF_U) * inv_n(), 0.0).x;
 }
-fn sample_v(p: vec3f) -> f32 {
-  return textureSampleLevel(vel_src, lin, (p + vec3f(0.0, 0.5, 0.0)) * inv_n(), 0.0).y;
+fn src_v(p: vec3f) -> f32 {
+  return textureSampleLevel(vel_src, lin, (p + OFF_V) * inv_n(), 0.0).y;
 }
-fn sample_w(p: vec3f) -> f32 {
-  return textureSampleLevel(vel_src, lin, (p + vec3f(0.0, 0.0, 0.5)) * inv_n(), 0.0).z;
+fn src_w(p: vec3f) -> f32 {
+  return textureSampleLevel(vel_src, lin, (p + OFF_W) * inv_n(), 0.0).z;
 }
 fn velocity_at(p: vec3f) -> vec3f {
-  return vec3f(sample_u(p), sample_v(p), sample_w(p));
+  return vec3f(src_u(p), src_v(p), src_w(p));
+}
+
+fn aux_u(p: vec3f) -> f32 {
+  return textureSampleLevel(aux, lin, (p + OFF_U) * inv_n(), 0.0).x;
+}
+fn aux_v(p: vec3f) -> f32 {
+  return textureSampleLevel(aux, lin, (p + OFF_V) * inv_n(), 0.0).y;
+}
+fn aux_w(p: vec3f) -> f32 {
+  return textureSampleLevel(aux, lin, (p + OFF_W) * inv_n(), 0.0).z;
+}
+
+// Min/max d'une composante sur les 8 coins du stencil trilinéaire au point `pos`
+// (grille des faces de cette composante : coordonnée texel continue = pos + off).
+fn stencil_minmax(pos: vec3f, off: vec3f, comp: i32) -> vec2f {
+  let base = vec3i(floor(pos + off - vec3f(0.5)));
+  var lo = 1e30;
+  var hi = -1e30;
+  for (var i = 0; i < 8; i++) {
+    let corner = vec3i(i & 1, (i >> 1) & 1, (i >> 2) & 1);
+    let c = clamp(base + corner, vec3i(0), vec3i(n_size() - 1));
+    let v4 = textureLoad(vel_src, c, 0);
+    let v = select(select(v4.z, v4.y, comp == 1), v4.x, comp == 0);
+    lo = min(lo, v);
+    hi = max(hi, v);
+  }
+  return vec2f(lo, hi);
 }
 
 @compute @workgroup_size(4, 4, 4)
-fn main(@builtin(global_invocation_id) gid: vec3u) {
-  let n = i32(P.misc.z);
+fn predict(@builtin(global_invocation_id) gid: vec3u) {
+  let n = n_size();
+  let c = vec3i(gid);
+  if (c.x >= n || c.y >= n || c.z >= n) {
+    return;
+  }
+  let dt = P.misc.x;
+  let fc = vec3f(c);
+  let pu = fc + vec3f(0.0, 0.5, 0.5);
+  let pv = fc + vec3f(0.5, 0.0, 0.5);
+  let pw = fc + vec3f(0.5, 0.5, 0.0);
+  let u = src_u(pu - dt * velocity_at(pu));
+  let v = src_v(pv - dt * velocity_at(pv));
+  let w = src_w(pw - dt * velocity_at(pw));
+  textureStore(vel_dst, gid, vec4f(u, v, w, 0.0));
+}
+
+@compute @workgroup_size(4, 4, 4)
+fn correct(@builtin(global_invocation_id) gid: vec3u) {
+  let n = n_size();
   let c = vec3i(gid);
   if (c.x >= n || c.y >= n || c.z >= n) {
     return;
@@ -45,15 +97,26 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
   let dt = P.misc.x;
   let decay = 1.0 / (1.0 + P.diss.x * dt);
   let fc = vec3f(c);
+  let orig = textureLoad(vel_src, c, 0);
+  let hat = textureLoad(aux, c, 0);
 
-  // Position de chaque face portée par ce texel.
   let pu = fc + vec3f(0.0, 0.5, 0.5);
   let pv = fc + vec3f(0.5, 0.0, 0.5);
   let pw = fc + vec3f(0.5, 0.5, 0.0);
+  let vel_u = velocity_at(pu);
+  let vel_v = velocity_at(pv);
+  let vel_w = velocity_at(pw);
 
-  var u = sample_u(pu - dt * velocity_at(pu)) * decay;
-  var v = sample_v(pv - dt * velocity_at(pv)) * decay;
-  var w = sample_w(pw - dt * velocity_at(pw)) * decay;
+  // φ' = φ̂ + ½(φ − φ̃), clampé au stencil du point rétro-advecté.
+  var u = hat.x + 0.5 * (orig.x - aux_u(pu + dt * vel_u));
+  var v = hat.y + 0.5 * (orig.y - aux_v(pv + dt * vel_v));
+  var w = hat.z + 0.5 * (orig.z - aux_w(pw + dt * vel_w));
+  let mu = stencil_minmax(pu - dt * vel_u, OFF_U, 0);
+  let mv = stencil_minmax(pv - dt * vel_v, OFF_V, 1);
+  let mw = stencil_minmax(pw - dt * vel_w, OFF_W, 2);
+  u = clamp(u, mu.x, mu.y) * decay;
+  v = clamp(v, mv.x, mv.y) * decay;
+  w = clamp(w, mw.x, mw.y) * decay;
 
   // Boîte fermée : non-pénétration aux faces frontières.
   u = select(u, 0.0, c.x == 0);

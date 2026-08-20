@@ -114,11 +114,18 @@ Config actuelle : sim 1024², dye/scène 2048².
   (boîte fermée, Neumann par clamp), émetteur de panache feu/fumée balancé,
   ray-marching (Beer-Lambert + corps noir + ombre interne 6 pas + liseré de boîte),
   caméra orbitale (glisser/molette), espace/R, `?selftest`. 60 FPS à 128³ desktop.
-- **Prochaines briques, dans l'ordre prévu** : MacCormack 3D + confinement de
-  vorticité 3D (le panache actuel est laminaire — c'est le raffineur attendu) ;
-  multigrid 3D (36 Jacobi ne convergent que les hautes fréquences — utiliser la vue
-  résidu MG du 2D comme modèle d'instrumentation) ; interaction (souffler dans le
-  volume au pointeur) ; encres colorées (canaux yz réservés dans la densité).
+- **MacCormack 3D** : prédicteur/correcteur clampé par composante MAC (stencil du
+  point rétro-advecté) — LE raffineur : le panache laminaire devient turbulent et
+  structuré à lui seul.
+- **Confinement de vorticité 3D** : implémenté (ω vectoriel aux centres, F = ε N̂×ω
+  par face) mais DÉFAUT ε = 0 — à 128³, le gradient de |ω| à ±1 voxel injecte du
+  grain à l'échelle de la grille dès ε≈3 et détruit le panache vers ε≈10 (calibré
+  par captures EPS-0/3/6/10). Réglable à chaud : `__frame3d.vorticityStrength`.
+  Avant de le réactiver : lisser |ω| (flou 3D) avant d'en prendre le gradient.
+- **Prochaines briques** : multigrid 3D (36 Jacobi ne convergent que les hautes
+  fréquences — utiliser la vue résidu MG du 2D comme modèle d'instrumentation) ;
+  interaction (souffler dans le volume au pointeur) ; encres colorées (canaux yz
+  réservés dans la densité).
 
 ## Pistes suivantes
 
