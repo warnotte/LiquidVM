@@ -104,6 +104,31 @@ export class InputController {
     }
   }
 
+  /**
+   * « Clic » virtuel (pilotage par les mains) : applique la même sémantique d'outil
+   * que le bouton principal de la souris — les outils fluides pressent `down`, les
+   * outils mur/gomme pressent `wall` — pour que les gestes pilotent toute l'interface.
+   */
+  setPress(pressed: boolean): void {
+    const p = this.frame.pointer;
+    if (!pressed) {
+      p.down = false;
+      p.wall = false;
+      p.erase = false;
+      return;
+    }
+    if (this.currentUITool === UI_TOOL_WALL) {
+      p.wall = true;
+      p.erase = false;
+    } else if (this.currentUITool === UI_TOOL_WALL_ERASE) {
+      p.wall = true;
+      p.erase = true;
+    } else {
+      p.down = true;
+      this.frame.tool = this.currentUITool as ToolId;
+    }
+  }
+
   /** À appeler après chaque frame : consomme le delta accumulé et les actions ponctuelles. */
   endFrame(): void {
     this.frame.pointer.dx = 0;

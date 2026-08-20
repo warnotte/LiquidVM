@@ -23,6 +23,7 @@ const VIEW_LABELS = [
 ] as const;
 import { acquireDevice } from './gpu';
 import { CameraFlow } from './camera';
+import { HandTracking } from './hands';
 import { InputController } from './input';
 import { Overlay, showFatalError } from './overlay';
 import { DebugPanel, TOOL_LABELS } from './panel';
@@ -166,12 +167,32 @@ async function boot(): Promise<void> {
         input.frame.params.cameraFlow = false;
       }
     };
-    const panel = new DebugPanel(document.body, input, toggleCamera);
+    // Pilotage par les mains : l'activation démarre la caméra si besoin, puis charge
+    // MediaPipe à la demande (~8 Mo depuis le CDN au premier usage).
+    const hands = new HandTracking(document.body);
+    const toggleHands = (on: boolean): void => {
+      if (!on) {
+        hands.stop(input);
+        return;
+      }
+      camera
+        .start()
+        .then(() => hands.start())
+        .catch((err: unknown) => {
+          console.warn('[mains]', err);
+          hands.stop(input);
+        });
+    };
+    const panel = new DebugPanel(document.body, input, toggleCamera, {
+      get: () => hands.active,
+      set: toggleHands,
+    });
     const toolbar = new MobileToolbar(document.body, input, () => panel.toggle());
     const driver = selftest ? new SelftestDriver(input.frame) : null;
     if (selftest) {
-      // Poignée de debug pour l'outillage CDP : mutation des réglages en plein vol.
+      // Poignées de debug pour l'outillage CDP : mutation des réglages en plein vol.
       (window as unknown as Record<string, unknown>)['__frame'] = input.frame;
+      (window as unknown as Record<string, unknown>)['__hands'] = toggleHands;
       // `&camera` : active le flux optique dès le boot (fausse caméra en test headless).
       if (new URLSearchParams(location.search).has('camera')) {
         toggleCamera(true);
@@ -191,6 +212,7 @@ async function boot(): Promise<void> {
       if (input.frame.params.cameraFlow) {
         camera.copyFrame(device, sim.cameraTexture);
       }
+      hands.update(now, input, camera.videoElement);
       // L'encart caméra doit rester carré à l'écran quel que soit le format du canvas.
       input.frame.render.aspect = canvas.width / Math.max(canvas.height, 1);
       sim.frame(dt, input.frame, context.getCurrentTexture().createView());

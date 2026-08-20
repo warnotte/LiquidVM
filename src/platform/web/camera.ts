@@ -18,6 +18,11 @@ export class CameraFlow {
     return this.video !== null;
   }
 
+  /** Élément vidéo partagé (flux optique et suivi des mains utilisent le même flux). */
+  get videoElement(): HTMLVideoElement | null {
+    return this.video;
+  }
+
   async start(): Promise<void> {
     if (this.video) {
       return;

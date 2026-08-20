@@ -269,6 +269,25 @@
         border-color: rgba(255, 120, 40, 0.9);
       }
 
+      .hand-cursor {
+        position: fixed;
+        width: 28px;
+        height: 28px;
+        border: 2.5px solid rgba(140, 175, 255, 0.95);
+        border-radius: 50%;
+        transform: translate(-50%, -50%);
+        pointer-events: none;
+        z-index: 40;
+        box-shadow: 0 0 12px rgba(140, 175, 255, 0.5);
+        transition: background-color 0.08s ease;
+      }
+      .hand-cursor.pinch {
+        background: rgba(160, 190, 255, 0.55);
+        border-color: #fff;
+      }
+      .hand-cursor.hidden {
+        display: none;
+      }
       .fatal {
         position: fixed;
         inset: 0;

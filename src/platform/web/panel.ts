@@ -29,6 +29,7 @@ export class DebugPanel {
     parent: HTMLElement,
     input: InputController,
     onCameraToggle?: (on: boolean) => void,
+    hands?: { get: () => boolean; set: (on: boolean) => void },
   ) {
     const frame = input.frame;
     this.root = document.createElement('div');
@@ -213,6 +214,9 @@ export class DebugPanel {
       // L'état réel (p.cameraFlow) n'est vrai qu'une fois la permission accordée et le
       // flux démarré — refresh() resynchronise la case si la demande échoue.
       this.addCheckbox('caméra : le mouvement pousse le fluide', () => p.cameraFlow, onCameraToggle);
+    }
+    if (hands) {
+      this.addCheckbox('mains : index = pointeur, pincer = cliquer', hands.get, hands.set);
     }
 
     const buttons = document.createElement('div');
