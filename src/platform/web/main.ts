@@ -27,6 +27,7 @@ import { HandTracking } from './hands';
 import { InputController } from './input';
 import { Overlay, showFatalError } from './overlay';
 import { DebugPanel, TOOL_LABELS } from './panel';
+import { ToolPreview } from './preview';
 import { MobileToolbar } from './toolbar';
 
 const SELFTEST_REPORT_FRAME = 200;
@@ -188,6 +189,13 @@ async function boot(): Promise<void> {
       set: toggleHands,
     });
     const toolbar = new MobileToolbar(document.body, input, () => panel.toggle());
+    // Aperçu fantôme de l'outil actif : taille et forme réelles sous le curseur.
+    const preview = new ToolPreview(document.body);
+    canvas.addEventListener('pointermove', (e) => {
+      preview.move(e.clientX, e.clientY);
+      preview.refresh(input, canvas);
+    });
+    canvas.addEventListener('pointerleave', () => preview.hide());
     const driver = selftest ? new SelftestDriver(input.frame) : null;
     if (selftest) {
       // Poignées de debug pour l'outillage CDP : mutation des réglages en plein vol.
