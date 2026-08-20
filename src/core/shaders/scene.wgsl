@@ -20,6 +20,8 @@ struct RenderParams {
 @group(0) @binding(4) var pressure_tex: texture_2d<f32>;
 @group(0) @binding(5) var divergence_tex: texture_2d<f32>;
 @group(0) @binding(6) var curl_tex: texture_2d<f32>;
+@group(0) @binding(7) var camera_tex: texture_2d<f32>;
+@group(0) @binding(8) var flow_tex: texture_2d<f32>;
 
 struct VSOut {
   @builtin(position) pos: vec4f,
@@ -105,8 +107,20 @@ fn fs_main(frag: VSOut) -> @location(0) vec4f {
       // lentement) reste lisible sans saturer toute la vue.
       col = diverging(textureLoad(divergence_tex, sim_texel(frag.uv), 0).x * 0.2);
     }
-    default: {
+    case 4u: {
       col = diverging(textureLoad(curl_tex, sim_texel(frag.uv), 0).x * 0.02);
+    }
+    default: {
+      // Vue caméra : l'image que le flux optique voit (miroir horizontal, comme lui)
+      // + le flux en couleurs (teinte = direction, luminosité = intensité). Image
+      // noire → la copie caméra n'arrive pas ; pas de couleurs en bougeant → le flux
+      // ne se calcule pas ; couleurs sans effet sur le fluide → l'application est cassée.
+      let cam = textureSampleLevel(camera_tex, lin, vec2f(1.0 - frag.uv.x, frag.uv.y), 0.0).rgb;
+      let lum = dot(cam, vec3f(0.299, 0.587, 0.114));
+      let flow = textureSampleLevel(flow_tex, lin, frag.uv, 0.0).xy;
+      let mag = clamp(length(flow), 0.0, 1.0);
+      let hue = atan2(flow.y, flow.x) / 6.2831853 + 0.5;
+      col = vec3f(lum * 0.45) + hsv2rgb(hue, 0.9, mag);
     }
   }
   return vec4f(col, 1.0);

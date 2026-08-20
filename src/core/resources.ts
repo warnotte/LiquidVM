@@ -68,6 +68,9 @@ export interface SimResources {
   readonly flowLum: PingTextures;
   /** Champ de flux optique résultant (xy). */
   readonly flow: SingleTexture;
+  /** Copie du flux de la frame précédente (persistance temporelle : la caméra tourne
+   *  à ~30 fps, la sim à 60 — sans persistance, une frame sur deux effacerait tout). */
+  readonly flowPrev: SingleTexture;
 }
 
 function createFieldTexture(
@@ -182,6 +185,26 @@ export function createResources(device: GPUDevice): SimResources {
       return { texture, view: texture.createView({ label: 'camera-view' }) };
     })(),
     flowLum: createPing(device, 'flow-luminance', SCALAR_FORMAT, FLOW_SIZE),
-    flow: createSingle(device, 'flow', DENSITY_FORMAT, FLOW_SIZE),
+    flow: (() => {
+      const texture = device.createTexture({
+        label: 'flow',
+        size: { width: FLOW_SIZE, height: FLOW_SIZE },
+        format: DENSITY_FORMAT,
+        usage:
+          GPUTextureUsage.TEXTURE_BINDING |
+          GPUTextureUsage.STORAGE_BINDING |
+          GPUTextureUsage.COPY_SRC,
+      });
+      return { texture, view: texture.createView({ label: 'flow-view' }) };
+    })(),
+    flowPrev: (() => {
+      const texture = device.createTexture({
+        label: 'flow-prev',
+        size: { width: FLOW_SIZE, height: FLOW_SIZE },
+        format: DENSITY_FORMAT,
+        usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+      });
+      return { texture, view: texture.createView({ label: 'flow-prev-view' }) };
+    })(),
   };
 }

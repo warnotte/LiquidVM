@@ -175,6 +175,8 @@ export class CompositeRenderer {
               { binding: 4, resource: res.pressure.views[p] },
               { binding: 5, resource: res.divergence.view },
               { binding: 6, resource: res.curl.view },
+              { binding: 7, resource: res.camera.view },
+              { binding: 8, resource: res.flow.view },
             ],
           }),
         ),

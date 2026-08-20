@@ -30,6 +30,7 @@ import {
   DISPATCH_SIZE,
   DYE_DISPATCH_SIZE,
   FLOW_DISPATCH,
+  FLOW_SIZE,
   MG_COARSE_SMOOTH,
   MG_POST_SMOOTH,
   MG_PRE_SMOOTH,
@@ -242,6 +243,15 @@ export class FluidSim {
     this.lastBoundaryMode = input.boundaryMode;
 
     const encoder = this.device.createCommandEncoder({ label: 'frame-encoder' });
+    // Persistance du flux optique : copie du flux de la frame précédente, que la passe
+    // d'estimation fera décroître au lieu de l'effacer (caméra ~30 fps vs sim 60 fps).
+    if (input.params.cameraFlow && substeps > 0) {
+      encoder.copyTextureToTexture(
+        { texture: this.res.flow.texture },
+        { texture: this.res.flowPrev.texture },
+        [FLOW_SIZE, FLOW_SIZE],
+      );
+    }
     if (input.reset || input.clearWalls || painting || boundaryChanged || substeps > 0) {
       const cp = encoder.beginComputePass(this.computePassDesc);
       if (input.reset) {

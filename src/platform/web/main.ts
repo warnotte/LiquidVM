@@ -13,7 +13,14 @@ import { FluidSim } from '../../core/simulation';
 import type { FrameInput, SubstanceId } from '../../core/types';
 
 const BOUNDARY_LABELS = ['parois', 'périodique', 'ouvert'] as const;
-const VIEW_LABELS = ['fluides', 'vélocité', 'pression', 'divergence', 'vorticité'] as const;
+const VIEW_LABELS = [
+  'fluides',
+  'vélocité',
+  'pression',
+  'divergence',
+  'vorticité',
+  'caméra',
+] as const;
 import { acquireDevice } from './gpu';
 import { CameraFlow } from './camera';
 import { InputController } from './input';

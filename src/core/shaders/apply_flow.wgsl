@@ -73,7 +73,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
   var vel = textureLoad(src_vel, c, 0).xy;
 
   // Accélération ∝ flux, mise à l'échelle de la grille comme les autres forces absolues.
-  let strength = 320.0 * (P.grid.x / 512.0);
+  let strength = 420.0 * (P.grid.x / 512.0);
   let pu = vec2f(f32(c.x), f32(c.y) + 0.5);
   let pv = vec2f(f32(c.x) + 0.5, f32(c.y));
   vel.x += flow_at(pu).x * strength * P.impulse.x;

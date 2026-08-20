@@ -166,6 +166,7 @@ export function createLayouts(device: GPUDevice): SimLayouts {
         sampledScalar(1),
         storage(2, DENSITY_FORMAT),
         storage(3, SCALAR_FORMAT),
+        sampledFloat(4),
       ],
     }),
     applyFlow: device.createBindGroupLayout({
@@ -198,6 +199,8 @@ export function createLayouts(device: GPUDevice): SimLayouts {
           texture: { sampleType: 'unfilterable-float' },
         },
         { binding: 6, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
+        { binding: 7, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
+        { binding: 8, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
       ],
     }),
     bloom: device.createBindGroupLayout({
