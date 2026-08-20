@@ -41,6 +41,9 @@ export interface Frame3DInput {
   vorticityStrength: number;
   /** Caméra orbitale autour du centre de la boîte. */
   cam: { azimuth: number; elevation: number; radius: number };
+  /** Souffle du pointeur (clic droit + glisser) : position NDC [-1,1] et delta NDC
+   *  accumulé depuis la dernière frame (consommé par la plateforme après frame()). */
+  blow: { active: boolean; ndcX: number; ndcY: number; moveX: number; moveY: number };
   exposure: number;
   raymarchSteps: number;
 }
@@ -60,9 +63,24 @@ function tex3d(
       dimension: '3d',
       size: { width: size, height: size, depthOrArrayLayers: size },
       format,
-      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.STORAGE_BINDING,
+      usage:
+        GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.COPY_SRC,
     })
     .createView({ label: `${label}-view` });
+}
+
+/** Décodage float16 → float32 (le readback d'export lit du rgba16float). */
+function halfToFloat(h: number): number {
+  const sign = h & 0x8000 ? -1 : 1;
+  const exp = (h >> 10) & 0x1f;
+  const mant = h & 0x3ff;
+  if (exp === 0) {
+    return sign * mant * 2 ** -24;
+  }
+  if (exp === 31) {
+    return mant ? Number.NaN : sign * Number.POSITIVE_INFINITY;
+  }
+  return sign * (1 + mant / 1024) * 2 ** (exp - 15);
 }
 
 /** Un niveau de la pyramide multigrid 3D (le niveau 0 réutilise pression/divergence). */
@@ -104,7 +122,7 @@ export class FluidSim3D {
   private pressIdx: PingIndex = 0;
   private simTime = 0;
 
-  private readonly simData = new Float32Array(16);
+  private readonly simData = new Float32Array(28);
   private readonly renderData = new Float32Array(20);
   private lastRender = new Float32Array(20).fill(Number.NaN);
   private readonly submitList: GPUCommandBuffer[] = [new Uint8Array(0) as unknown as GPUCommandBuffer];
@@ -149,6 +167,7 @@ export class FluidSim3D {
       clearsScalar: readonly GPUBindGroup[];
     },
     private readonly mgLevels: readonly MGLevel3[],
+    private readonly denTextures: Pair<GPUTexture>,
   ) {
     this.mgIdx = new Array<number>(mgLevels.length).fill(0);
   }
@@ -159,7 +178,20 @@ export class FluidSim3D {
   static async create(device: GPUDevice, targetFormat: GPUTextureFormat): Promise<FluidSim3D> {
     return withValidation(device, 'init-3d', async () => {
       const velocity = pair((i) => tex3d(device, `vel3d-${i}`, 'rgba16float'));
-      const density = pair((i) => tex3d(device, `den3d-${i}`, 'rgba16float'));
+      // Les textures de densité gardent leur handle : l'export VDB les copie (COPY_SRC).
+      const denTextures = pair((i) =>
+        device.createTexture({
+          label: `den3d-${i}`,
+          dimension: '3d',
+          size: { width: GRID3, height: GRID3, depthOrArrayLayers: GRID3 },
+          format: 'rgba16float',
+          usage:
+            GPUTextureUsage.TEXTURE_BINDING |
+            GPUTextureUsage.STORAGE_BINDING |
+            GPUTextureUsage.COPY_SRC,
+        }),
+      );
+      const density = pair((i) => denTextures[i].createView({ label: `den3d-${i}-view` }));
       const pressure = pair((i) => tex3d(device, `press3d-${i}`, 'r32float'));
       const divergence = tex3d(device, 'div3d', 'r32float');
       // MacCormack : prédicteurs φ̂ ; vorticité : rotationnel vectoriel aux centres.
@@ -595,6 +627,7 @@ export class FluidSim3D {
         },
         binds,
         mgLevels,
+        denTextures,
       );
     });
   }
@@ -603,11 +636,13 @@ export class FluidSim3D {
   frame(input: Frame3DInput, target: GPUTextureView, aspect: number): void {
     const dt = Math.min(Math.max(input.dt, 0), 1 / 30);
     const running = !input.paused && dt > 0;
+    // Le rendu d'abord : writeSimUniforms lit la base caméra depuis renderData
+    // (rayon du souffle) — elle doit être celle de cette frame.
+    this.writeRenderUniforms(input, aspect);
     if (running) {
       this.simTime += dt;
-      this.writeSimUniforms(dt, input.vorticityStrength);
+      this.writeSimUniforms(dt, input);
     }
-    this.writeRenderUniforms(input, aspect);
 
     const encoder = this.device.createCommandEncoder({ label: 'frame3d' });
     if (running || input.reset) {
@@ -704,6 +739,38 @@ export class FluidSim3D {
   }
 
   /**
+   * Lecture ponctuelle du volume de densités pour l'export VDB — la SEULE
+   * lecture GPU→CPU du moteur 3D, hors boucle de frame (même exception
+   * documentée que l'export PNG du 2D). Alloue un staging buffer par appel.
+   */
+  async exportVolume(): Promise<{ smoke: Float32Array; heat: Float32Array }> {
+    const n = GRID3;
+    const texels = n * n * n;
+    const buffer = this.device.createBuffer({
+      label: 'export3d-readback',
+      size: texels * 8,
+      usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
+    });
+    const encoder = this.device.createCommandEncoder({ label: 'export3d' });
+    encoder.copyTextureToBuffer(
+      { texture: this.denTextures[this.denIdx] },
+      { buffer, bytesPerRow: n * 8, rowsPerImage: n },
+      { width: n, height: n, depthOrArrayLayers: n },
+    );
+    this.device.queue.submit([encoder.finish()]);
+    await buffer.mapAsync(GPUMapMode.READ);
+    const halves = new Uint16Array(buffer.getMappedRange());
+    const smoke = new Float32Array(texels);
+    const heat = new Float32Array(texels);
+    for (let i = 0; i < texels; i++) {
+      smoke[i] = halfToFloat(halves[i * 4]!);
+      heat[i] = halfToFloat(halves[i * 4 + 3]!);
+    }
+    buffer.destroy();
+    return { smoke, heat };
+  }
+
+  /**
    * Encode un V-cycle multigrid complet sur la pression du niveau 0 (warm start).
    * Descente : lissage pondéré, résidu, restriction ; plus grossier : lissage long ;
    * remontée : prolongation trilinéaire + post-lissage. Les index ping-pong par
@@ -764,13 +831,13 @@ export class FluidSim3D {
     this.pressIdx = idx[0] as PingIndex;
   }
 
-  private writeSimUniforms(dt: number, vorticityStrength: number): void {
+  private writeSimUniforms(dt: number, input: Frame3DInput): void {
     const d = this.simData;
     const D = SIM3_DEFAULTS;
     d[0] = dt;
     d[1] = this.simTime;
     d[2] = GRID3;
-    d[3] = vorticityStrength;
+    d[3] = input.vorticityStrength;
     // Émetteur : bas de la boîte, centre légèrement mobile.
     d[4] = GRID3 * (0.5 + 0.05 * Math.sin(this.simTime * 0.9));
     d[5] = GRID3 * 0.08;
@@ -784,6 +851,39 @@ export class FluidSim3D {
     d[13] = D.smokeDissipation;
     d[14] = D.heatCooling;
     d[15] = D.buoyancy;
+    // Souffle du pointeur : rayon caméra→scène reconstruit depuis la base déjà
+    // écrite dans renderData (même frame — voir l'ordre des écritures).
+    const b = input.blow;
+    const r = this.renderData;
+    if (b.active) {
+      const tanf = r[3]!;
+      const aspect = r[7]!;
+      const rgt = [r[4]!, r[5]!, r[6]!];
+      const up = [r[8]!, r[9]!, r[10]!];
+      const fwd = [r[12]!, r[13]!, r[14]!];
+      let dx = fwd[0]! + rgt[0]! * b.ndcX * tanf * aspect + up[0]! * b.ndcY * tanf;
+      let dy = fwd[1]! + rgt[1]! * b.ndcX * tanf * aspect + up[1]! * b.ndcY * tanf;
+      let dz = fwd[2]! + rgt[2]! * b.ndcX * tanf * aspect + up[2]! * b.ndcY * tanf;
+      const dl = Math.hypot(dx, dy, dz) || 1;
+      dx /= dl;
+      dy /= dl;
+      dz /= dl;
+      // Origine et force en voxels ; la force suit le geste écran (droite/haut caméra).
+      d[16] = (r[0]! + 0.5) * GRID3;
+      d[17] = (r[1]! + 0.5) * GRID3;
+      d[18] = (r[2]! + 0.5) * GRID3;
+      d[19] = D.blowRadius * GRID3;
+      d[20] = dx;
+      d[21] = dy;
+      d[22] = dz;
+      d[23] = 1;
+      const s = D.blowForce * GRID3;
+      d[24] = (rgt[0]! * b.moveX + up[0]! * b.moveY) * s;
+      d[25] = (rgt[1]! * b.moveX + up[1]! * b.moveY) * s;
+      d[26] = (rgt[2]! * b.moveX + up[2]! * b.moveY) * s;
+    } else {
+      d[23] = 0;
+    }
     this.device.queue.writeBuffer(this.simUniforms, 0, d);
   }
 

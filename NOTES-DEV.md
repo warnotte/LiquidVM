@@ -126,12 +126,23 @@ Config actuelle : sim 1024², dye/scène 2048².
   grain à l'échelle de la grille dès ε≈3 et détruit le panache vers ε≈10 (calibré
   par captures EPS-0/3/6/10). Réglable à chaud : `__frame3d.vorticityStrength`.
   Avant de le réactiver : lisser |ω| (flou 3D) avant d'en prendre le gradient.
-- **Prochaines briques** : interaction (souffler dans le volume au pointeur) ;
-  encres colorées (canaux yz réservés dans la densité) ; **export OpenVDB**
-  (demande utilisateur : interopérabilité Blender/Houdini) — readback ponctuel
-  hors boucle de frame (même exception documentée que l'export PNG 2D), writer
-  .vdb minimal en TS (grille dense uniforme, codec none), grilles `density` et
-  `temperature` ; séquences via File System Access API.
+- **Souffle au pointeur** : clic droit + glisser = force gaussienne dans un TUBE le
+  long du rayon caméra→scène, dirigée selon le geste (base caméra lue depuis
+  renderData — écrite AVANT les uniforms sim). Réglages : blowRadius/blowForce.
+- **Export OpenVDB (touche E)** : readback ponctuel hors boucle (seule lecture
+  GPU→CPU du moteur 3D) + encodeur .vdb pur TS (core3d/vdb.ts) + téléchargement.
+  Grilles float denses `density` et `temperature`, arbre 5-4-3 sans compression,
+  Y sim → +Z monde (la fumée monte dans Blender), boîte 1³ centrée. VALIDÉ dans
+  Blender 5.1.2 : import + volume-to-mesh (4720 sommets) + rendu Cycles du panache.
+  Pièges du format durement payés : masque de feuille = 8 **u64** = 64 octets (pas
+  8 octets !) ; masques du nœud 32³ = 4096 octets chacun ; UUID = 36 chars BRUTS
+  sans préfixe de longueur. Référence : article JangaFX « VDB: a deep dive » +
+  github.com/jangafx/simple-vdb-writer (et tinyvdbio pour le point de vue lecteur).
+  Piège Blender headless : --factory-startup garde le cube par défaut (dans la
+  collection enfant) — purger bpy.data.objects avant tout rendu de test.
+- **Prochaines briques** : séquences VDB animées (File System Access API) ;
+  encres colorées (canaux yz réservés dans la densité) ; qualité du confinement
+  de vorticité (flouter |ω|).
 
 ## Pistes suivantes
 

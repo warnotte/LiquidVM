@@ -40,6 +40,10 @@ export const SIM3_DEFAULTS = {
   emitSmoke: 2.4,
   emitUpVelocity: 60,
   emitWobbleVelocity: 26,
+  /** Souffle du pointeur : rayon du tube (fraction du monde) et force
+   *  (unités monde/s² par unité de geste NDC). */
+  blowRadius: 0.10,
+  blowForce: 260,
   /** Rendu. */
   raymarchSteps: 160,
   exposure: 1.25,

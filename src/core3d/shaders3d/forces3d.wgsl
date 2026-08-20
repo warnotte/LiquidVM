@@ -3,10 +3,13 @@
 // les instabilités naturelles du panache). Appliquées aux faces MAC concernées.
 
 struct Params {
-  misc: vec4f,      // x: dt, y: temps, z: N, w: libre
+  misc: vec4f,      // x: dt, y: temps, z: N, w: force de vorticité
   emitter: vec4f,   // xyz: centre (voxels), w: rayon (voxels)
   emit_vals: vec4f, // x: débit chaleur, y: débit fumée, z: impulsion ↑, w: impulsion latérale
   diss: vec4f,      // x: dissipation vélocité, y: dissipation fumée, z: refroidissement, w: buoyancy
+  blow_origin: vec4f, // xyz: origine du rayon du pointeur (voxels), w: rayon du pinceau (voxels)
+  blow_dir: vec4f,    // xyz: direction du rayon (normalisée), w: actif (0/1)
+  blow_force: vec4f,  // xyz: force du souffle (voxels/s²), w: libre
 }
 
 @group(0) @binding(0) var<uniform> P: Params;
@@ -27,6 +30,21 @@ fn heat_at(p: vec3f) -> f32 {
 fn emitter_gauss(p: vec3f) -> f32 {
   let d = distance(p, P.emitter.xyz) / max(P.emitter.w, 1e-3);
   return exp(-d * d * 3.0);
+}
+
+// Souffle du pointeur : poids gaussien autour du RAYON caméra→scène (un tube),
+// nul derrière la caméra. Le geste pousse le fluide partout où son rayon passe.
+fn blow_gauss(p: vec3f) -> f32 {
+  if (P.blow_dir.w < 0.5) {
+    return 0.0;
+  }
+  let v = p - P.blow_origin.xyz;
+  let t = dot(v, P.blow_dir.xyz);
+  if (t < 0.0) {
+    return 0.0;
+  }
+  let d = distance(p, P.blow_origin.xyz + P.blow_dir.xyz * t) / max(P.blow_origin.w, 1e-3);
+  return exp(-d * d * 2.0);
 }
 
 @compute @workgroup_size(4, 4, 4)
@@ -54,6 +72,11 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
   vel.x += dt * emitter_gauss(pu) * lat.x;
   vel.y += dt * emitter_gauss(pv) * P.emit_vals.z;
   vel.z += dt * emitter_gauss(pw) * lat.y;
+
+  // Souffle du pointeur (clic droit + glisser), par face.
+  vel.x += dt * blow_gauss(pu) * P.blow_force.x;
+  vel.y += dt * blow_gauss(pv) * P.blow_force.y;
+  vel.z += dt * blow_gauss(pw) * P.blow_force.z;
 
   // Boîte fermée : les faces frontières restent des murs.
   vel.x = select(vel.x, 0.0, c.x == 0);

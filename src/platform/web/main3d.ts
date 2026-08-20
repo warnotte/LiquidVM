@@ -7,6 +7,7 @@
 
 import { GRID3, SIM3_DEFAULTS } from '../../core3d/config3d';
 import { FluidSim3D, type Frame3DInput } from '../../core3d/sim3d';
+import { encodeVdb } from '../../core3d/vdb';
 import { acquireDevice } from './gpu';
 import { showFatalError } from './overlay';
 
@@ -53,6 +54,7 @@ async function boot(): Promise<void> {
       elevation: SIM3_DEFAULTS.camElevation,
       radius: SIM3_DEFAULTS.camRadius,
     },
+    blow: { active: false, ndcX: 0, ndcY: 0, moveX: 0, moveY: 0 },
     exposure: SIM3_DEFAULTS.exposure,
     raymarchSteps: SIM3_DEFAULTS.raymarchSteps,
   };
@@ -60,12 +62,19 @@ async function boot(): Promise<void> {
     (window as unknown as Record<string, unknown>)['__frame3d'] = input;
   }
 
-  // Caméra orbitale : glisser pour tourner, molette pour zoomer.
+  // Caméra orbitale : glisser (gauche) pour tourner, molette pour zoomer.
+  // Souffle : glisser au clic DROIT — le geste pousse le fluide le long du rayon.
   let dragging = false;
+  let blowing = false;
   let lastX = 0;
   let lastY = 0;
+  canvas.addEventListener('contextmenu', (e) => e.preventDefault());
   canvas.addEventListener('pointerdown', (e) => {
-    dragging = true;
+    if (e.button === 2) {
+      blowing = true;
+    } else {
+      dragging = true;
+    }
     lastX = e.clientX;
     lastY = e.clientY;
     canvas.classList.add('dragging');
@@ -76,6 +85,18 @@ async function boot(): Promise<void> {
     }
   });
   canvas.addEventListener('pointermove', (e) => {
+    if (blowing) {
+      const rect = canvas.getBoundingClientRect();
+      const b = input.blow;
+      b.active = true;
+      b.ndcX = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+      b.ndcY = 1 - ((e.clientY - rect.top) / rect.height) * 2;
+      b.moveX += ((e.clientX - lastX) / rect.width) * 2;
+      b.moveY += -((e.clientY - lastY) / rect.height) * 2;
+      lastX = e.clientX;
+      lastY = e.clientY;
+      return;
+    }
     if (!dragging) {
       return;
     }
@@ -89,6 +110,8 @@ async function boot(): Promise<void> {
   });
   const endDrag = (): void => {
     dragging = false;
+    blowing = false;
+    input.blow.active = false;
     canvas.classList.remove('dragging');
   };
   canvas.addEventListener('pointerup', endDrag);
@@ -101,12 +124,43 @@ async function boot(): Promise<void> {
     },
     { passive: false },
   );
+  // Export OpenVDB : readback ponctuel + encodage TS pur + téléchargement.
+  // Grilles « density » (fumée) et « temperature » (chaleur), boîte de taille 1
+  // centrée sur l'origine, Y simulation mappé sur +Z Blender (la fumée monte).
+  let exporting = false;
+  const exportVdbFile = async (): Promise<void> => {
+    if (exporting) {
+      return;
+    }
+    exporting = true;
+    try {
+      const { smoke, heat } = await sim.exportVolume();
+      const data = encodeVdb(
+        [
+          { name: 'density', values: smoke },
+          { name: 'temperature', values: heat },
+        ],
+        GRID3,
+        1 / GRID3,
+      );
+      const url = URL.createObjectURL(new Blob([data], { type: 'application/octet-stream' }));
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `liquidvm-${Date.now()}.vdb`;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 10000);
+    } finally {
+      exporting = false;
+    }
+  };
   window.addEventListener('keydown', (e) => {
     if (e.code === 'Space') {
       e.preventDefault();
       input.paused = !input.paused;
     } else if (e.code === 'KeyR') {
       input.reset = true;
+    } else if (e.code === 'KeyE') {
+      void exportVdbFile();
     }
   });
 
@@ -123,6 +177,8 @@ async function boot(): Promise<void> {
     input.dt = dt;
     sim.frame(input, context.getCurrentTexture().createView(), canvas.width / canvas.height);
     input.reset = false;
+    input.blow.moveX = 0;
+    input.blow.moveY = 0;
     frames++;
 
     hudTimer += dt;
@@ -132,7 +188,7 @@ async function boot(): Promise<void> {
       hud.innerHTML =
         `<b>LiquidVM 3D</b> · ${GRID3}³ · ${solver} · ${Math.round(fps)} FPS` +
         `${input.paused ? ' · ⏸ pause' : ''}<br>` +
-        'glisser : orbiter · molette : zoom · espace : pause · R : reset';
+        'glisser : orbiter · clic droit : souffler · molette : zoom · espace : pause · R : reset · E : export .vdb';
     }
     if (selftest && frames === SELFTEST_FRAMES) {
       const report = document.createElement('div');
