@@ -68,6 +68,12 @@ typecheck strict + bundle. Aucune dépendance runtime.
   (irrotationnel). D'où l'outil souffle = jet directionnel, pas radial.
 - La vue debug divergence montre le résidu POST-projection (recalculé après le
   gradient) : elle doit rester ≈ noire.
+- **Particules contre les parois** : au bord, la vitesse normale est nulle
+  (non-pénétration) — les particules qui touchent un mur n'ont plus rien pour les
+  décoller et surfent indéfiniment le courant tangentiel de la couche limite
+  (observé : bande de particules glissant le long du bord haut en mode parois).
+  Mitigation en place : timer « collée » dans misc.z de particle_advect.wgsl,
+  respawn au-delà de 2,5 s. Si le phénomène réapparaît, vérifier ce timer d'abord.
 
 ## Perf mesurée (2026-08-20, desktop de référence)
 

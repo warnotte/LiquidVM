@@ -17,7 +17,8 @@ struct SimParams {
   dye: vec4f,         // xy: taille de la grille de densités, zw: 1/taille
 }
 
-// posvel: xy = position normalisée, zw = vitesse normalisée/s ; misc: x = âge (s), y = durée de vie (s).
+// posvel: xy = position normalisée, zw = vitesse normalisée/s ;
+// misc: x = âge (s), y = durée de vie (s), z = temps passé collé à une paroi (s).
 struct Particle {
   posvel: vec4f,
   misc: vec4f,
@@ -82,19 +83,34 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     pos = clamp(pos, vec2f(0.5), P.grid.xy - vec2f(0.5));
   }
 
-  // Respawn : vie épuisée (ou jamais initialisée), mur, ou bord atteint en mode ouvert
-  // (la bande éponge y absorbe le fluide — les particules « sortent » avec lui).
+  // Anti-encrassement des parois : contre un bord, la vitesse normale est nulle
+  // (non-pénétration) — une particule qui touche le mur n'a plus rien pour la décoller
+  // et surferait indéfiniment le courant tangentiel de la couche limite. On compte le
+  // temps passé collé à un bord ; au-delà de ~2,5 s, la particule est recyclée.
+  let edge_dist = min(min(pos.x, P.grid.x - pos.x), min(pos.y, P.grid.y - pos.y));
+  var stuck = p.misc.z;
+  let periodic2 = P.extra.x > 0.5 && P.extra.x < 1.5;
+  if (!periodic2 && edge_dist < 1.5) {
+    stuck += dt;
+  } else {
+    stuck = max(stuck - dt, 0.0);
+  }
+
+  // Respawn : vie épuisée (ou jamais initialisée), mur, collée trop longtemps à une
+  // paroi, ou bord atteint en mode ouvert (l'éponge y absorbe le fluide).
   let margin = P.grid.x / 64.0;
   let at_border = P.extra.x > 1.5 &&
     (min(pos.x, pos.y) < margin || max(pos.x - P.grid.x, pos.y - P.grid.y) > -margin);
-  if (life <= 0.0 || age > life || solid_at(pos) || at_border) {
+  if (life <= 0.0 || age > life || solid_at(pos) || at_border || stuck > 2.5) {
     let seed = i * 4u + u32(P.buoyancy.w * 977.0);
     pos = vec2f(rand01(seed), rand01(seed + 1u)) * P.grid.xy;
     age = rand01(seed + 2u) * 2.0; // désynchronise les morts groupées
     p.misc.y = 6.0 + 8.0 * rand01(seed + 3u);
+    stuck = 0.0;
   }
 
   p.posvel = vec4f(pos * P.grid.zw, velocity_at(pos) * P.grid.z);
   p.misc.x = age;
+  p.misc.z = stuck;
   particles[i] = p;
 }
