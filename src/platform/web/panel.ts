@@ -179,6 +179,24 @@ export class DebugPanel {
         set: (x) => (p.particleIntensity = x),
         format: (x) => `×${x.toFixed(2)}`,
       },
+      {
+        label: 'caméra : force',
+        min: 0,
+        max: 3,
+        step: 0.05,
+        get: () => p.flowStrength,
+        set: (x) => (p.flowStrength = x),
+        format: (x) => `×${x.toFixed(2)}`,
+      },
+      {
+        label: 'caméra : seuil',
+        min: 0.005,
+        max: 0.05,
+        step: 0.001,
+        get: () => p.flowGate,
+        set: (x) => (p.flowGate = x),
+        format: (x) => x.toFixed(3),
+      },
     ];
     for (const spec of sliders) {
       this.addSlider(spec);

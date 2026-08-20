@@ -91,12 +91,20 @@ export interface SimTuning {
    * par le core (cameraTexture) — c'est elle qui gère getUserMedia et la permission.
    */
   cameraFlow: boolean;
+  /** Gain du flux optique (multiplie la force appliquée au fluide). */
+  flowStrength: number;
+  /** Porte de bruit du flux : différence d'intensité minimale considérée comme du
+   *  mouvement (à baisser en pièce sombre, où le capteur est timide). */
+  flowGate: number;
 }
 
 /** Paramètres de rendu réglables à chaud. */
 export interface RenderTuning {
   exposure: number;
   bloomStrength: number;
+  /** Rapport largeur/hauteur du canvas (mis à jour par la plateforme au resize) —
+   *  sert à garder l'encart caméra carré à l'écran. */
+  aspect: number;
 }
 
 /** Tout ce que le core reçoit de l'extérieur à chaque frame. */

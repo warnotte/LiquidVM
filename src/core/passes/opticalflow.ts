@@ -57,6 +57,7 @@ export async function createOpticalFlowPasses(
           { binding: 2, resource: res.flow.view },
           { binding: 3, resource: res.flowLum.views[flip(l)] },
           { binding: 4, resource: res.flowPrev.view },
+          { binding: 5, resource: { buffer: res.flowUniforms } },
         ],
       }),
     ),

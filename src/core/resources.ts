@@ -71,6 +71,9 @@ export interface SimResources {
   /** Copie du flux de la frame précédente (persistance temporelle : la caméra tourne
    *  à ~30 fps, la sim à 60 — sans persistance, une frame sur deux effacerait tout). */
   readonly flowPrev: SingleTexture;
+  /** Réglages du flux optique (gain, porte de bruit, décroissance) — écrits seulement
+   *  quand ils changent, jamais par frame. */
+  readonly flowUniforms: GPUBuffer;
 }
 
 function createFieldTexture(
@@ -206,5 +209,10 @@ export function createResources(device: GPUDevice): SimResources {
       });
       return { texture, view: texture.createView({ label: 'flow-prev-view' }) };
     })(),
+    flowUniforms: device.createBuffer({
+      label: 'flow-uniforms',
+      size: 16,
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+    }),
   };
 }

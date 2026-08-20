@@ -218,6 +218,8 @@ export class CompositeRenderer {
         { binding: 3, resource: mid0 },
         { binding: 4, resource: wide0 },
         { binding: 5, resource: res.obstacle.view },
+        { binding: 6, resource: res.camera.view },
+        { binding: 7, resource: res.flow.view },
       ],
     });
 

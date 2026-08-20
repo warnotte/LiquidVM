@@ -68,10 +68,13 @@ export class InputController {
       particles: true,
       particleIntensity: 1,
       cameraFlow: false,
+      flowStrength: 1,
+      flowGate: 0.015,
     },
     render: {
       exposure: SIM_DEFAULTS.exposure,
       bloomStrength: SIM_DEFAULTS.bloomStrength,
+      aspect: 1,
     },
   };
 

@@ -4,10 +4,10 @@
 // ni tone-mapping, seulement les murs et le gamma.
 
 struct RenderParams {
-  color0: vec4f, // rgb: couleur fluide 0 (eau)
-  color1: vec4f, // rgb: couleur fluide 1 (encre)
-  color2: vec4f, // rgb: couleur fluide 2 (fumée)
-  tone: vec4f,   // x: exposition, y: vue (0–4), z: échelle debug vélocité, w: force du bloom
+  color0: vec4f, // rgb: couleur fluide 0 (eau), w: intensité des particules
+  color1: vec4f, // rgb: couleur fluide 1 (encre), w: encart caméra actif (0|1)
+  color2: vec4f, // rgb: couleur fluide 2 (fumée), w: aspect du canvas (l/h)
+  tone: vec4f,   // x: exposition, y: vue, z: échelle debug vélocité, w: force du bloom
 }
 
 @group(0) @binding(0) var<uniform> R: RenderParams;
@@ -16,6 +16,13 @@ struct RenderParams {
 @group(0) @binding(3) var bloom_mid: texture_2d<f32>;
 @group(0) @binding(4) var bloom_wide: texture_2d<f32>;
 @group(0) @binding(5) var obstacle_tex: texture_2d<f32>;
+@group(0) @binding(6) var camera_tex: texture_2d<f32>;
+@group(0) @binding(7) var flow_tex: texture_2d<f32>;
+
+fn hsv2rgb(h: f32, s: f32, v: f32) -> vec3f {
+  let k = (vec3f(5.0, 3.0, 1.0) + vec3f(h * 6.0)) % vec3f(6.0);
+  return v - v * s * clamp(min(k, vec3f(4.0) - k), vec3f(0.0), vec3f(1.0));
+}
 
 struct VSOut {
   @builtin(position) pos: vec4f,
@@ -63,6 +70,29 @@ fn fs_main(frag: VSOut) -> @location(0) vec4f {
   let mask = obstacle_mask(frag.uv);
   let wall = mix(vec3f(0.16, 0.17, 0.21), vec3f(0.24, 0.25, 0.30), frag.uv.y);
   col = mix(col, wall, smoothstep(0.2, 0.8, mask));
+
+  // Encart caméra (contrôleur du flux optique) : petit moniteur carré en haut à
+  // gauche — image webcam en miroir + flux en couleurs (teinte = direction).
+  // Permet de doser force et seuil sans quitter la vue fluides.
+  if (R.color1.w > 0.5) {
+    let aspect = max(R.color2.w, 0.1);
+    let inset_h = 0.24;
+    let inset_size = vec2f(inset_h / aspect, inset_h);
+    let origin = vec2f(0.018 / aspect, 0.025);
+    let local = (frag.uv - origin) / inset_size;
+    if (all(local >= vec2f(0.0)) && all(local <= vec2f(1.0))) {
+      let cam = textureSampleLevel(camera_tex, lin, vec2f(1.0 - local.x, local.y), 0.0).rgb;
+      let lum = dot(cam, vec3f(0.299, 0.587, 0.114));
+      let flow = textureSampleLevel(flow_tex, lin, local, 0.0).xy;
+      let fmag = clamp(length(flow), 0.0, 1.0);
+      let hue = atan2(flow.y, flow.x) / 6.2831853 + 0.5;
+      var pip = vec3f(lum * 0.5) + hsv2rgb(hue, 0.9, fmag);
+      // Liseré discret aux bords de l'encart.
+      let edge = min(min(local.x, 1.0 - local.x), min(local.y, 1.0 - local.y));
+      pip = mix(vec3f(0.55, 0.6, 0.75), pip, smoothstep(0.0, 0.02, edge));
+      col = mix(col, pip, 0.92);
+    }
+  }
   // Le format de canvas préféré n'est pas une vue sRGB : correction gamma manuelle.
   col = pow(col, vec3f(1.0 / 2.2));
   return vec4f(col, 1.0);

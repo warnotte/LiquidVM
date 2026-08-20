@@ -191,6 +191,8 @@ async function boot(): Promise<void> {
       if (input.frame.params.cameraFlow) {
         camera.copyFrame(device, sim.cameraTexture);
       }
+      // L'encart caméra doit rester carré à l'écran quel que soit le format du canvas.
+      input.frame.render.aspect = canvas.width / Math.max(canvas.height, 1);
       sim.frame(dt, input.frame, context.getCurrentTexture().createView());
       input.endFrame();
       frameCount++;

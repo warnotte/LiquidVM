@@ -85,6 +85,12 @@ export class FluidSim {
   private readonly computePassDesc: GPUComputePassDescriptor = { label: 'sim-compute-pass' };
   /** Uniforms de rendu : réécrits uniquement quand un réglage de rendu change. */
   private readonly renderData = renderUniformData();
+  /** Réglages du flux optique (gain, porte, décroissance) — même politique. */
+  private readonly flowData = new Float32Array([1, 0.015, 0.88, 0]);
+  private lastFlowStrength = 0; // ≠ défaut → première frame écrit le buffer
+  private lastFlowGate = 0;
+  private lastCameraInset = false;
+  private lastAspect = 0;
   private lastViewMode: ViewMode = 0;
   // Suivis en nombres JS (comparer à la Float32Array échouerait par perte de précision).
   private lastExposure: number = SIM_DEFAULTS.exposure;
@@ -192,9 +198,13 @@ export class FluidSim {
       input.viewMode !== this.lastViewMode ||
       input.render.exposure !== this.lastExposure ||
       input.render.bloomStrength !== this.lastBloom ||
-      input.params.particleIntensity !== this.lastParticleIntensity
+      input.params.particleIntensity !== this.lastParticleIntensity ||
+      input.params.cameraFlow !== this.lastCameraInset ||
+      input.render.aspect !== this.lastAspect
     ) {
       this.renderData[3] = input.params.particleIntensity;
+      this.renderData[7] = input.params.cameraFlow ? 1 : 0; // encart caméra
+      this.renderData[11] = input.render.aspect;
       this.renderData[12] = input.render.exposure;
       this.renderData[RENDER_VIEW_MODE_INDEX] = input.viewMode;
       this.renderData[15] = input.render.bloomStrength;
@@ -203,6 +213,19 @@ export class FluidSim {
       this.lastExposure = input.render.exposure;
       this.lastBloom = input.render.bloomStrength;
       this.lastParticleIntensity = input.params.particleIntensity;
+      this.lastCameraInset = input.params.cameraFlow;
+      this.lastAspect = input.render.aspect;
+    }
+    // Réglages du flux optique (gain, porte de bruit) — écrits au changement seulement.
+    if (
+      input.params.flowStrength !== this.lastFlowStrength ||
+      input.params.flowGate !== this.lastFlowGate
+    ) {
+      this.flowData[0] = input.params.flowStrength;
+      this.flowData[1] = input.params.flowGate;
+      this.device.queue.writeBuffer(this.res.flowUniforms, 0, this.flowData);
+      this.lastFlowStrength = input.params.flowStrength;
+      this.lastFlowGate = input.params.flowGate;
     }
     // dt réel × facteur de temps, clampé ; au-delà de maxDt la frame est découpée en
     // sous-pas égaux. En pause, `stepOnce` avance d'exactement une frame à 1/60 s.
