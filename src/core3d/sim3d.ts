@@ -11,9 +11,19 @@ import advectDenWGSL from './shaders3d/advect_density3d.wgsl?raw';
 import forcesWGSL from './shaders3d/forces3d.wgsl?raw';
 import vorticityWGSL from './shaders3d/vorticity3d.wgsl?raw';
 import projectWGSL from './shaders3d/project3d.wgsl?raw';
+import multigridWGSL from './shaders3d/multigrid3d.wgsl?raw';
 import raymarchWGSL from './shaders3d/raymarch.wgsl?raw';
 import clearWGSL from './shaders3d/clear3d.wgsl?raw';
-import { DISPATCH3, GRID3, SIM3_DEFAULTS } from './config3d';
+import {
+  DISPATCH3,
+  GRID3,
+  MG3_COARSE_SMOOTH,
+  MG3_COARSEST_SIZE,
+  MG3_PRE_SMOOTH,
+  MG3_POST_SMOOTH,
+  SIM3_DEFAULTS,
+  WG3,
+} from './config3d';
 import { createShaderModule, withValidation } from '../core/pipelines';
 import { flip, type Pair, type PingIndex } from '../core/types';
 
@@ -23,6 +33,9 @@ export interface Frame3DInput {
   paused: boolean;
   /** Vidange des champs (consommé par la frame courante). */
   reset: boolean;
+  /** Solveur de pression : V-cycles multigrid (défaut) ou Jacobi simple. */
+  multigrid: boolean;
+  vcycles: number;
   jacobiIterations: number;
   /** Force du vorticity confinement ε (0 = physique brute), réglable à chaud. */
   vorticityStrength: number;
@@ -35,16 +48,36 @@ export interface Frame3DInput {
 const COMPUTE = GPUShaderStage.COMPUTE;
 const FRAGMENT = GPUShaderStage.FRAGMENT;
 
-function tex3d(device: GPUDevice, label: string, format: GPUTextureFormat): GPUTextureView {
+function tex3d(
+  device: GPUDevice,
+  label: string,
+  format: GPUTextureFormat,
+  size = GRID3,
+): GPUTextureView {
   return device
     .createTexture({
       label,
       dimension: '3d',
-      size: { width: GRID3, height: GRID3, depthOrArrayLayers: GRID3 },
+      size: { width: size, height: size, depthOrArrayLayers: size },
       format,
       usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.STORAGE_BINDING,
     })
     .createView({ label: `${label}-view` });
+}
+
+/** Un niveau de la pyramide multigrid 3D (le niveau 0 réutilise pression/divergence). */
+interface MGLevel3 {
+  readonly dispatch: number;
+  /** Lissage pondéré, indexé par [source de pression du niveau]. */
+  readonly smoothBind: Pair<GPUBindGroup>;
+  /** r = rhs − A·p → texture résidu. Null au niveau le plus grossier. */
+  readonly residualBind: Pair<GPUBindGroup> | null;
+  /** Résidu de ce niveau → rhs du suivant. Null au plus grossier. */
+  readonly restrictBind: GPUBindGroup | null;
+  /** Correction du suivant → ce niveau, [pression fine][pression grossière]. */
+  readonly prolongBind: Pair<Pair<GPUBindGroup>> | null;
+  /** Remise à zéro de la pression de départ (niveaux > 0). */
+  readonly clearBind: GPUBindGroup | null;
 }
 
 function sampled3d(binding: number, visibility = COMPUTE): GPUBindGroupLayoutEntry {
@@ -92,6 +125,10 @@ export class FluidSim3D {
       divergence: GPUComputePipeline;
       jacobi: GPUComputePipeline;
       gradient: GPUComputePipeline;
+      mgSmooth: GPUComputePipeline;
+      mgResidual: GPUComputePipeline;
+      mgRestrict: GPUComputePipeline;
+      mgProlong: GPUComputePipeline;
       clearRgba: GPUComputePipeline;
       clearScalar: GPUComputePipeline;
       render: GPURenderPipeline;
@@ -111,7 +148,13 @@ export class FluidSim3D {
       clearsRgba: readonly GPUBindGroup[];
       clearsScalar: readonly GPUBindGroup[];
     },
-  ) {}
+    private readonly mgLevels: readonly MGLevel3[],
+  ) {
+    this.mgIdx = new Array<number>(mgLevels.length).fill(0);
+  }
+
+  /** Index de pression courant par niveau multigrid (tableau réutilisé, zéro alloc). */
+  private readonly mgIdx: number[];
 
   static async create(device: GPUDevice, targetFormat: GPUTextureFormat): Promise<FluidSim3D> {
     return withValidation(device, 'init-3d', async () => {
@@ -191,6 +234,14 @@ export class FluidSim3D {
           label: 'gradient-3d',
           entries: [sampled3d(0), sampledScalar3d(1), storage3d(4, 'rgba16float')],
         }),
+        mgRestrict: device.createBindGroupLayout({
+          label: 'mg-restrict-3d',
+          entries: [sampledScalar3d(0), storage3d(3, 'r32float')],
+        }),
+        mgProlong: device.createBindGroupLayout({
+          label: 'mg-prolong-3d',
+          entries: [sampledScalar3d(0), storage3d(3, 'r32float'), sampledScalar3d(4)],
+        }),
         clearRgba: device.createBindGroupLayout({
           label: 'clear-rgba-3d',
           entries: [storage3d(0, 'rgba16float')],
@@ -219,6 +270,7 @@ export class FluidSim3D {
           createShaderModule(device, 'raymarch.wgsl', raymarchWGSL),
           createShaderModule(device, 'clear3d.wgsl', clearWGSL),
         ]);
+      const multigridM = await createShaderModule(device, 'multigrid3d.wgsl', multigridWGSL);
 
       const compute = (
         label: string,
@@ -235,7 +287,7 @@ export class FluidSim3D {
           compute: { module, entryPoint },
         });
 
-      const [velPredict, velCorrect, forces, curlPipe, confine, denPredict, denCorrect, divergencePipe, jacobi, gradient, clearRgba, clearScalar, render] =
+      const [velPredict, velCorrect, forces, curlPipe, confine, denPredict, denCorrect, divergencePipe, jacobi, gradient, mgSmooth, mgResidual, mgRestrictPipe, mgProlongPipe, clearRgba, clearScalar, render] =
         await Promise.all([
           compute('vel-predict-3d', L.velPredict, advectVelM, 'predict'),
           compute('vel-correct-3d', L.velCorrect, advectVelM, 'correct'),
@@ -247,6 +299,10 @@ export class FluidSim3D {
           compute('divergence-3d', L.divergence, projectM, 'divergence'),
           compute('jacobi-3d', L.jacobi, projectM, 'jacobi'),
           compute('gradient-3d', L.gradient, projectM, 'gradient'),
+          compute('mg-smooth-3d', L.jacobi, multigridM, 'smooth_jacobi'),
+          compute('mg-residual-3d', L.jacobi, multigridM, 'residual'),
+          compute('mg-restrict-3d', L.mgRestrict, multigridM, 'restrict_rhs'),
+          compute('mg-prolong-3d', L.mgProlong, multigridM, 'prolong_add'),
           device.createComputePipelineAsync({
             label: 'clear-rgba-3d',
             layout: device.createPipelineLayout({ label: 'clear-rgba-3d-pl', bindGroupLayouts: [L.clearRgba] }),
@@ -419,6 +475,100 @@ export class FluidSim3D {
         ),
       };
 
+      // Pyramide multigrid : niveau 0 = pression/divergence principales, puis
+      // paires de pression + rhs + résidu propres jusqu'à 8³.
+      interface LevelTex {
+        size: number;
+        pressure: Pair<GPUTextureView>;
+        rhs: GPUTextureView;
+        residual: GPUTextureView;
+      }
+      const tiers: LevelTex[] = [];
+      for (let size = GRID3, l = 0; size >= MG3_COARSEST_SIZE; size /= 2, l++) {
+        if (l === 0) {
+          tiers.push({
+            size,
+            pressure,
+            rhs: divergence,
+            residual: tex3d(device, 'mg3-residual-0', 'r32float', size),
+          });
+        } else {
+          tiers.push({
+            size,
+            pressure: pair((i) => tex3d(device, `mg3-press-${l}-${i}`, 'r32float', size)),
+            rhs: tex3d(device, `mg3-rhs-${l}`, 'r32float', size),
+            residual: tex3d(device, `mg3-residual-${l}`, 'r32float', size),
+          });
+        }
+      }
+      const lastTier = tiers.length - 1;
+      const mgLevels: MGLevel3[] = tiers.map((t, l) => {
+        const next = l < lastTier ? tiers[l + 1]! : null;
+        return {
+          dispatch: Math.ceil(t.size / WG3),
+          smoothBind: pair((p) =>
+            device.createBindGroup({
+              label: `mg3-smooth-l${l}-p${p}`,
+              layout: L.jacobi,
+              entries: [
+                { binding: 1, resource: t.pressure[p] },
+                { binding: 2, resource: t.rhs },
+                { binding: 3, resource: t.pressure[flip(p)] },
+              ],
+            }),
+          ),
+          residualBind:
+            next === null
+              ? null
+              : pair((p) =>
+                  device.createBindGroup({
+                    label: `mg3-residual-l${l}-p${p}`,
+                    layout: L.jacobi,
+                    entries: [
+                      { binding: 1, resource: t.pressure[p] },
+                      { binding: 2, resource: t.rhs },
+                      { binding: 3, resource: t.residual },
+                    ],
+                  }),
+                ),
+          restrictBind:
+            next === null
+              ? null
+              : device.createBindGroup({
+                  label: `mg3-restrict-l${l}`,
+                  layout: L.mgRestrict,
+                  entries: [
+                    { binding: 0, resource: t.residual },
+                    { binding: 3, resource: next.rhs },
+                  ],
+                }),
+          prolongBind:
+            next === null
+              ? null
+              : pair((fine) =>
+                  pair((coarse) =>
+                    device.createBindGroup({
+                      label: `mg3-prolong-l${l}-f${fine}-c${coarse}`,
+                      layout: L.mgProlong,
+                      entries: [
+                        { binding: 0, resource: next.pressure[coarse] },
+                        { binding: 3, resource: t.pressure[flip(fine)] },
+                        { binding: 4, resource: t.pressure[fine] },
+                      ],
+                    }),
+                  ),
+                ),
+          clearBind:
+            l === 0
+              ? null
+              : device.createBindGroup({
+                  label: `mg3-clear-l${l}`,
+                  layout: L.clearScalar,
+                  entries: [{ binding: 1, resource: t.pressure[0] }],
+                }),
+        };
+      });
+
       return new FluidSim3D(
         device,
         simUniforms,
@@ -435,11 +585,16 @@ export class FluidSim3D {
           divergence: divergencePipe,
           jacobi,
           gradient,
+          mgSmooth,
+          mgResidual,
+          mgRestrict: mgRestrictPipe,
+          mgProlong: mgProlongPipe,
           clearRgba,
           clearScalar,
           render,
         },
         binds,
+        mgLevels,
       );
     });
   }
@@ -502,12 +657,20 @@ export class FluidSim3D {
         cp.setBindGroup(1, this.binds.divergence[this.velIdx]);
         cp.dispatchWorkgroups(n, n, n);
 
-        // Jacobi warm-starté : la pression de la frame précédente sert de départ.
-        cp.setPipeline(this.pipelines.jacobi);
-        for (let i = 0; i < input.jacobiIterations; i++) {
-          cp.setBindGroup(1, this.binds.jacobi[this.pressIdx]);
-          cp.dispatchWorkgroups(n, n, n);
-          this.pressIdx = flip(this.pressIdx);
+        // Pression : V-cycles multigrid (défaut) ou Jacobi simple — warm start
+        // dans les deux cas, la pression de la frame précédente sert de départ.
+        if (input.multigrid) {
+          const cycles = Math.max(1, Math.round(input.vcycles));
+          for (let k = 0; k < cycles; k++) {
+            this.encodeVCycle3(cp);
+          }
+        } else {
+          cp.setPipeline(this.pipelines.jacobi);
+          for (let i = 0; i < input.jacobiIterations; i++) {
+            cp.setBindGroup(1, this.binds.jacobi[this.pressIdx]);
+            cp.dispatchWorkgroups(n, n, n);
+            this.pressIdx = flip(this.pressIdx);
+          }
         }
 
         cp.setPipeline(this.pipelines.gradient);
@@ -538,6 +701,67 @@ export class FluidSim3D {
 
     this.submitList[0] = encoder.finish();
     this.device.queue.submit(this.submitList);
+  }
+
+  /**
+   * Encode un V-cycle multigrid complet sur la pression du niveau 0 (warm start).
+   * Descente : lissage pondéré, résidu, restriction ; plus grossier : lissage long ;
+   * remontée : prolongation trilinéaire + post-lissage. Les index ping-pong par
+   * niveau vivent dans mgIdx ; celui du niveau 0 est resynchronisé avec pressIdx.
+   */
+  private encodeVCycle3(cp: GPUComputePassEncoder): void {
+    const levels = this.mgLevels;
+    const last = levels.length - 1;
+    const idx = this.mgIdx;
+    idx[0] = this.pressIdx;
+
+    // L'équation d'erreur des niveaux grossiers part de zéro à chaque cycle.
+    cp.setPipeline(this.pipelines.clearScalar);
+    for (let l = 1; l <= last; l++) {
+      idx[l] = 0;
+      const lev = levels[l]!;
+      cp.setBindGroup(0, lev.clearBind!);
+      cp.dispatchWorkgroups(lev.dispatch, lev.dispatch, lev.dispatch);
+    }
+    // Le clear utilise un autre layout de groupe 0 : on rétablit le groupe partagé.
+    cp.setBindGroup(0, this.group0);
+
+    // Descente.
+    for (let l = 0; l <= last; l++) {
+      const lev = levels[l]!;
+      const count = l === last ? MG3_COARSE_SMOOTH : MG3_PRE_SMOOTH;
+      cp.setPipeline(this.pipelines.mgSmooth);
+      for (let i = 0; i < count; i++) {
+        cp.setBindGroup(1, lev.smoothBind[idx[l] as PingIndex]);
+        cp.dispatchWorkgroups(lev.dispatch, lev.dispatch, lev.dispatch);
+        idx[l] = idx[l]! ^ 1;
+      }
+      if (l < last) {
+        const coarse = levels[l + 1]!;
+        cp.setPipeline(this.pipelines.mgResidual);
+        cp.setBindGroup(1, lev.residualBind![idx[l] as PingIndex]);
+        cp.dispatchWorkgroups(lev.dispatch, lev.dispatch, lev.dispatch);
+        cp.setPipeline(this.pipelines.mgRestrict);
+        cp.setBindGroup(1, lev.restrictBind!);
+        cp.dispatchWorkgroups(coarse.dispatch, coarse.dispatch, coarse.dispatch);
+      }
+    }
+
+    // Remontée.
+    for (let l = last - 1; l >= 0; l--) {
+      const lev = levels[l]!;
+      cp.setPipeline(this.pipelines.mgProlong);
+      cp.setBindGroup(1, lev.prolongBind![idx[l] as PingIndex][idx[l + 1] as PingIndex]);
+      cp.dispatchWorkgroups(lev.dispatch, lev.dispatch, lev.dispatch);
+      idx[l] = idx[l]! ^ 1;
+      cp.setPipeline(this.pipelines.mgSmooth);
+      for (let i = 0; i < MG3_POST_SMOOTH; i++) {
+        cp.setBindGroup(1, lev.smoothBind[idx[l] as PingIndex]);
+        cp.dispatchWorkgroups(lev.dispatch, lev.dispatch, lev.dispatch);
+        idx[l] = idx[l]! ^ 1;
+      }
+    }
+    this.pressIdx = idx[0] as PingIndex;
   }
 
   private writeSimUniforms(dt: number, vorticityStrength: number): void {

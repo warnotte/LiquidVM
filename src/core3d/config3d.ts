@@ -11,8 +11,17 @@ export const GRID3 = 128;
 export const WG3 = 4;
 export const DISPATCH3 = Math.ceil(GRID3 / WG3);
 
+/** Multigrid 3D : pyramide GRID3 → 8³, lissages du V-cycle. */
+export const MG3_COARSEST_SIZE = 8;
+export const MG3_PRE_SMOOTH = 2;
+export const MG3_POST_SMOOTH = 2;
+export const MG3_COARSE_SMOOTH = 16;
+
 export const SIM3_DEFAULTS = {
-  /** Itérations de Jacobi par frame (multigrid 3D : chantier suivant). */
+  /** Solveur de pression : multigrid par défaut, Jacobi en repli comparatif. */
+  multigrid: true,
+  vcycles: 2,
+  /** Itérations de Jacobi quand le multigrid est coupé. */
   jacobiIterations: 36,
   /** Force du vorticity confinement (ε). Défaut 0 : à 128³, le gradient de |ω| à
    *  ±1 voxel injecte du grain à l'échelle de la grille dès ε≈3 (calibré par

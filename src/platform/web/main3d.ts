@@ -44,6 +44,8 @@ async function boot(): Promise<void> {
     dt: 0,
     paused: false,
     reset: false,
+    multigrid: SIM3_DEFAULTS.multigrid,
+    vcycles: SIM3_DEFAULTS.vcycles,
     jacobiIterations: SIM3_DEFAULTS.jacobiIterations,
     vorticityStrength: SIM3_DEFAULTS.vorticityStrength,
     cam: {
@@ -126,8 +128,9 @@ async function boot(): Promise<void> {
     hudTimer += dt;
     if (hudTimer > 0.5) {
       hudTimer = 0;
+      const solver = input.multigrid ? `MG ×${input.vcycles}` : `jacobi ${input.jacobiIterations} it.`;
       hud.innerHTML =
-        `<b>LiquidVM 3D</b> · ${GRID3}³ · jacobi ${input.jacobiIterations} it. · ${Math.round(fps)} FPS` +
+        `<b>LiquidVM 3D</b> · ${GRID3}³ · ${solver} · ${Math.round(fps)} FPS` +
         `${input.paused ? ' · ⏸ pause' : ''}<br>` +
         'glisser : orbiter · molette : zoom · espace : pause · R : reset';
     }

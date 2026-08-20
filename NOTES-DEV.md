@@ -110,10 +110,14 @@ Config actuelle : sim 1024², dye/scène 2048².
   touchée. `src/core3d/` : même doctrine que core/ (zéro DOM, zéro alloc/frame, un
   encoder, bind groups pré-créés), `config3d.ts` (GRID3 = 128) + `sim3d.ts` (tout
   l'orchestrateur) + `shaders3d/`.
-- **État** : MAC 3D semi-lagrangien, poussée thermique, projection Jacobi 36 it.
-  (boîte fermée, Neumann par clamp), émetteur de panache feu/fumée balancé,
+- **État** : MAC 3D MacCormack, poussée thermique, projection MULTIGRID 3D
+  (V-cycle 128³→8³, 2 cycles/frame — pin p(0,0,0)=0 au 8³ appliqué d'office,
+  le clamp des voisins EST l'opérateur Neumann exact, adjoint du couple
+  divergence/gradient compact ; repli Jacobi comparatif via
+  `__frame3d.multigrid=false`), émetteur de panache feu/fumée balancé,
   ray-marching (Beer-Lambert + corps noir + ombre interne 6 pas + liseré de boîte),
-  caméra orbitale (glisser/molette), espace/R, `?selftest`. 60 FPS à 128³ desktop.
+  caméra orbitale (glisser/molette), espace/R, `?selftest`. 60 FPS à 128³ desktop,
+  vérifié 2700+ frames en MG sans dérive.
 - **MacCormack 3D** : prédicteur/correcteur clampé par composante MAC (stencil du
   point rétro-advecté) — LE raffineur : le panache laminaire devient turbulent et
   structuré à lui seul.
@@ -122,10 +126,12 @@ Config actuelle : sim 1024², dye/scène 2048².
   grain à l'échelle de la grille dès ε≈3 et détruit le panache vers ε≈10 (calibré
   par captures EPS-0/3/6/10). Réglable à chaud : `__frame3d.vorticityStrength`.
   Avant de le réactiver : lisser |ω| (flou 3D) avant d'en prendre le gradient.
-- **Prochaines briques** : multigrid 3D (36 Jacobi ne convergent que les hautes
-  fréquences — utiliser la vue résidu MG du 2D comme modèle d'instrumentation) ;
-  interaction (souffler dans le volume au pointeur) ; encres colorées (canaux yz
-  réservés dans la densité).
+- **Prochaines briques** : interaction (souffler dans le volume au pointeur) ;
+  encres colorées (canaux yz réservés dans la densité) ; **export OpenVDB**
+  (demande utilisateur : interopérabilité Blender/Houdini) — readback ponctuel
+  hors boucle de frame (même exception documentée que l'export PNG 2D), writer
+  .vdb minimal en TS (grille dense uniforme, codec none), grilles `density` et
+  `temperature` ; séquences via File System Access API.
 
 ## Pistes suivantes
 
