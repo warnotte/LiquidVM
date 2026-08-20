@@ -11,6 +11,7 @@ import {
   DENSITY_FORMAT,
   DYE_SIZE,
   GRID_SIZE,
+  FLOW_SIZE,
   PARTICLE_COUNT,
   SCALAR_FORMAT,
   SCENE_SIZE,
@@ -60,6 +61,13 @@ export interface SimResources {
   /** Particules traceuses : 2 vec4f par particule (posvel + âge/vie), zéro-initialisé —
    *  vie = 0 vaut « non initialisée », la première passe d'advection les disperse. */
   readonly particles: GPUBuffer;
+  /** Webcam : la plateforme y copie l'image caméra (COPY_DST + RENDER_ATTACHMENT sont
+   *  exigés par copyExternalImageToTexture). Le core ne sait rien de getUserMedia. */
+  readonly camera: SingleTexture;
+  /** Luminance caméra de la frame précédente (ping-pong du flux optique). */
+  readonly flowLum: PingTextures;
+  /** Champ de flux optique résultant (xy). */
+  readonly flow: SingleTexture;
 }
 
 function createFieldTexture(
@@ -161,5 +169,19 @@ export function createResources(device: GPUDevice): SimResources {
       size: PARTICLE_COUNT * 32, // 2 × vec4f par particule
       usage: GPUBufferUsage.STORAGE,
     }),
+    camera: (() => {
+      const texture = device.createTexture({
+        label: 'camera',
+        size: { width: FLOW_SIZE, height: FLOW_SIZE },
+        format: 'rgba8unorm',
+        usage:
+          GPUTextureUsage.TEXTURE_BINDING |
+          GPUTextureUsage.COPY_DST |
+          GPUTextureUsage.RENDER_ATTACHMENT,
+      });
+      return { texture, view: texture.createView({ label: 'camera-view' }) };
+    })(),
+    flowLum: createPing(device, 'flow-luminance', SCALAR_FORMAT, FLOW_SIZE),
+    flow: createSingle(device, 'flow', DENSITY_FORMAT, FLOW_SIZE),
   };
 }

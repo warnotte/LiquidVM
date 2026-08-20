@@ -85,6 +85,11 @@ export interface SimTuning {
   particles: boolean;
   /** Intensité lumineuse des traînées de particules (0 = invisibles). */
   particleIntensity: number;
+  /**
+   * Flux optique webcam actif. La plateforme copie la caméra dans la texture exposée
+   * par le core (cameraTexture) — c'est elle qui gère getUserMedia et la permission.
+   */
+  cameraFlow: boolean;
 }
 
 /** Paramètres de rendu réglables à chaud. */

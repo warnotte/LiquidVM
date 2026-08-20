@@ -67,6 +67,7 @@ export class InputController {
       vcycles: SIM_DEFAULTS.vcycles,
       particles: true,
       particleIntensity: 1,
+      cameraFlow: false,
     },
     render: {
       exposure: SIM_DEFAULTS.exposure,

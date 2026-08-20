@@ -33,6 +33,9 @@ export interface SimLayouts {
   /** Particules : advection compute (buffer rw) et rendu (buffer read-only en vertex). */
   readonly particleAdvect: GPUBindGroupLayout;
   readonly particleDraw: GPUBindGroupLayout;
+  /** Flux optique : estimation (caméra + luminance ping-pong) et application au champ. */
+  readonly opticalFlow: GPUBindGroupLayout;
+  readonly applyFlow: GPUBindGroupLayout;
   /** Layouts des passes de clear (group(0) dédié, formats différents). */
   readonly clearRgba: GPUBindGroupLayout;
   readonly clearScalar: GPUBindGroupLayout;
@@ -155,6 +158,19 @@ export function createLayouts(device: GPUDevice): SimLayouts {
           buffer: { type: 'read-only-storage' },
         },
       ],
+    }),
+    opticalFlow: device.createBindGroupLayout({
+      label: 'optical-flow-layout',
+      entries: [
+        sampledFloat(0),
+        sampledScalar(1),
+        storage(2, DENSITY_FORMAT),
+        storage(3, SCALAR_FORMAT),
+      ],
+    }),
+    applyFlow: device.createBindGroupLayout({
+      label: 'apply-flow-layout',
+      entries: [sampledFloat(0), sampledFloat(1), storage(2, VELOCITY_FORMAT), sampledScalar(3)],
     }),
     clearRgba: device.createBindGroupLayout({
       label: 'clear-rgba-layout',

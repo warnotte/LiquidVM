@@ -46,6 +46,15 @@ export const PARTICLE_WORKGROUP = 256;
 export const PARTICLE_DISPATCH = Math.ceil(PARTICLE_COUNT / PARTICLE_WORKGROUP);
 
 /**
+ * Flux optique webcam (branche expérimentale) : la caméra est copiée chaque frame dans
+ * une petite texture carrée ; une passe compute estime le mouvement entre deux images
+ * (flux normal : −∂I/∂t · ∇I / |∇I|²) et ce champ devient une force sur le fluide —
+ * tout ce qui bouge devant la caméra pousse le fluide. Aucune dépendance, aucun ML.
+ */
+export const FLOW_SIZE = 256;
+export const FLOW_DISPATCH = Math.ceil(FLOW_SIZE / WORKGROUP_SIZE);
+
+/**
  * Solveur multigrid (V-cycle géométrique) pour la pression : niveaux 512² → 8².
  * Le lissage est un Jacobi pondéré (ω = 0.8 dans multigrid.wgsl) — il tue les hautes
  * fréquences du résidu à chaque niveau, la hiérarchie s'occupe des basses. Deux

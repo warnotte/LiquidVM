@@ -29,6 +29,7 @@
 import {
   DISPATCH_SIZE,
   DYE_DISPATCH_SIZE,
+  FLOW_DISPATCH,
   MG_COARSE_SMOOTH,
   MG_POST_SMOOTH,
   MG_PRE_SMOOTH,
@@ -39,6 +40,7 @@ import { createAdvectPasses, type AdvectPasses } from './passes/advect';
 import { createClearPasses, type ClearPasses } from './passes/clear';
 import { createForcesPass, type ForcesPass } from './passes/forces';
 import { createMultigridPasses, type MultigridPasses } from './passes/multigrid';
+import { createOpticalFlowPasses, type OpticalFlowPasses } from './passes/opticalflow';
 import { createParticlesPass, type ParticlesPass } from './passes/particles';
 import { createProjectPasses, type ProjectPasses } from './passes/project';
 import { createVorticityPasses, type VorticityPasses } from './passes/vorticity';
@@ -73,6 +75,8 @@ export class FluidSim {
   private velIdx: PingIndex = 0;
   private denIdx: PingIndex = 0;
   private pressIdx: PingIndex = 0;
+  /** Ping-pong de la luminance caméra (flux optique). */
+  private lumIdx: PingIndex = 0;
 
   private readonly uniforms = new SimUniformWriter();
   /** Tableau de soumission réutilisé (zéro allocation par frame). */
@@ -102,6 +106,7 @@ export class FluidSim {
     private readonly project: ProjectPasses,
     private readonly mg: MultigridPasses,
     private readonly particles: ParticlesPass,
+    private readonly opticalFlow: OpticalFlowPasses,
     private readonly walls: WallsPass,
     private readonly clear: ClearPasses,
     private readonly renderer: CompositeRenderer,
@@ -120,7 +125,7 @@ export class FluidSim {
     return withValidation(device, 'init FluidSim', async () => {
       const layouts = createLayouts(device);
       const res = createResources(device);
-      const [advect, forces, vorticity, project, mg, particles, wallsPass, clear, renderer] =
+      const [advect, forces, vorticity, project, mg, particles, flow, wallsPass, clear, renderer] =
         await Promise.all([
           createAdvectPasses(device, layouts, res),
           createForcesPass(device, layouts, res),
@@ -128,6 +133,7 @@ export class FluidSim {
           createProjectPasses(device, layouts, res),
           createMultigridPasses(device, layouts, res),
           createParticlesPass(device, layouts, res),
+          createOpticalFlowPasses(device, layouts, res),
           createWallsPass(device, layouts, res),
           createClearPasses(device, layouts, res),
           CompositeRenderer.create(device, layouts, res, opts.targetFormat),
@@ -159,6 +165,7 @@ export class FluidSim {
         project,
         mg,
         particles,
+        flow,
         wallsPass,
         clear,
         renderer,
@@ -167,9 +174,16 @@ export class FluidSim {
     });
   }
 
+  /** Texture caméra que la plateforme remplit (copyExternalImageToTexture) quand le
+   *  flux optique est actif — le core ne connaît ni getUserMedia ni la permission. */
+  get cameraTexture(): GPUTexture {
+    return this.res.camera.texture;
+  }
+
   /**
    * Encode et soumet une frame complète. Seul trafic CPU→GPU : l'uniform buffer
-   * (≤ 512 octets). Aucune lecture GPU→CPU, aucune création d'objet GPU.
+   * (≤ 512 octets) — plus, caméra active, la copie de l'image webcam (256², entrée
+   * périphérique assumée). Aucune lecture GPU→CPU, aucune création d'objet GPU.
    */
   frame(dtSeconds: number, input: FrameInput, target: GPUTextureView): void {
     // Uniforms de rendu : réécrits uniquement quand un réglage de rendu change.
@@ -262,6 +276,14 @@ export class FluidSim {
           cp.dispatchWorkgroups(coarse.dispatch, coarse.dispatch);
         }
       }
+      // Flux optique : estimation UNE fois par frame (deux images caméra consécutives),
+      // avant les sous-pas qui l'appliqueront. Layout autonome — pas de groupe 0.
+      if (input.params.cameraFlow && substeps > 0) {
+        cp.setPipeline(this.opticalFlow.flowPipeline);
+        cp.setBindGroup(0, this.opticalFlow.flowBind[this.lumIdx]);
+        cp.dispatchWorkgroups(FLOW_DISPATCH, FLOW_DISPATCH);
+        this.lumIdx = flip(this.lumIdx);
+      }
       for (let s = 0; s < substeps; s++) {
         this.encodeStep(cp, s, input);
       }
@@ -318,6 +340,14 @@ export class FluidSim {
     cp.setBindGroup(1, this.forces.bind[this.velIdx][this.denIdx]);
     cp.dispatchWorkgroups(n, n);
     this.velIdx = flip(this.velIdx);
+
+    // 2bis. Flux optique : le mouvement devant la caméra pousse le fluide.
+    if (input.params.cameraFlow) {
+      cp.setPipeline(this.opticalFlow.applyPipeline);
+      cp.setBindGroup(1, this.opticalFlow.applyBind[this.velIdx]);
+      cp.dispatchWorkgroups(n, n);
+      this.velIdx = flip(this.velIdx);
+    }
 
     // 3. Vorticity confinement : rotationnel puis force de renforcement des tourbillons.
     cp.setPipeline(this.vorticity.curlPipeline);

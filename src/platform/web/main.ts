@@ -15,6 +15,7 @@ import type { FrameInput, SubstanceId } from '../../core/types';
 const BOUNDARY_LABELS = ['parois', 'périodique', 'ouvert'] as const;
 const VIEW_LABELS = ['fluides', 'vélocité', 'pression', 'divergence', 'vorticité'] as const;
 import { acquireDevice } from './gpu';
+import { CameraFlow } from './camera';
 import { InputController } from './input';
 import { Overlay, showFatalError } from './overlay';
 import { DebugPanel, TOOL_LABELS } from './panel';
@@ -141,12 +142,33 @@ async function boot(): Promise<void> {
     selftestStage(selftest, 'sim-ok');
     const input = new InputController(canvas);
     const overlay = new Overlay(document.body);
-    const panel = new DebugPanel(document.body, input);
+    // Webcam → flux optique : la case du panneau demande la permission ; en cas de
+    // refus, cameraFlow reste false et la case se resynchronise au refresh suivant.
+    const camera = new CameraFlow();
+    const toggleCamera = (on: boolean): void => {
+      if (on) {
+        camera
+          .start()
+          .then(() => (input.frame.params.cameraFlow = true))
+          .catch((err: unknown) => {
+            console.warn('[caméra]', err);
+            input.frame.params.cameraFlow = false;
+          });
+      } else {
+        camera.stop();
+        input.frame.params.cameraFlow = false;
+      }
+    };
+    const panel = new DebugPanel(document.body, input, toggleCamera);
     const toolbar = new MobileToolbar(document.body, input, () => panel.toggle());
     const driver = selftest ? new SelftestDriver(input.frame) : null;
     if (selftest) {
       // Poignée de debug pour l'outillage CDP : mutation des réglages en plein vol.
       (window as unknown as Record<string, unknown>)['__frame'] = input.frame;
+      // `&camera` : active le flux optique dès le boot (fausse caméra en test headless).
+      if (new URLSearchParams(location.search).has('camera')) {
+        toggleCamera(true);
+      }
     }
 
     let last = performance.now();
@@ -159,6 +181,9 @@ async function boot(): Promise<void> {
       last = now;
       driver?.drive(frameCount);
 
+      if (input.frame.params.cameraFlow) {
+        camera.copyFrame(device, sim.cameraTexture);
+      }
       sim.frame(dt, input.frame, context.getCurrentTexture().createView());
       input.endFrame();
       frameCount++;

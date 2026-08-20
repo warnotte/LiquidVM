@@ -25,7 +25,11 @@ export class DebugPanel {
   private readonly root: HTMLDivElement;
   private readonly refreshers: (() => void)[] = [];
 
-  constructor(parent: HTMLElement, input: InputController) {
+  constructor(
+    parent: HTMLElement,
+    input: InputController,
+    onCameraToggle?: (on: boolean) => void,
+  ) {
     const frame = input.frame;
     this.root = document.createElement('div');
     this.root.className = 'panel';
@@ -187,6 +191,11 @@ export class DebugPanel {
       (v) => (p.multigrid = v),
     );
     this.addCheckbox('particules traceuses', () => p.particles, (v) => (p.particles = v));
+    if (onCameraToggle) {
+      // L'état réel (p.cameraFlow) n'est vrai qu'une fois la permission accordée et le
+      // flux démarré — refresh() resynchronise la case si la demande échoue.
+      this.addCheckbox('caméra : le mouvement pousse le fluide', () => p.cameraFlow, onCameraToggle);
+    }
 
     const buttons = document.createElement('div');
     buttons.className = 'panel-buttons';
