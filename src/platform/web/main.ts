@@ -8,9 +8,9 @@
  * utilisé pour la vérification automatisée en navigateur headless.
  */
 
-import { FLUIDS } from '../../core/config';
+import { SUBSTANCE_NAMES } from '../../core/config';
 import { FluidSim } from '../../core/simulation';
-import type { FluidId, FrameInput } from '../../core/types';
+import type { FrameInput, SubstanceId } from '../../core/types';
 
 const BOUNDARY_LABELS = ['parois', 'périodique', 'ouvert'] as const;
 const VIEW_LABELS = ['fluides', 'vélocité', 'pression', 'divergence', 'vorticité'] as const;
@@ -62,9 +62,9 @@ class SelftestDriver {
     p.x = x;
     p.y = y;
     p.down = frameIndex > 55;
-    this.frame.selectedFluid = (Math.floor(frameIndex / 60) % 3) as FluidId;
-    // Après la frame 160 : l'orbite passe à l'outil feu (température + fumée).
-    this.frame.tool = frameIndex >= 160 ? 4 : 0;
+    // Cycle des trois fluides, puis matière feu à partir de la frame 160.
+    this.frame.selectedFluid =
+      frameIndex >= 160 ? 3 : ((Math.floor(frameIndex / 60) % 3) as SubstanceId);
     // Exerce les trois modes : parois → périodique (wrap visible) → ouvert (le fluide
     // qui atteint un bord disparaît). `&hold=` fige un mode pour la bisection.
     this.frame.boundaryMode = (this.holdBoundary ??
@@ -169,7 +169,7 @@ async function boot(): Promise<void> {
         const fps = (fpsFrames * 1000) / (now - fpsLast);
         overlay.update(
           fps,
-          `${FLUIDS[input.frame.selectedFluid].name} (${TOOL_LABELS[input.tool]})`,
+          `${SUBSTANCE_NAMES[input.frame.selectedFluid]} (${TOOL_LABELS[input.tool]})`,
           BOUNDARY_LABELS[input.frame.boundaryMode],
           VIEW_LABELS[input.frame.viewMode],
           input.frame.params.multigrid

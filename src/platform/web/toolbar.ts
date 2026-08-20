@@ -6,12 +6,12 @@
  * DOM vanilla, zéro dépendance.
  */
 
-import { FLUIDS } from '../../core/config';
+import { SUBSTANCE_NAMES } from '../../core/config';
 import {
   BOUNDARY_MODE_COUNT,
   VIEW_MODE_COUNT,
   type BoundaryMode,
-  type FluidId,
+  type SubstanceId,
   type ViewMode,
 } from '../../core/types';
 import type { InputController, UITool } from './input';
@@ -50,17 +50,18 @@ export class MobileToolbar {
     const content = document.createElement('div');
     content.className = 'toolbar-content';
 
-    // 1. Sélecteur de fluide
+    // 1. Sélecteur de MATIÈRE (les trois fluides + le feu) — dit QUOI dépose
+    // l'outil « injecter » ; les autres outils l'ignorent.
     const fluidGroup = document.createElement('div');
     fluidGroup.className = 'toolbar-group fluid-group';
-    FLUIDS.forEach((fluid, i) => {
+    SUBSTANCE_NAMES.forEach((name, i) => {
       const btn = document.createElement('button');
       btn.type = 'button';
       btn.className = `toolbar-btn fluid-btn fluid-btn-${i}`;
-      btn.textContent = fluid.name;
-      btn.title = `Sélectionner le fluide : ${fluid.name} (${i + 1})`;
+      btn.textContent = name;
+      btn.title = `Matière à injecter : ${name} (${i + 1})`;
       btn.addEventListener('click', () => {
-        this.input.frame.selectedFluid = i as FluidId;
+        this.input.frame.selectedFluid = i as SubstanceId;
         this.sync();
         btn.blur();
       });

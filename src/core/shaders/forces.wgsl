@@ -91,8 +91,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
   if (P.impulse.y > 0.5) {
     let tool = u32(P.misc.w + 0.5);
     switch tool {
-      case 0u, 4u: {
-        // Injection et feu partagent le drag directionnel (contrôle au geste).
+      case 0u: {
         vel.x += P.pointer.z * P.misc.y * splat(pu);
         vel.y += P.pointer.w * P.misc.y * splat(pv);
       }

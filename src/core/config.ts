@@ -99,6 +99,9 @@ export interface FluidProps {
   readonly dissipation: number;
 }
 
+/** Noms des matières injectables : les trois fluides + le feu (touches 1/2/3/4). */
+export const SUBSTANCE_NAMES = ['eau', 'encre', 'fumée', 'feu'] as const;
+
 /** Les trois fluides (touches 1/2/3). Valeurs artistiques, ajustées à l'œil. */
 export const FLUIDS: readonly [FluidProps, FluidProps, FluidProps] = [
   { name: 'eau', color: [0.15, 0.55, 1.0], buoyancy: -40 * FORCE_SCALE, dissipation: 0.03 },

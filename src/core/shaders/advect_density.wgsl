@@ -109,25 +109,27 @@ fn correct(@builtin(global_invocation_id) gid: vec3u) {
   // Dissipation par fluide (.xyz) et refroidissement du feu (.w).
   den = den / (vec4f(1.0) + P.dissipation * P.impulse.x);
 
-  // Outils souris, en normalisé (indépendant des résolutions). Outil 0 : injecte le
-  // fluide sélectionné ; outil 1 : gomme tout (chaleur comprise) ; outil 4 : feu —
-  // injecte de la température et un voile de fumée (canal 2) qui la matérialise.
+  // Outils souris, en normalisé (indépendant des résolutions). Outil 0 : injecte la
+  // MATIÈRE sélectionnée (impulse.z) — fluide 0-2, ou feu (3) = température + un voile
+  // de fumée qui la matérialise. Outil 1 : gomme tout, chaleur comprise.
   if (P.impulse.y > 0.5) {
     let tool = u32(P.misc.w + 0.5);
     let off = uv - P.pointer.xy * P.grid.zw;
     let radius = P.impulse.w * P.grid.z;
     let falloff = exp(-dot(off, off) / (radius * radius));
     if (tool == 0u) {
-      var inject = vec3f(0.0);
-      inject[min(u32(P.impulse.z), 2u)] = P.misc.z * P.impulse.x * falloff;
-      den = vec4f(den.xyz + inject, den.w);
+      let substance = u32(P.impulse.z + 0.5);
+      if (substance <= 2u) {
+        var inject = vec3f(0.0);
+        inject[substance] = P.misc.z * P.impulse.x * falloff;
+        den = vec4f(den.xyz + inject, den.w);
+      } else {
+        // Feu (valeurs artistiques) : ~7 unités de chaleur/s au centre du splat.
+        den.w += 7.0 * P.impulse.x * falloff;
+        den.z += 0.5 * P.impulse.x * falloff;
+      }
     } else if (tool == 1u) {
       den = den / (1.0 + 12.0 * falloff * P.impulse.x);
-    } else if (tool == 4u) {
-      // Débits fixes (valeurs artistiques) : ~7 unités de chaleur/s au centre du splat,
-      // plus un voile de fumée qui donne un corps à la flamme.
-      den.w += 7.0 * P.impulse.x * falloff;
-      den.z += 0.5 * P.impulse.x * falloff;
     }
   }
   // Éponge du mode ouvert, puis bornes : ≥ 0 (la correction peut sous-osciller),

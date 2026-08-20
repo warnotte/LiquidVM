@@ -21,7 +21,7 @@ export class Overlay {
     const hint2 = document.createElement('div');
     hint2.className = 'hint hint-desktop';
     hint2.textContent =
-      '1/2/3 : fluide · B : frontières · V : vue debug · espace : pause · R : reset · X : effacer murs · +/− : pression';
+      '1/2/3/4 : matière (eau/encre/fumée/feu) · T : outil · B : frontières · V : vue debug · espace : pause · R : reset · X : murs off';
 
     const hintTouch = document.createElement('div');
     hintTouch.className = 'hint hint-touch';
@@ -40,7 +40,7 @@ export class Overlay {
     paused: boolean,
   ): void {
     this.status.textContent =
-      `${GRID_SIZE}×${GRID_SIZE} · fluide : ${fluidName} · frontières : ${boundaryLabel} · ` +
+      `${GRID_SIZE}×${GRID_SIZE} · matière : ${fluidName} · frontières : ${boundaryLabel} · ` +
       `vue : ${viewLabel} · pression : ${solverLabel} · ` +
       `${Math.round(fps)} FPS${paused ? ' · ⏸ pause' : ''}`;
   }

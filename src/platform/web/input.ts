@@ -9,35 +9,36 @@ import {
   BOUNDARY_MODE_COUNT,
   VIEW_MODE_COUNT,
   type BoundaryMode,
-  type FluidId,
+  type SubstanceId,
   type FrameInput,
   type ToolId,
   type ViewMode,
 } from '../../core/types';
 
-const FLUID_KEYS: Readonly<Record<string, FluidId>> = {
+const SUBSTANCE_KEYS: Readonly<Record<string, SubstanceId>> = {
   Digit1: 0,
   Numpad1: 0,
   Digit2: 1,
   Numpad2: 1,
   Digit3: 2,
   Numpad3: 2,
+  Digit4: 3,
+  Numpad4: 3,
 };
 
-export type UITool = 0 | 1 | 2 | 3 | 4 | 5 | 6;
-export const UI_TOOL_COUNT = 7;
+export type UITool = 0 | 1 | 2 | 3 | 4 | 5;
+export const UI_TOOL_COUNT = 6;
 export const UI_TOOL_LABELS = [
   'injecter',
   'gommer',
   'tourbillon',
   'souffle',
-  'feu',
   'mur',
   'gomme mur',
 ] as const;
 /** Index des outils UI qui ne sont pas des outils fluides du core. */
-const UI_TOOL_WALL = 5;
-const UI_TOOL_WALL_ERASE = 6;
+const UI_TOOL_WALL = 4;
+const UI_TOOL_WALL_ERASE = 5;
 
 export class InputController {
   private activePointerId: number | null = null;
@@ -195,9 +196,9 @@ export class InputController {
     if (e.target instanceof HTMLInputElement) {
       return;
     }
-    const fluid = FLUID_KEYS[e.code];
-    if (fluid !== undefined) {
-      this.frame.selectedFluid = fluid;
+    const substance = SUBSTANCE_KEYS[e.code];
+    if (substance !== undefined) {
+      this.frame.selectedFluid = substance;
       return;
     }
     switch (e.code) {
