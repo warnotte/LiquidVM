@@ -21,6 +21,26 @@ struct MarbleOp {
 @group(0) @binding(1) var lin: sampler;
 @group(0) @binding(2) var src_den: texture_2d<f32>;
 @group(0) @binding(3) var dst_den: texture_storage_2d<rgba16float, write>;
+@group(0) @binding(4) var obstacle: texture_2d<f32>;
+
+// Le point (normalisé) est-il dans un mur ? (le champ d'obstacles vit sur la grille sim)
+fn solid_at(p: vec2f) -> bool {
+  let dims = vec2i(textureDimensions(obstacle));
+  let c = clamp(vec2i(p * vec2f(dims)), vec2i(0), dims - 1);
+  return textureLoad(obstacle, c, 0).x > 0.5;
+}
+
+// Un déplacement de p0 vers p1 traverse-t-il un mur ? Lancer de rayon en 16 pas —
+// les murs BLOQUENT la matière, même pour les warps mathématiques et même en pause.
+// (`from` est un mot réservé WGSL, d'où les noms p0/p1.)
+fn crosses_wall(p0: vec2f, p1: vec2f) -> bool {
+  for (var i = 1; i <= 16; i++) {
+    if (solid_at(mix(p0, p1, f32(i) / 16.0))) {
+      return true;
+    }
+  }
+  return false;
+}
 
 // Synchronisé avec WORKGROUP_SIZE (core/config.ts).
 @compute @workgroup_size(16, 16)
@@ -33,6 +53,12 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
   let p = (vec2f(gid.xy) + vec2f(0.5)) / vec2f(dims);
   let tool = u32(OP.params.x + 0.5);
 
+  // Jamais d'encre dans un mur — pause ou pas.
+  if (solid_at(p)) {
+    textureStore(dst_den, c, vec4f(0.0));
+    return;
+  }
+
   // Outil 3 : « fond » — couvre tout le bain de l'encre sélectionnée.
   if (tool == 3u) {
     textureStore(dst_den, c, OP.ink);
@@ -41,15 +67,18 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
 
   var src = p;
   if (tool == 0u) {
-    // Goutte : disque d'encre neuve, anneaux repoussés autour.
+    // Goutte : disque d'encre neuve, anneaux repoussés autour. L'encre neuve ne
+    // s'étend pas de l'autre côté d'un mur (le disque s'écrase contre lui).
     let d = p - OP.a.xy;
     let l = length(d);
     let r = OP.params.y;
     if (l <= r) {
-      textureStore(dst_den, c, OP.ink);
-      return;
+      if (!crosses_wall(OP.a.xy, p)) {
+        textureStore(dst_den, c, OP.ink);
+        return;
+      }
     }
-    src = OP.a.xy + d * (sqrt(l * l - r * r) / l);
+    src = OP.a.xy + d * (sqrt(max(l * l - r * r, 0.0)) / max(l, 1e-6));
   } else {
     let stroke = OP.a.zw - OP.a.xy;
     let len = length(stroke);
@@ -68,6 +97,10 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       let shift = len * OP.params.z / (d + OP.params.z);
       src = p - dir * shift;
     }
+  }
+  // Collision : si le déplacement traverse un mur, la matière ne bouge pas ici.
+  if (crosses_wall(src, p)) {
+    src = p;
   }
   textureStore(dst_den, c, textureSampleLevel(src_den, lin, src, 0.0));
 }

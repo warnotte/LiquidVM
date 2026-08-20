@@ -43,6 +43,7 @@ export async function createMarblePass(
           { binding: 1, resource: res.linearSampler },
           { binding: 2, resource: res.density.views[d] },
           { binding: 3, resource: res.density.views[flip(d)] },
+          { binding: 4, resource: res.obstacle.view },
         ],
       }),
     ),

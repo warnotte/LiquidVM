@@ -168,6 +168,7 @@ export function createLayouts(device: GPUDevice): SimLayouts {
         { binding: 1, visibility: COMPUTE, sampler: { type: 'filtering' } },
         sampledFloat(2),
         storage(3, DENSITY_FORMAT),
+        sampledScalar(4),
       ],
     }),
     opticalFlow: device.createBindGroupLayout({

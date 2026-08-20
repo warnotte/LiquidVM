@@ -60,6 +60,15 @@ class SelftestDriver {
       this.frame.paused = frameIndex > 5;
       this.frame.render.paper = frameIndex > 3;
       const m = this.frame.marble;
+      // Un mur vertical à droite du motif : les warps de marbrure doivent s'y arrêter.
+      if (!this.noWall && frameIndex >= 6 && frameIndex <= 12) {
+        p.x = 0.68;
+        p.y = 0.25 + ((frameIndex - 6) / 6) * 0.5;
+        p.wall = true;
+        p.down = false;
+        return;
+      }
+      p.wall = false;
       if (frameIndex === 15) {
         this.frame.selectedFluid = 0; // fond d'eau
         m.pending = true;
