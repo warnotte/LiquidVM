@@ -91,6 +91,8 @@ export interface SimTuning {
    * par le core (cameraTexture) — c'est elle qui gère getUserMedia et la permission.
    */
   cameraFlow: boolean;
+  /** Échelle de la buoyancy des encres (0 = bain de marbrure inerte, 1 = normal). */
+  buoyancyScale: number;
   /** Gain du flux optique (multiplie la force appliquée au fluide). */
   flowStrength: number;
   /** Porte de bruit du flux : différence d'intensité minimale considérée comme du
@@ -130,6 +132,20 @@ export interface FrameInput {
   /** Réglages à chaud de la simulation et du rendu. */
   params: SimTuning;
   render: RenderTuning;
+  /**
+   * Opération de marbrure de la frame (marbling mathématique — déformations exactes
+   * préservant les aires, appliquées à la texture d'encres même en pause) :
+   * 0 = goutte (dépose l'encre sélectionnée, déplace le reste en anneaux),
+   * 1 = stylet (tire les encres le long du geste), 2 = peigne (n stylets parallèles).
+   */
+  marble: {
+    pending: boolean;
+    tool: 0 | 1 | 2;
+    ax: number;
+    ay: number;
+    bx: number;
+    by: number;
+  };
 }
 
 /** Bascule l'index de ping-pong. */

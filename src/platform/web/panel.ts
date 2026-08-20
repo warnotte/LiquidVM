@@ -30,6 +30,7 @@ export class DebugPanel {
     input: InputController,
     onCameraToggle?: (on: boolean) => void,
     hands?: { get: () => boolean; set: (on: boolean) => void },
+    onExport?: () => void,
   ) {
     const frame = input.frame;
     this.root = document.createElement('div');
@@ -154,6 +155,15 @@ export class DebugPanel {
         format: (x) => `×${x.toFixed(2)}`,
       },
       {
+        label: 'gravité encres',
+        min: 0,
+        max: 1.5,
+        step: 0.05,
+        get: () => p.buoyancyScale,
+        set: (x) => (p.buoyancyScale = x),
+        format: (x) => `×${x.toFixed(2)}`,
+      },
+      {
         label: 'exposition',
         min: 0.4,
         max: 3,
@@ -224,6 +234,9 @@ export class DebugPanel {
     this.addButton(buttons, '⏭ pas (N)', () => (frame.stepOnce = true));
     this.addButton(buttons, '↺ reset (R)', () => (frame.reset = true));
     this.addButton(buttons, '▨ murs off (X)', () => (frame.clearWalls = true));
+    if (onExport) {
+      this.addButton(buttons, '⬇ PNG', onExport);
+    }
     this.root.appendChild(buttons);
 
     parent.appendChild(this.root);

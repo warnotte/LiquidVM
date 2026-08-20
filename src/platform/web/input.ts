@@ -26,8 +26,8 @@ const SUBSTANCE_KEYS: Readonly<Record<string, SubstanceId>> = {
   Numpad4: 3,
 };
 
-export type UITool = 0 | 1 | 2 | 3 | 4 | 5;
-export const UI_TOOL_COUNT = 6;
+export type UITool = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
+export const UI_TOOL_COUNT = 9;
 export const UI_TOOL_LABELS = [
   'injecter',
   'gommer',
@@ -35,14 +35,21 @@ export const UI_TOOL_LABELS = [
   'souffle',
   'mur',
   'gomme mur',
+  'goutte',
+  'stylet',
+  'peigne',
 ] as const;
 /** Index des outils UI qui ne sont pas des outils fluides du core. */
 const UI_TOOL_WALL = 4;
 const UI_TOOL_WALL_ERASE = 5;
+/** Outils de marbrure (déformations mathématiques, voir marble_warp.wgsl). */
+const UI_TOOL_MARBLE_DROP = 6;
+const UI_TOOL_MARBLE_TINE = 7;
 
 export class InputController {
   private activePointerId: number | null = null;
   private currentUITool: UITool = 0;
+  private marbleDragging = false;
 
   readonly frame: FrameInput = {
     pointer: { x: 0.5, y: 0.5, dx: 0, dy: 0, down: false, wall: false, erase: false },
@@ -55,6 +62,7 @@ export class InputController {
     stepOnce: false,
     pressureIterations: SIM_DEFAULTS.pressureIterations,
     viewMode: 0,
+    marble: { pending: false, tool: 0, ax: 0, ay: 0, bx: 0, by: 0 },
     params: {
       velocityDissipation: SIM_DEFAULTS.velocityDissipation,
       vorticityStrength: SIM_DEFAULTS.vorticityStrength,
@@ -62,6 +70,7 @@ export class InputController {
       splatRadius: SIM_DEFAULTS.splatRadius,
       splatDensity: SIM_DEFAULTS.splatDensity,
       timeScale: SIM_DEFAULTS.timeScale,
+      buoyancyScale: 1,
       macCormack: true,
       multigrid: true,
       vcycles: SIM_DEFAULTS.vcycles,
@@ -136,6 +145,7 @@ export class InputController {
     this.frame.reset = false;
     this.frame.clearWalls = false;
     this.frame.stepOnce = false;
+    this.frame.marble.pending = false;
   }
 
   private updatePosition(e: PointerEvent, accumulateDelta: boolean): void {
@@ -184,6 +194,19 @@ export class InputController {
         this.frame.pointer.down = false;
         this.frame.pointer.wall = true;
         this.frame.pointer.erase = true;
+      } else if (this.currentUITool >= UI_TOOL_MARBLE_DROP) {
+        // Outils de marbrure : pas d'injection fluide — la goutte part immédiatement,
+        // stylet et peigne génèrent leurs segments au fil du geste (onPointerMove).
+        this.frame.pointer.down = false;
+        this.frame.pointer.wall = false;
+        this.marbleDragging = true;
+        if (this.currentUITool === UI_TOOL_MARBLE_DROP) {
+          const m = this.frame.marble;
+          m.pending = true;
+          m.tool = 0;
+          m.ax = m.bx = this.frame.pointer.x;
+          m.ay = m.by = this.frame.pointer.y;
+        }
       } else {
         // Outils fluides (injecter, gommer densité, tourbillon, souffle, feu)
         this.frame.pointer.down = true;
@@ -198,7 +221,22 @@ export class InputController {
     if (this.activePointerId !== e.pointerId) {
       return;
     }
+    const prevX = this.frame.pointer.x;
+    const prevY = this.frame.pointer.y;
     this.updatePosition(e, true);
+    // Stylet et peigne : un segment de geste par frame (coalescé — le point de départ
+    // reste celui du dernier segment appliqué, l'arrivée suit le pointeur).
+    if (this.marbleDragging && this.currentUITool >= UI_TOOL_MARBLE_TINE) {
+      const m = this.frame.marble;
+      if (!m.pending) {
+        m.ax = prevX;
+        m.ay = prevY;
+        m.tool = this.currentUITool === UI_TOOL_MARBLE_TINE ? 1 : 2;
+        m.pending = true;
+      }
+      m.bx = this.frame.pointer.x;
+      m.by = this.frame.pointer.y;
+    }
     if (
       e.button === 2 ||
       this.currentUITool === UI_TOOL_WALL ||
@@ -215,6 +253,7 @@ export class InputController {
       return;
     }
     this.activePointerId = null;
+    this.marbleDragging = false;
     this.frame.pointer.down = false;
     this.frame.pointer.wall = false;
     this.frame.pointer.erase = false;

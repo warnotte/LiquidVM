@@ -39,6 +39,8 @@ export class CompositeRenderer {
   private constructor(
     private readonly scenePipeline: GPURenderPipeline,
     private readonly presentPipeline: GPURenderPipeline,
+    /** Variante de la présentation vers rgba8unorm — export PNG à taille fixe. */
+    private readonly exportPipeline: GPURenderPipeline,
     /** Indexé par [densité][vélocité][pression]. */
     private readonly sceneBind: Pair<Pair<Pair<GPUBindGroup>>>,
     private readonly presentBind: GPUBindGroup,
@@ -98,7 +100,8 @@ export class CompositeRenderer {
         compute: { module: bloomModule, entryPoint },
       });
 
-    const [scenePipeline, presentPipeline, brightDown, down, blurH, blurV] = await Promise.all([
+    const [scenePipeline, presentPipeline, exportPipeline, brightDown, down, blurH, blurV] =
+      await Promise.all([
       device.createRenderPipelineAsync({
         label: 'scene',
         layout: device.createPipelineLayout({
@@ -117,6 +120,20 @@ export class CompositeRenderer {
         }),
         vertex: { module: presentModule, entryPoint: 'vs_main' },
         fragment: { module: presentModule, entryPoint: 'fs_main', targets: [{ format: targetFormat }] },
+        primitive: { topology: 'triangle-list' },
+      }),
+      device.createRenderPipelineAsync({
+        label: 'present-export',
+        layout: device.createPipelineLayout({
+          label: 'present-export-pipeline-layout',
+          bindGroupLayouts: [layouts.present],
+        }),
+        vertex: { module: presentModule, entryPoint: 'vs_main' },
+        fragment: {
+          module: presentModule,
+          entryPoint: 'fs_main',
+          targets: [{ format: 'rgba8unorm' }],
+        },
         primitive: { topology: 'triangle-list' },
       }),
       bloomPipeline('bloom-bright-down', 'bright_down'),
@@ -226,6 +243,7 @@ export class CompositeRenderer {
     return new CompositeRenderer(
       scenePipeline,
       presentPipeline,
+      exportPipeline,
       sceneBind,
       presentBind,
       bloomSteps,
@@ -234,6 +252,21 @@ export class CompositeRenderer {
       res.scene.view,
       res.scene.view,
     );
+  }
+
+  /** Encode la présentation vers la cible d'export (rgba8unorm, taille fixe) —
+   *  utilisé par l'export PNG, en dehors de la boucle de frame. */
+  encodeExport(encoder: GPUCommandEncoder, target: GPUTextureView): void {
+    const pass = encoder.beginRenderPass({
+      label: 'export-pass',
+      colorAttachments: [
+        { view: target, clearValue: { r: 0, g: 0, b: 0, a: 1 }, loadOp: 'clear', storeOp: 'store' },
+      ],
+    });
+    pass.setPipeline(this.exportPipeline);
+    pass.setBindGroup(0, this.presentBind);
+    pass.draw(3);
+    pass.end();
   }
 
   /** Encode scène → [bloom] → présentation vers `target`. */

@@ -37,19 +37,54 @@ const SELFTEST_REPORT_FRAME = 200;
  * tour à tour — l'orbite traverse le mur, ce qui rend la déflexion visible.
  */
 class SelftestDriver {
-  /** Options de bisection : ?selftest&hold=0|1|2 fige le mode, &nowall saute le mur. */
+  /** Options de bisection : ?selftest&hold=0|1|2 fige le mode, &nowall saute le mur,
+   *  &marble déroule un scénario de marbrure (gouttes puis peigne, bain figé). */
   private readonly holdBoundary: number | null;
   private readonly noWall: boolean;
+  private readonly marbleMode: boolean;
 
   constructor(private readonly frame: FrameInput) {
     const params = new URLSearchParams(location.search);
     const hold = params.get('hold');
     this.holdBoundary = hold === null ? null : Number(hold);
     this.noWall = params.has('nowall');
+    this.marbleMode = params.has('marble');
   }
 
   drive(frameIndex: number): void {
     const p = this.frame.pointer;
+    if (this.marbleMode) {
+      // Scénario marbrure : bain figé, cinq gouttes (motif « pierre »), puis un coup
+      // de peigne vertical qui tire les anneaux en chevrons.
+      this.frame.paused = frameIndex > 5;
+      const m = this.frame.marble;
+      const drops: readonly [number, number, number][] = [
+        [30, 0.5, 0.5],
+        [55, 0.38, 0.42],
+        [80, 0.6, 0.55],
+        [105, 0.47, 0.62],
+        [130, 0.55, 0.38],
+      ];
+      for (const [f, x, y] of drops) {
+        if (frameIndex === f) {
+          this.frame.selectedFluid = ((f / 25) % 3 | 0) as SubstanceId;
+          m.pending = true;
+          m.tool = 0;
+          m.ax = m.bx = x;
+          m.ay = m.by = y;
+        }
+      }
+      if (frameIndex >= 170 && frameIndex <= 230) {
+        const y = 0.15 + ((frameIndex - 170) / 60) * 0.7;
+        m.pending = true;
+        m.tool = 2;
+        m.ax = 0.5;
+        m.ay = y - 0.012;
+        m.bx = 0.5;
+        m.by = y;
+      }
+      return;
+    }
     if (!this.noWall && frameIndex >= 10 && frameIndex <= 55) {
       const t = (frameIndex - 10) / 45;
       p.x = 0.63;
@@ -183,10 +218,34 @@ async function boot(): Promise<void> {
           hands.stop(input);
         });
     };
-    const panel = new DebugPanel(document.body, input, toggleCamera, {
-      get: () => hands.active,
-      set: toggleHands,
-    });
+    // Export PNG : readback ponctuel de la présentation à taille fixe → téléchargement.
+    const exportPNG = (): void => {
+      void sim
+        .exportImage()
+        .then(async ({ pixels, width, height }) => {
+          const out = new OffscreenCanvas(width, height);
+          const ctx = out.getContext('2d');
+          if (!ctx) {
+            return;
+          }
+          ctx.putImageData(new ImageData(pixels, width, height), 0, 0);
+          const blob = await out.convertToBlob({ type: 'image/png' });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = `liquidvm-${new Date().toISOString().replace(/[:.]/g, '-')}.png`;
+          a.click();
+          URL.revokeObjectURL(url);
+        })
+        .catch((err: unknown) => console.warn('[export]', err));
+    };
+    const panel = new DebugPanel(
+      document.body,
+      input,
+      toggleCamera,
+      { get: () => hands.active, set: toggleHands },
+      exportPNG,
+    );
     const toolbar = new MobileToolbar(document.body, input, () => panel.toggle());
     const driver = selftest ? new SelftestDriver(input.frame) : null;
     if (selftest) {

@@ -59,11 +59,11 @@ export class SimUniformWriter {
     d[o + 17] = FLUIDS[1].dissipation;
     d[o + 18] = FLUIDS[2].dissipation;
     d[o + 19] = SIM_DEFAULTS.fireCooling;
-    // buoyancy: vec4f — xyz: poussée par fluide (texels/s²), w: temps simulé (s) —
-    // graine du hash de respawn des particules.
-    d[o + 20] = FLUIDS[0].buoyancy;
-    d[o + 21] = FLUIDS[1].buoyancy;
-    d[o + 22] = FLUIDS[2].buoyancy;
+    // buoyancy: vec4f — xyz: poussée par fluide (texels/s²) × échelle runtime
+    // (0 = bain de marbrure inerte), w: temps simulé (s) — graine de hash particules.
+    d[o + 20] = FLUIDS[0].buoyancy * input.params.buoyancyScale;
+    d[o + 21] = FLUIDS[1].buoyancy * input.params.buoyancyScale;
+    d[o + 22] = FLUIDS[2].buoyancy * input.params.buoyancyScale;
     d[o + 23] = time;
     // extra: vec4f — x: frontières (0 parois, 1 périodique, 2 ouvert),
     //               y: pinceau mur (-1|0|1), z: force de vorticité, w: MacCormack (0|1)

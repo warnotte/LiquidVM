@@ -31,6 +31,8 @@ import {
   DYE_DISPATCH_SIZE,
   FLOW_DISPATCH,
   FLOW_SIZE,
+  GRID_SIZE,
+  SCENE_SIZE,
   MG_COARSE_SMOOTH,
   MG_POST_SMOOTH,
   MG_PRE_SMOOTH,
@@ -40,6 +42,7 @@ import {
 import { createAdvectPasses, type AdvectPasses } from './passes/advect';
 import { createClearPasses, type ClearPasses } from './passes/clear';
 import { createForcesPass, type ForcesPass } from './passes/forces';
+import { createMarblePass, type MarblePass } from './passes/marble';
 import { createMultigridPasses, type MultigridPasses } from './passes/multigrid';
 import { createOpticalFlowPasses, type OpticalFlowPasses } from './passes/opticalflow';
 import { createParticlesPass, type ParticlesPass } from './passes/particles';
@@ -87,6 +90,8 @@ export class FluidSim {
   private readonly renderData = renderUniformData();
   /** Réglages du flux optique (gain, porte, décroissance) — même politique. */
   private readonly flowData = new Float32Array([1, 0.015, 0.88, 0]);
+  /** Opération de marbrure (écrite à l'événement, ≤ 1 par frame). */
+  private readonly marbleData = new Float32Array(12);
   private lastFlowStrength = 0; // ≠ défaut → première frame écrit le buffer
   private lastFlowGate = 0;
   private lastCameraInset = false;
@@ -114,6 +119,7 @@ export class FluidSim {
     private readonly mg: MultigridPasses,
     private readonly particles: ParticlesPass,
     private readonly opticalFlow: OpticalFlowPasses,
+    private readonly marble: MarblePass,
     private readonly walls: WallsPass,
     private readonly clear: ClearPasses,
     private readonly renderer: CompositeRenderer,
@@ -132,7 +138,7 @@ export class FluidSim {
     return withValidation(device, 'init FluidSim', async () => {
       const layouts = createLayouts(device);
       const res = createResources(device);
-      const [advect, forces, vorticity, project, mg, particles, flow, wallsPass, clear, renderer] =
+      const [advect, forces, vorticity, project, mg, particles, flow, marblePass, wallsPass, clear, renderer] =
         await Promise.all([
           createAdvectPasses(device, layouts, res),
           createForcesPass(device, layouts, res),
@@ -141,6 +147,7 @@ export class FluidSim {
           createMultigridPasses(device, layouts, res),
           createParticlesPass(device, layouts, res),
           createOpticalFlowPasses(device, layouts, res),
+          createMarblePass(device, layouts, res),
           createWallsPass(device, layouts, res),
           createClearPasses(device, layouts, res),
           CompositeRenderer.create(device, layouts, res, opts.targetFormat),
@@ -173,6 +180,7 @@ export class FluidSim {
         mg,
         particles,
         flow,
+        marblePass,
         wallsPass,
         clear,
         renderer,
@@ -185,6 +193,39 @@ export class FluidSim {
    *  flux optique est actif — le core ne connaît ni getUserMedia ni la permission. */
   get cameraTexture(): GPUTexture {
     return this.res.camera.texture;
+  }
+
+  /**
+   * Export PNG : rend la présentation à taille fixe (SCENE_SIZE², rgba8unorm) et relit
+   * les pixels — un readback GPU→CPU ponctuel déclenché par l'utilisateur, hors de la
+   * boucle de frame (qui, elle, reste strictement sans lecture).
+   */
+  async exportImage(): Promise<{
+    pixels: Uint8ClampedArray<ArrayBuffer>;
+    width: number;
+    height: number;
+  }> {
+    const encoder = this.device.createCommandEncoder({ label: 'export-encoder' });
+    this.renderer.encodeExport(encoder, this.res.exportTarget.view);
+    const bytesPerRow = SCENE_SIZE * 4; // 8192 : multiple de 256 requis par la spec
+    const readback = this.device.createBuffer({
+      label: 'export-readback',
+      size: bytesPerRow * SCENE_SIZE,
+      usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+    });
+    encoder.copyTextureToBuffer(
+      { texture: this.res.exportTarget.texture },
+      { buffer: readback, bytesPerRow },
+      [SCENE_SIZE, SCENE_SIZE],
+    );
+    this.device.queue.submit([encoder.finish()]);
+    await readback.mapAsync(GPUMapMode.READ);
+    const mapped = new Uint8ClampedArray(readback.getMappedRange());
+    const pixels = new Uint8ClampedArray(mapped.length);
+    pixels.set(mapped);
+    readback.unmap();
+    readback.destroy();
+    return { pixels, width: SCENE_SIZE, height: SCENE_SIZE };
   }
 
   /**
@@ -265,6 +306,31 @@ export class FluidSim {
     const boundaryChanged = input.boundaryMode !== this.lastBoundaryMode;
     this.lastBoundaryMode = input.boundaryMode;
 
+    // Opération de marbrure : uniform écrit à l'événement (≤ 1 op/frame).
+    if (input.marble.pending) {
+      const m = this.marbleData;
+      m[0] = input.marble.ax;
+      m[1] = input.marble.ay;
+      m[2] = input.marble.bx;
+      m[3] = input.marble.by;
+      m[4] = input.marble.tool;
+      m[5] = (input.params.splatRadius / GRID_SIZE) * SIM_DEFAULTS.marbleDropScale;
+      m[6] = SIM_DEFAULTS.marbleLambda;
+      m[7] = SIM_DEFAULTS.marbleCombSpacing;
+      m[8] = 0;
+      m[9] = 0;
+      m[10] = 0;
+      m[11] = 0;
+      if (input.selectedFluid < 3) {
+        m[8 + input.selectedFluid] = SIM_DEFAULTS.marbleInk;
+      } else {
+        // Goutte de feu : chaleur + un voile de fumée pour lui donner un corps.
+        m[10] = 0.3;
+        m[11] = 2;
+      }
+      this.device.queue.writeBuffer(this.res.marbleUniforms, 0, this.marbleData);
+    }
+
     const encoder = this.device.createCommandEncoder({ label: 'frame-encoder' });
     // Persistance du flux optique : copie du flux de la frame précédente, que la passe
     // d'estimation fera décroître au lieu de l'effacer (caméra ~30 fps vs sim 60 fps).
@@ -275,7 +341,14 @@ export class FluidSim {
         [FLOW_SIZE, FLOW_SIZE],
       );
     }
-    if (input.reset || input.clearWalls || painting || boundaryChanged || substeps > 0) {
+    if (
+      input.reset ||
+      input.clearWalls ||
+      painting ||
+      boundaryChanged ||
+      input.marble.pending ||
+      substeps > 0
+    ) {
       const cp = encoder.beginComputePass(this.computePassDesc);
       if (input.reset) {
         this.encodeClear(cp);
@@ -308,6 +381,14 @@ export class FluidSim {
           cp.setBindGroup(1, this.mg.levels[l]!.obstacleRestrictBind!);
           cp.dispatchWorkgroups(coarse.dispatch, coarse.dispatch);
         }
+      }
+      // Marbrure : warp inverse de la texture d'encres (fonctionne bain figé — c'est
+      // le mode de travail du marbreur). Layout autonome, ping-pong des densités.
+      if (input.marble.pending) {
+        cp.setPipeline(this.marble.pipeline);
+        cp.setBindGroup(0, this.marble.bind[this.denIdx]);
+        cp.dispatchWorkgroups(DYE_DISPATCH_SIZE, DYE_DISPATCH_SIZE);
+        this.denIdx = flip(this.denIdx);
       }
       // Flux optique : estimation UNE fois par frame (deux images caméra consécutives),
       // avant les sous-pas qui l'appliqueront. Layout autonome — pas de groupe 0.

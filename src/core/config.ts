@@ -159,6 +159,15 @@ export const SIM_DEFAULTS = {
   /** Intensité du bloom ajouté à la scène (0 = désactivé). */
   bloomStrength: 0.9,
   /**
+   * Marbrure (marbling mathématique, Lu/Jaffer) : λ = portée du stylet (fraction du
+   * domaine — la traînée décroît en α·λ/(d+λ)), espacement des dents du peigne,
+   * densité de l'encre déposée par une goutte, rayon de goutte relatif au splat.
+   */
+  marbleLambda: 0.02,
+  marbleCombSpacing: 0.085,
+  marbleInk: 2.5,
+  marbleDropScale: 1.4,
+  /**
    * Feu : la température vit dans le canal alpha de la texture de densités (advectée
    * MacCormack comme les fluides). Elle refroidit vite (les flammes sont des langues
    * transitoires) et pousse fort vers le haut — la valeur est en 1/s, la poussée est

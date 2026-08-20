@@ -74,6 +74,12 @@ export interface SimResources {
   /** Réglages du flux optique (gain, porte de bruit, décroissance) — écrits seulement
    *  quand ils changent, jamais par frame. */
   readonly flowUniforms: GPUBuffer;
+  /** Opération de marbrure courante (écrite à l'événement, une au plus par frame). */
+  readonly marbleUniforms: GPUBuffer;
+  /** Cible d'export PNG : l'image finale (passe de présentation) y est rendue à taille
+   *  fixe puis relue vers le CPU — readback ponctuel déclenché par l'utilisateur,
+   *  jamais dans la boucle de frame. */
+  readonly exportTarget: SingleTexture;
 }
 
 function createFieldTexture(
@@ -214,5 +220,19 @@ export function createResources(device: GPUDevice): SimResources {
       size: 16,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     }),
+    marbleUniforms: device.createBuffer({
+      label: 'marble-uniforms',
+      size: 48,
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+    }),
+    exportTarget: (() => {
+      const texture = device.createTexture({
+        label: 'export-target',
+        size: { width: SCENE_SIZE, height: SCENE_SIZE },
+        format: 'rgba8unorm',
+        usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC,
+      });
+      return { texture, view: texture.createView({ label: 'export-target-view' }) };
+    })(),
   };
 }

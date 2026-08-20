@@ -36,6 +36,8 @@ export interface SimLayouts {
   /** Flux optique : estimation (caméra + luminance ping-pong) et application au champ. */
   readonly opticalFlow: GPUBindGroupLayout;
   readonly applyFlow: GPUBindGroupLayout;
+  /** Marbrure : warp inverse de la texture d'encres (goutte, stylet, peigne). */
+  readonly marble: GPUBindGroupLayout;
   /** Layouts des passes de clear (group(0) dédié, formats différents). */
   readonly clearRgba: GPUBindGroupLayout;
   readonly clearScalar: GPUBindGroupLayout;
@@ -157,6 +159,15 @@ export function createLayouts(device: GPUDevice): SimLayouts {
           visibility: GPUShaderStage.VERTEX,
           buffer: { type: 'read-only-storage' },
         },
+      ],
+    }),
+    marble: device.createBindGroupLayout({
+      label: 'marble-layout',
+      entries: [
+        { binding: 0, visibility: COMPUTE, buffer: { type: 'uniform' } },
+        { binding: 1, visibility: COMPUTE, sampler: { type: 'filtering' } },
+        sampledFloat(2),
+        storage(3, DENSITY_FORMAT),
       ],
     }),
     opticalFlow: device.createBindGroupLayout({
