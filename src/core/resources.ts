@@ -45,6 +45,9 @@ export interface SimResources {
   readonly velScratch: SingleTexture;
   /** Prédicteur MacCormack des densités, à la résolution dye. */
   readonly dyeScratch: SingleTexture;
+  /** Mosaïque de la vue debug 6 « résidu MG » (rgba16float, couleurs d'affichage),
+   *  composée uniquement quand la vue est active — voir mg_debug.wgsl. */
+  readonly mgDebug: SingleTexture;
   /** Scène HDR intermédiaire (linéaire, pré-tone-mapping) — cible du rendu des fluides. */
   readonly scene: SingleTexture;
   /** Chaîne de bloom : deux niveaux (512², 256²), chacun en paire pour le flou séparable. */
@@ -129,6 +132,7 @@ export function createResources(device: GPUDevice): SimResources {
     obstacle: createSingle(device, 'obstacle', SCALAR_FORMAT, GRID_SIZE),
     velScratch: createSingle(device, 'velocity-maccormack-hat', VELOCITY_FORMAT, GRID_SIZE),
     dyeScratch: createSingle(device, 'density-maccormack-hat', DENSITY_FORMAT, DYE_SIZE),
+    mgDebug: createSingle(device, 'mg-debug-mosaic', DENSITY_FORMAT, GRID_SIZE),
     scene: (() => {
       const texture = device.createTexture({
         label: 'scene-hdr',

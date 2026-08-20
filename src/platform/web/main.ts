@@ -20,6 +20,7 @@ const VIEW_LABELS = [
   'divergence',
   'vorticité',
   'caméra',
+  'résidu MG',
 ] as const;
 import { acquireDevice } from './gpu';
 import { CameraFlow } from './camera';

@@ -22,6 +22,7 @@ struct RenderParams {
 @group(0) @binding(6) var curl_tex: texture_2d<f32>;
 @group(0) @binding(7) var camera_tex: texture_2d<f32>;
 @group(0) @binding(8) var flow_tex: texture_2d<f32>;
+@group(0) @binding(9) var mg_debug_tex: texture_2d<f32>;
 
 struct VSOut {
   @builtin(position) pos: vec4f,
@@ -109,6 +110,12 @@ fn fs_main(frag: VSOut) -> @location(0) vec4f {
     }
     case 4u: {
       col = diverging(textureLoad(curl_tex, sim_texel(frag.uv), 0).x * 0.02);
+    }
+    case 6u: {
+      // Mosaïque multigrid : déjà en couleurs d'affichage (composée par mg_debug.wgsl).
+      // 4 colonnes × 2 rangées, du niveau fin (haut-gauche) au grossier ; dans chaque
+      // cellule : résidu en haut, pression du niveau en bas.
+      col = textureSampleLevel(mg_debug_tex, lin, frag.uv, 0.0).rgb;
     }
     default: {
       // Vue caméra : l'image que le flux optique voit (miroir horizontal, comme lui)

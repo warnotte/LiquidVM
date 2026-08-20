@@ -12,6 +12,7 @@
  */
 
 import multigridWGSL from '../shaders/multigrid.wgsl?raw';
+import mgDebugWGSL from '../shaders/mg_debug.wgsl?raw';
 import { GRID_SIZE, MG_COARSEST_SIZE, SCALAR_FORMAT, WORKGROUP_SIZE } from '../config';
 import { createShaderModule, createSimPipeline, type SimLayouts } from '../pipelines';
 import type { SimResources } from '../resources';
@@ -34,6 +35,9 @@ export interface MGLevel {
   readonly clearBind: GPUBindGroup | null;
   /** Obstacles de ce niveau → masque du niveau suivant. Null au plus grossier. */
   readonly obstacleRestrictBind: GPUBindGroup | null;
+  /** Vue debug 6 : cellule de mosaïque de ce niveau, indexée par [source de pression].
+   *  Source « résidu » : le résidu du niveau (le rhs au plus grossier, qui n'en a pas). */
+  readonly composeBind: Pair<GPUBindGroup>;
 }
 
 export interface MultigridPasses {
@@ -42,6 +46,8 @@ export interface MultigridPasses {
   readonly restrictPipeline: GPUComputePipeline;
   readonly prolongPipeline: GPUComputePipeline;
   readonly obstacleRestrictPipeline: GPUComputePipeline;
+  /** Composition de la mosaïque debug (group(0) autonome, un dispatch par niveau). */
+  readonly composePipeline: GPUComputePipeline;
   readonly levels: readonly MGLevel[];
 }
 
@@ -59,13 +65,22 @@ export async function createMultigridPasses(
   res: SimResources,
 ): Promise<MultigridPasses> {
   const module = await createShaderModule(device, 'multigrid.wgsl', multigridWGSL);
-  const [smoothPipeline, residualPipeline, restrictPipeline, prolongPipeline, obstacleRestrictPipeline] =
+  const debugModule = await createShaderModule(device, 'mg_debug.wgsl', mgDebugWGSL);
+  const [smoothPipeline, residualPipeline, restrictPipeline, prolongPipeline, obstacleRestrictPipeline, composePipeline] =
     await Promise.all([
       createSimPipeline(device, 'mg-smooth', layouts, layouts.jacobi, module, 'smooth_jacobi'),
       createSimPipeline(device, 'mg-residual', layouts, layouts.jacobi, module, 'residual'),
       createSimPipeline(device, 'mg-restrict', layouts, layouts.mgRestrict, module, 'restrict_rhs'),
       createSimPipeline(device, 'mg-prolong', layouts, layouts.mgProlong, module, 'prolong_add'),
       createSimPipeline(device, 'mg-restrict-obstacle', layouts, layouts.mgRestrict, module, 'restrict_obstacle'),
+      device.createComputePipelineAsync({
+        label: 'mg-debug-compose',
+        layout: device.createPipelineLayout({
+          label: 'mg-debug-compose-pipeline-layout',
+          bindGroupLayouts: [layouts.mgDebug],
+        }),
+        compute: { module: debugModule, entryPoint: 'compose' },
+      }),
     ]);
 
   const makeTexture = (label: string, size: number): GPUTextureView =>
@@ -179,6 +194,17 @@ export async function createMultigridPasses(
                 { binding: 2, resource: next.obstacle },
               ],
             }),
+      composeBind: pair((p) =>
+        device.createBindGroup({
+          label: `mg-debug-compose-bind-l${l}-p${p}`,
+          layout: layouts.mgDebug,
+          entries: [
+            { binding: 0, resource: next === null ? t.rhs : t.residual },
+            { binding: 1, resource: t.pressure[p] },
+            { binding: 2, resource: res.mgDebug.view },
+          ],
+        }),
+      ),
     };
   });
 
@@ -188,6 +214,7 @@ export async function createMultigridPasses(
     restrictPipeline,
     prolongPipeline,
     obstacleRestrictPipeline,
+    composePipeline,
     levels,
   };
 }

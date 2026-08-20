@@ -177,6 +177,7 @@ export class CompositeRenderer {
               { binding: 6, resource: res.curl.view },
               { binding: 7, resource: res.camera.view },
               { binding: 8, resource: res.flow.view },
+              { binding: 9, resource: res.mgDebug.view },
             ],
           }),
         ),

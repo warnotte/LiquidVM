@@ -46,6 +46,14 @@ typecheck strict + bundle. Aucune dépendance runtime.
   --enable-unsafe-webgpu --disable-backgrounding-occluded-windows` (sans ce dernier,
   rAF est gelé pour une fenêtre hors écran). Le headless pur (`--headless=new`) ne
   fournit PAS d'adapter WebGPU sur cette machine — toujours headed hors écran + CDP.
+- **Vue 6 « résidu MG »** : mosaïque de la pyramide multigrid (4 colonnes × 2 rangées,
+  du niveau fin au grossier ; chaque cellule = résidu du dernier V-cycle en haut,
+  pression du niveau en bas — mg_debug.wgsl, composée seulement si la vue est active).
+  Lecture : un résidu qui flambe désigne l'étage qui ne converge pas ; une pression qui
+  explose désigne l'étage où la stabilité se perd en premier ; on y voit aussi le masque
+  d'obstacles se dégrader en descendant la pyramide (restriction majoritaire). En mode
+  Jacobi, les étages > 0 restent figés sur le dernier V-cycle (normal). L'instrument à
+  ouvrir EN PREMIER si le multigrid re-déraille — construit pour le chantier 3D.
 
 ## Pièges durement payés — ne pas re-tomber dedans
 
@@ -98,5 +106,5 @@ Config actuelle : sim 1024², dye/scène 2048².
 
 ## Pistes suivantes
 
-Vue debug du résidu multigrid par niveau · test smartphone (1024², vérifier les limites
-WebGPU mobiles) · sim 3D ~128³ + rendu volumétrique (la vraie « vue de côté »).
+Test smartphone (1024², vérifier les limites WebGPU mobiles) · sim 3D ~128³ + rendu
+volumétrique (la vraie « vue de côté ») — chantier ouvert sur la branche `3d`.

@@ -18,7 +18,7 @@ import type { InputController, UITool } from './input';
 import { UI_TOOL_LABELS } from './input';
 
 const BOUNDARY_NAMES = ['Parois', 'Périodique', 'Ouvert'] as const;
-const VIEW_NAMES = ['Fluides', 'Vélocité', 'Pression', 'Divergence', 'Vorticité', 'Caméra'] as const;
+const VIEW_NAMES = ['Fluides', 'Vélocité', 'Pression', 'Divergence', 'Vorticité', 'Caméra', 'Résidu MG'] as const;
 
 export class MobileToolbar {
   private readonly root: HTMLDivElement;
