@@ -45,6 +45,13 @@ connus) : voir [NOTES-DEV.md](NOTES-DEV.md).
 
 **Barre d'outils tactile (bas de l'écran)** : déployable / rétractable avec ▲/▼, elle donne accès à tous les fluides, outils, modes de frontière, vues et réglages sans clavier physique.
 
+**Webcam (panneau Tab)** : « caméra » — le flux optique convertit tout mouvement devant
+la webcam en forces sur le fluide (encart de contrôle en haut à gauche : image + flux,
+sliders force/seuil) ; « mains » — MediaPipe suit votre index (curseur-anneau à l'écran)
+et le pincement pouce-index presse l'outil actif : toute l'interface se pilote au geste.
+Le modèle (~8 Mo) n'est téléchargé qu'à l'activation ; sans caméra, tout le reste
+fonctionne normalement.
+
 Overlay (bas gauche) : taille de grille, fluide actif, itérations, FPS — mis à jour 2×/s.
 
 ## Schéma d'une frame
