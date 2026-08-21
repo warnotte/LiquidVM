@@ -160,6 +160,19 @@ Config actuelle : sim 1024², dye/scène 2048².
 - **Numérique** : advection à traces RK2 point-milieu (backtrace/forwardtrace
   dans les deux advections MacCormack) ; refroidissement RADIATIF T⁴ sur la
   chaleur (0.30·T⁴/s — pointes de flammes nettes, fumée tiède persistante).
+- **OXYGÈNE / système d'espèces** : texture rgba16float ping-pong (x = O₂ init 1
+  via clear_one, yzw = espèces futures), passe species3d (advection RK2 + chimie)
+  APRÈS l'advection des densités (elle lit les densités fraîches — cohérence du
+  taux de réaction). La combustion et l'expansion sont modulées par
+  clamp(O₂/0.25, 0, 1) ; consommation 0.55·burn ; récupération 0.015/s (boîte
+  qui fuit) ; le souffle INJECTE de l'O₂ le long de son rayon (soufflet de
+  forge). En vase clos une flamme soutenue s'étouffe — la raviver au souffle.
+- **Perf (60 FPS partout à 256³)** : résolution de rendu dynamique pilotée FPS
+  (0.6–1.0×, hystérésis 50/58.5, HUD « rendu N % ») ; pas adaptatif du raymarch
+  (air vide = double enjambée, intégrales sur la longueur réelle) ; V-cycles = 1
+  (warm start — 2 coûtaient ~6 balayages de plus sans gain visible). Si ça
+  ralentit à nouveau : le budget sim est plein, chercher là (le rendu s'adapte
+  seul).
 - **Mode DÉMO (showcase)** : touche D ou `?demo` — chorégraphie en boucle ~80 s
   (pilote → fontaine magenta → fumée → nappe de carburant → souffle scripté →
   embrasement → boule en lemniscate → grand souffle → accalmie → reset), caméra
