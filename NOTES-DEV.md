@@ -157,6 +157,14 @@ Config actuelle : sim 1024², dye/scène 2048².
   l'auto-nettoyage. UX : 1/2/3 = encre des FUTURS émetteurs + celui EN MAIN
   uniquement (recolorer l'actif à distance éteignait la flamme pilote).
   Allumage jouable : amener/souffler la nappe vers une flamme. 53-60 FPS.
+- **Numérique** : advection à traces RK2 point-milieu (backtrace/forwardtrace
+  dans les deux advections MacCormack) ; refroidissement RADIATIF T⁴ sur la
+  chaleur (0.30·T⁴/s — pointes de flammes nettes, fumée tiède persistante).
+- **Mode DÉMO (showcase)** : touche D ou `?demo` — chorégraphie en boucle ~80 s
+  (pilote → fontaine magenta → fumée → nappe de carburant → souffle scripté →
+  embrasement → boule en lemniscate → grand souffle → accalmie → reset), caméra
+  en orbite avec respiration. DemoDriver dans main3d.ts ; pilotage scripté via
+  sim.driveSphere / sim.addEmitterAt (mêmes chemins que la saisie réelle).
 - **MacCormack 3D** : prédicteur/correcteur clampé par composante MAC (stencil du
   point rétro-advecté) — LE raffineur : le panache laminaire devient turbulent et
   structuré à lui seul.
