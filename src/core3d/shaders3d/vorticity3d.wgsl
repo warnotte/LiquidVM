@@ -12,7 +12,13 @@ struct Params {
   blow_origin: vec4f,
   blow_dir: vec4f,
   blow_force: vec4f,
-  sphere: vec4f,    // xyz: centre (voxels), w: rayon (voxels, ≤0 = absente)
+  sphere: vec4f,     // xyz: centre (voxels), w: rayon (voxels, ≤0 = absente)
+  emit_meta: vec4f,
+  emitter1: vec4f,
+  emitter2: vec4f,
+  emitter3: vec4f,
+  emit_inks: vec4f,
+  sphere_vel: vec4f, // xyz: vitesse de la sphère (voxels/s)
 }
 
 fn solid_cell(c: vec3i) -> bool {
@@ -107,9 +113,12 @@ fn confine(@builtin(global_invocation_id) gid: vec3u) {
   vel.y += dt * confine_force(fc + vec3f(0.5, 0.0, 0.5)).y;
   vel.z += dt * confine_force(fc + vec3f(0.5, 0.5, 0.0)).z;
 
-  vel.x = select(vel.x, 0.0, c.x == 0 || face_blocked(c, vec3i(1, 0, 0)));
-  vel.y = select(vel.y, 0.0, c.y == 0 || face_blocked(c, vec3i(0, 1, 0)));
-  vel.z = select(vel.z, 0.0, c.z == 0 || face_blocked(c, vec3i(0, 0, 1)));
+  vel.x = select(vel.x, P.sphere_vel.x, face_blocked(c, vec3i(1, 0, 0)));
+  vel.y = select(vel.y, P.sphere_vel.y, face_blocked(c, vec3i(0, 1, 0)));
+  vel.z = select(vel.z, P.sphere_vel.z, face_blocked(c, vec3i(0, 0, 1)));
+  vel.x = select(vel.x, 0.0, c.x == 0);
+  vel.y = select(vel.y, 0.0, c.y == 0);
+  vel.z = select(vel.z, 0.0, c.z == 0);
 
   textureStore(vel_dst, gid, vec4f(vel, 0.0));
 }

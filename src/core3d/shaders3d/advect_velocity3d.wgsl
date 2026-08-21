@@ -13,7 +13,13 @@ struct Params {
   blow_origin: vec4f,
   blow_dir: vec4f,
   blow_force: vec4f,
-  sphere: vec4f,    // xyz: centre (voxels), w: rayon (voxels, ≤0 = absente)
+  sphere: vec4f,     // xyz: centre (voxels), w: rayon (voxels, ≤0 = absente)
+  emit_meta: vec4f,
+  emitter1: vec4f,
+  emitter2: vec4f,
+  emitter3: vec4f,
+  emit_inks: vec4f,
+  sphere_vel: vec4f, // xyz: vitesse de la sphère (voxels/s) — condition de bord MOBILE
 }
 
 // Sphère-obstacle analytique : la cellule est solide si son CENTRE est dans la
@@ -135,10 +141,14 @@ fn correct(@builtin(global_invocation_id) gid: vec3u) {
   v = clamp(v, mv.x, mv.y) * decay;
   w = clamp(w, mw.x, mw.y) * decay;
 
-  // Boîte fermée + sphère-obstacle : non-pénétration.
-  u = select(u, 0.0, c.x == 0 || face_blocked(c, vec3i(1, 0, 0)));
-  v = select(v, 0.0, c.y == 0 || face_blocked(c, vec3i(0, 1, 0)));
-  w = select(w, 0.0, c.z == 0 || face_blocked(c, vec3i(0, 0, 1)));
+  // Sphère-obstacle MOBILE : les faces bloquées portent SA vitesse (la boule
+  // brasse le fluide) ; les parois de la boîte restent immobiles.
+  u = select(u, P.sphere_vel.x, face_blocked(c, vec3i(1, 0, 0)));
+  v = select(v, P.sphere_vel.y, face_blocked(c, vec3i(0, 1, 0)));
+  w = select(w, P.sphere_vel.z, face_blocked(c, vec3i(0, 0, 1)));
+  u = select(u, 0.0, c.x == 0);
+  v = select(v, 0.0, c.y == 0);
+  w = select(w, 0.0, c.z == 0);
 
   textureStore(vel_dst, gid, vec4f(u, v, w, 0.0));
 }

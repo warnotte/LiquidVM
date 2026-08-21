@@ -83,6 +83,31 @@ fn hash12(p: vec2f) -> f32 {
   return fract(q.x * q.y);
 }
 
+// Ombrage du sol sous la boîte : tapis sombre qui reçoit l'ombre volumétrique de
+// la fumée (marche courte vers la lumière à travers la boîte) et celle de la boule.
+fn floor_shade(fp: vec3f, bg: vec3f, ldir: vec3f) -> vec3f {
+  let reach = smoothstep(1.15, 0.40, length(fp.xz));
+  if (reach <= 0.0) {
+    return bg;
+  }
+  var occ = 0.0;
+  let bh = box_hit(fp, ldir);
+  let s0 = max(bh.x, 0.0);
+  if (bh.y > s0) {
+    let step_len = (bh.y - s0) / 12.0;
+    for (var j = 0u; j < 12u; j++) {
+      let sp = fp + ldir * (s0 + (f32(j) + 0.5) * step_len);
+      occ += extinction(textureSampleLevel(density_tex, lin, sp + vec3f(0.5), 0.0)) * step_len;
+    }
+  }
+  if (sphere_hit(fp, ldir) < 1e8) {
+    occ += 3.0;
+  }
+  let shadow = exp(-occ * 0.8);
+  let base = vec3f(0.075, 0.080, 0.098);
+  return mix(bg, base * (0.30 + 0.70 * shadow), reach);
+}
+
 @fragment
 fn fs_main(frag: VSOut) -> @location(0) vec4f {
   let tanf = R.cam_pos.w;
@@ -93,8 +118,14 @@ fn fs_main(frag: VSOut) -> @location(0) vec4f {
   );
   let ro = R.cam_pos.xyz;
 
-  // Fond : dégradé sombre vertical, cohérent avec l'appli 2D.
-  let bg = mix(vec3f(0.045, 0.05, 0.065), vec3f(0.10, 0.105, 0.13), frag.uv.y * 0.5 + 0.5);
+  // Fond : dégradé sombre vertical, remplacé par le sol si le rayon le touche.
+  var bg = mix(vec3f(0.045, 0.05, 0.065), vec3f(0.10, 0.105, 0.13), frag.uv.y * 0.5 + 0.5);
+  if (rd.y < -1e-4) {
+    let t_floor = (-0.502 - ro.y) / rd.y;
+    if (t_floor > 0.0) {
+      bg = floor_shade(ro + rd * t_floor, bg, R.light.xyz);
+    }
+  }
 
   let hit = box_hit(ro, rd);
   let t0 = max(hit.x, 0.0);
@@ -134,7 +165,11 @@ fn fs_main(frag: VSOut) -> @location(0) vec4f {
           let ss = textureSampleLevel(density_tex, lin, sp + vec3f(0.5), 0.0);
           occ += extinction(ss);
         }
-        let shade = exp(-occ * shadow_step * 0.9);
+        var shade = exp(-occ * shadow_step * 0.9);
+        // La boule projette son ombre dans la fumée.
+        if (sphere_hit(pos, ldir) < 1e8) {
+          shade *= 0.25;
+        }
         let albedo = ink_albedo(s);
         let lo = blackbody(s.w) * 2.2 +
           albedo * R.light.w * (shade * 0.92 + 0.08) * min(ext, 3.0) * 0.28;
@@ -144,13 +179,16 @@ fn fs_main(frag: VSOut) -> @location(0) vec4f {
       }
       t += step_len;
     }
-    // Sphère-obstacle : surface mate ardoise, diffuse + lueur de contour.
+    // Sphère-obstacle : surface mate ardoise, diffuse + lueur de contour —
+    // et elle ROUGEOIE au corps noir quand la flamme la lèche.
     if (t_sphere < hit.y && transmit > 0.005) {
       let sp = ro + rd * t_sphere;
       let nrm = normalize(sp - R.sphere.xyz);
       let diff = max(dot(nrm, R.light.xyz), 0.0);
       let rim = pow(1.0 - max(dot(nrm, -rd), 0.0), 3.0);
-      let sphere_col = vec3f(0.30, 0.32, 0.38) * (0.30 + 0.70 * diff) + vec3f(0.10) * rim;
+      let heat_here = textureSampleLevel(density_tex, lin, sp + nrm * 0.012 + vec3f(0.5), 0.0).w;
+      var sphere_col = vec3f(0.30, 0.32, 0.38) * (0.30 + 0.70 * diff) + vec3f(0.10) * rim;
+      sphere_col += blackbody(heat_here) * 0.9;
       acc += transmit * sphere_col;
       transmit = 0.0;
     }

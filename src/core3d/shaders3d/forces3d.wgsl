@@ -16,6 +16,7 @@ struct Params {
   emitter2: vec4f,
   emitter3: vec4f,
   emit_inks: vec4f,   // encre (0/1/2) de chaque émetteur
+  sphere_vel: vec4f,  // xyz: vitesse de la sphère (voxels/s) — condition de bord mobile
 }
 
 fn emitter_pos(i: u32) -> vec4f {
@@ -111,10 +112,13 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
   vel.y += dt * blow_gauss(pv) * P.blow_force.y;
   vel.z += dt * blow_gauss(pw) * P.blow_force.z;
 
-  // Boîte fermée + sphère-obstacle : les faces bloquées restent des murs.
-  vel.x = select(vel.x, 0.0, c.x == 0 || face_blocked(c, vec3i(1, 0, 0)));
-  vel.y = select(vel.y, 0.0, c.y == 0 || face_blocked(c, vec3i(0, 1, 0)));
-  vel.z = select(vel.z, 0.0, c.z == 0 || face_blocked(c, vec3i(0, 0, 1)));
+  // Sphère mobile : les faces bloquées portent sa vitesse ; parois de boîte à 0.
+  vel.x = select(vel.x, P.sphere_vel.x, face_blocked(c, vec3i(1, 0, 0)));
+  vel.y = select(vel.y, P.sphere_vel.y, face_blocked(c, vec3i(0, 1, 0)));
+  vel.z = select(vel.z, P.sphere_vel.z, face_blocked(c, vec3i(0, 0, 1)));
+  vel.x = select(vel.x, 0.0, c.x == 0);
+  vel.y = select(vel.y, 0.0, c.y == 0);
+  vel.z = select(vel.z, 0.0, c.z == 0);
 
   textureStore(vel_dst, gid, vec4f(vel, 0.0));
 }

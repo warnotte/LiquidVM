@@ -12,7 +12,13 @@ struct Params {
   blow_origin: vec4f,
   blow_dir: vec4f,
   blow_force: vec4f,
-  sphere: vec4f,    // xyz: centre (voxels), w: rayon (voxels, ≤0 = absente)
+  sphere: vec4f,     // xyz: centre (voxels), w: rayon (voxels, ≤0 = absente)
+  emit_meta: vec4f,
+  emitter1: vec4f,
+  emitter2: vec4f,
+  emitter3: vec4f,
+  emit_inks: vec4f,
+  sphere_vel: vec4f, // xyz: vitesse de la sphère (voxels/s)
 }
 
 // Sphère-obstacle : même règle « centre de cellule » que les écritures de vélocité —
@@ -91,20 +97,25 @@ fn gradient(@builtin(global_invocation_id) gid: vec3u) {
   let pc = p_at(c);
   let solid_c = solid_cell(c);
   var vel = textureLoad(vel_src, c, 0).xyz;
+  // Face ouverte : soustraire le gradient ; face de sphère : vitesse de la sphère
+  // (bord mobile prescrit, le gradient n'y touche pas) ; paroi de boîte : 0.
   vel.x = select(
-    0.0,
+    P.sphere_vel.x,
     vel.x - (pc - p_at(c - vec3i(1, 0, 0))),
-    c.x > 0 && !solid_c && !solid_cell(c - vec3i(1, 0, 0)),
+    !solid_c && !solid_cell(c - vec3i(1, 0, 0)),
   );
   vel.y = select(
-    0.0,
+    P.sphere_vel.y,
     vel.y - (pc - p_at(c - vec3i(0, 1, 0))),
-    c.y > 0 && !solid_c && !solid_cell(c - vec3i(0, 1, 0)),
+    !solid_c && !solid_cell(c - vec3i(0, 1, 0)),
   );
   vel.z = select(
-    0.0,
+    P.sphere_vel.z,
     vel.z - (pc - p_at(c - vec3i(0, 0, 1))),
-    c.z > 0 && !solid_c && !solid_cell(c - vec3i(0, 0, 1)),
+    !solid_c && !solid_cell(c - vec3i(0, 0, 1)),
   );
+  vel.x = select(vel.x, 0.0, c.x == 0);
+  vel.y = select(vel.y, 0.0, c.y == 0);
+  vel.z = select(vel.z, 0.0, c.z == 0);
   textureStore(vel_dst, gid, vec4f(vel, 0.0));
 }

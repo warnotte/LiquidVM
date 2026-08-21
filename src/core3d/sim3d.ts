@@ -135,7 +135,7 @@ export class FluidSim3D {
   private pressIdx: PingIndex = 0;
   private simTime = 0;
 
-  private readonly simData = new Float32Array(52);
+  private readonly simData = new Float32Array(56);
   private readonly renderData = new Float32Array(24);
   private lastRender = new Float32Array(24).fill(Number.NaN);
 
@@ -150,6 +150,8 @@ export class FluidSim3D {
     GRID3 * SIM3_DEFAULTS.sphereStart[2],
   ];
   private sphereOn = true;
+  /** Vitesse de la sphère (voxels/s) — condition de bord mobile, lissée EMA. */
+  private readonly sphereVel: [number, number, number] = [0, 0, 0];
   /** Cible saisie : -2 = aucune, -1 = sphère, ≥0 = index d'émetteur. */
   private grabbed = -2;
   private readonly rayO: [number, number, number] = [0, 0, 0];
@@ -668,7 +670,7 @@ export class FluidSim3D {
     // Le rendu d'abord : la saisie et le souffle lisent la base caméra depuis
     // renderData — elle doit être celle de cette frame.
     this.writeRenderUniforms(input, aspect);
-    this.processInteraction(input);
+    this.processInteraction(input, dt);
     if (running) {
       this.simTime += dt;
       this.writeSimUniforms(dt, input);
@@ -830,7 +832,7 @@ export class FluidSim3D {
   }
 
   /** Saisie, ajout/retrait d'émetteurs, sphère — tout l'état interactif. */
-  private processInteraction(input: Frame3DInput): void {
+  private processInteraction(input: Frame3DInput, dt: number): void {
     if (input.reset) {
       this.emitters.length = 1;
       this.emitters[0] = { pos: [GRID3 * 0.5, GRID3 * 0.08, GRID3 * 0.5], ink: input.emitInk };
@@ -870,6 +872,9 @@ export class FluidSim3D {
       if (this.grabbed !== -2) {
         // Déplacement sur le plan face caméra passant par la position de l'objet.
         const target = this.grabbed === -1 ? this.spherePos : this.emitters[this.grabbed]!.pos;
+        const px = target[0];
+        const py = target[1];
+        const pz = target[2];
         const r = this.renderData;
         const denom =
           r[12]! * this.rayD[0] + r[13]! * this.rayD[1] + r[14]! * this.rayD[2];
@@ -887,9 +892,30 @@ export class FluidSim3D {
             target[2] = Math.min(Math.max(this.rayO[2] + t * this.rayD[2], lo), hi);
           }
         }
+        // La sphère saisie communique sa vitesse au fluide (lissée, plafonnée CFL).
+        if (this.grabbed === -1 && dt > 0) {
+          const cap = 420 * SCALE3;
+          for (let a = 0; a < 3; a++) {
+            const inst = (this.spherePos[a]! - [px, py, pz][a]!) / dt;
+            this.sphereVel[a] = 0.55 * this.sphereVel[a]! + 0.45 * inst;
+          }
+          const mag = Math.hypot(this.sphereVel[0], this.sphereVel[1], this.sphereVel[2]);
+          if (mag > cap) {
+            const k = cap / mag;
+            this.sphereVel[0] *= k;
+            this.sphereVel[1] *= k;
+            this.sphereVel[2] *= k;
+          }
+        }
       }
     } else {
       this.grabbed = -2;
+    }
+    // Hors saisie (ou autre cible), la vitesse de la boule s'amortit vite.
+    if (this.grabbed !== -1) {
+      this.sphereVel[0] *= 0.82;
+      this.sphereVel[1] *= 0.82;
+      this.sphereVel[2] *= 0.82;
     }
   }
 
@@ -1049,6 +1075,10 @@ export class FluidSim3D {
     for (let i = 0; i < 4; i++) {
       d[48 + i] = this.emitters[i]?.ink ?? 0;
     }
+    // Vitesse de la sphère (voxels/s) : condition de bord mobile.
+    d[52] = this.sphereOn ? this.sphereVel[0] : 0;
+    d[53] = this.sphereOn ? this.sphereVel[1] : 0;
+    d[54] = this.sphereOn ? this.sphereVel[2] : 0;
     this.device.queue.writeBuffer(this.simUniforms, 0, d);
   }
 
