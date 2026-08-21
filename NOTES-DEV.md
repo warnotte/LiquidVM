@@ -178,7 +178,12 @@ Config actuelle : sim 1024², dye/scène 2048².
   Toute la physique est réglable à chaud via Sim3Tuning (Frame3DInput.params,
   défauts de defaultTuning3()) : combustion, débits, dissipations, poussée,
   souffle, vitesse du temps, rendu. Barre : matières en pastilles, ± émetteur,
-  boule, démo, réglages ; sélecteur de résolution (recharge avec ?grid=).
+  boule, démo, réglages, retour 2D ; sélecteur de résolution (recharge avec ?grid=).
+- **Presets (section en tête de panneau)** : défaut / bougie / fournaise /
+  fumée épaisse — chaque preset = un Partial<Sim3Tuning> appliqué À CHAUD
+  par-dessus defaultTuning3() (déterministe quel que soit l'historique de clics,
+  pas de reset : la flamme change de caractère en direct). Ajouter un preset =
+  une entrée dans PRESETS (main3d.ts). Exposition/pas de marche non touchés.
 - **Mode DÉMO (showcase)** : touche D ou `?demo` — chorégraphie en boucle ~80 s
   (pilote → fontaine magenta → fumée → nappe de carburant → souffle scripté →
   embrasement → boule en lemniscate → grand souffle → accalmie → reset), caméra

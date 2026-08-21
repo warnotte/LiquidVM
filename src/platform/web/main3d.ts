@@ -12,6 +12,7 @@ import {
   INK_NAMES,
   setGrid3,
   SIM3_DEFAULTS,
+  type Sim3Tuning,
 } from '../../core3d/config3d';
 import { FluidSim3D, type Frame3DInput } from '../../core3d/sim3d';
 import { encodeVdb } from '../../core3d/vdb';
@@ -348,7 +349,49 @@ async function boot(): Promise<void> {
       input.blow.active = false;
     }
   };
+  // PRESETS : jeux de réglages physiques nommés, appliqués À CHAUD sur les params
+  // vivants (pas de reset — la flamme change de caractère sous vos yeux). Chaque
+  // preset part des DÉFAUTS puis applique ses écarts : déterministe quel que soit
+  // l'historique de clics. Exposition/pas de marche non touchés.
+  const PRESETS: readonly { label: string; values: Partial<Sim3Tuning> }[] = [
+    { label: '↺ défaut', values: {} },
+    {
+      label: '🕯 bougie',
+      values: {
+        buoyancy: 80, velocityDissipation: 0.05, emitHeat: 1.6, emitInkRate: 0.7,
+        heatCooling: 1.5, inkDissipation: 0.3, burnRate: 2, heatYield: 0.5, expansion: 4,
+      },
+    },
+    {
+      label: '🔥 fournaise',
+      values: {
+        buoyancy: 280, velocityDissipation: 0.02, emitHeat: 6.5, emitInkRate: 3.5,
+        heatCooling: 0.55, inkDissipation: 0.15, burnRate: 6, heatYield: 1.05,
+        expansion: 24, oxygenRecover: 0.05, blowForce: 320,
+      },
+    },
+    {
+      label: '🌫 fumée épaisse',
+      values: {
+        buoyancy: 110, emitHeat: 1.2, emitInkRate: 5.5,
+        heatCooling: 1.2, inkDissipation: 0.04,
+      },
+    },
+  ];
   const panel = new Panel3D(document.body, [
+    {
+      title: 'presets',
+      buttons: PRESETS.map((preset) => ({
+        label: preset.label,
+        action: (): void => {
+          Object.assign(p, defaultTuning3(), preset.values);
+          panel.refresh();
+          if (input.feedback) {
+            toast(`preset : ${preset.label}`);
+          }
+        },
+      })),
+    },
     {
       title: 'simulation',
       sliders: [
