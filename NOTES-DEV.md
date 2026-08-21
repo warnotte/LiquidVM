@@ -143,6 +143,20 @@ Config actuelle : sim 1024², dye/scène 2048².
   de la boule ; la boule s'ombre aussi DANS la fumée (test rayon-sphère par
   échantillon éclairé) et rougeoie au corps noir (chaleur échantillonnée à sa
   surface). Le tout tient les 60 FPS à 256³.
+- **COMBUSTION (Feldman/Fedkiw simplifié)** : matière 3 = vapeur de CARBURANT,
+  émise froide (pas de chaleur) et légèrement lourde → nappes au sol. Réaction
+  dans advect_density (ignition smoothstep(0.28, 0.55) sur la chaleur, taux
+  emit_meta.y, chaleur dégagée emit_meta.z plafonnée 1.9, suie 0.35·burn dans
+  le canal fumée) ; EXPANSION = source de divergence au front de flamme
+  (emit_meta.w, la passe divergence lit les densités [vel][den] et recalcule le
+  même critère). Poids propres des matières dans forces (ink_weights slot 14 —
+  Boussinesq deux voies, l'encre magenta retombe en fontaines). CALIBRATION
+  DUREMENT PAYÉE : chaleur 2.0 + expansion 40 = runaway → boîte entière
+  incandescente (boîte fermée : l'expansion nette ne peut pas sortir, tout
+  s'accumule) ; valeurs sûres 0.7/10, dissipation matières 0.20/s pour
+  l'auto-nettoyage. UX : 1/2/3 = encre des FUTURS émetteurs + celui EN MAIN
+  uniquement (recolorer l'actif à distance éteignait la flamme pilote).
+  Allumage jouable : amener/souffler la nappe vers une flamme. 53-60 FPS.
 - **MacCormack 3D** : prédicteur/correcteur clampé par composante MAC (stencil du
   point rétro-advecté) — LE raffineur : le panache laminaire devient turbulent et
   structuré à lui seul.
