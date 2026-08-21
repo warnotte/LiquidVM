@@ -57,6 +57,13 @@ export const SIM3_DEFAULTS = {
    *  (unités monde/s² par unité de geste NDC). */
   blowRadius: 0.10,
   blowForce: 260,
+  /** Saisie au pointeur : distance rayon-objet maximale pour attraper (monde). */
+  grabRadius: 0.11,
+  /** Sphère-obstacle : rayon (fraction du monde), position de départ. */
+  sphereRadius: 0.085,
+  sphereStart: [0.5, 0.45, 0.5],
+  /** Nombre maximal d'émetteurs simultanés. */
+  maxEmitters: 4,
   /** Rendu. */
   raymarchSteps: 160,
   exposure: 1.25,

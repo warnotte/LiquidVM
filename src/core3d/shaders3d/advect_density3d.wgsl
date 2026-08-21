@@ -4,12 +4,36 @@
 
 struct Params {
   misc: vec4f,      // x: dt, y: temps, z: N, w: force de vorticité
-  emitter: vec4f,   // xyz: centre (voxels), w: rayon (voxels)
+  emitter: vec4f,   // émetteur 0 : xyz centre (voxels), w: rayon (voxels)
   emit_vals: vec4f, // x: débit chaleur, y: débit d'encre, z: impulsion ↑, w: impulsion latérale
   diss: vec4f,      // x: dissipation vélocité, y: encres, z: refroidissement, w: buoyancy
   blow_origin: vec4f,
   blow_dir: vec4f,
-  blow_force: vec4f, // w: index de l'encre émise (0/1/2)
+  blow_force: vec4f,
+  sphere: vec4f,    // xyz: centre (voxels), w: rayon (voxels, ≤0 = absente)
+  emit_meta: vec4f, // x: nombre d'émetteurs actifs (1..4)
+  emitter1: vec4f,
+  emitter2: vec4f,
+  emitter3: vec4f,
+  emit_inks: vec4f, // encre (0/1/2) de chaque émetteur
+}
+
+fn emitter_pos(i: u32) -> vec4f {
+  switch i {
+    case 0u: { return P.emitter; }
+    case 1u: { return P.emitter1; }
+    case 2u: { return P.emitter2; }
+    default: { return P.emitter3; }
+  }
+}
+
+fn emitter_ink(i: u32) -> u32 {
+  switch i {
+    case 0u: { return u32(P.emit_inks.x + 0.5); }
+    case 1u: { return u32(P.emit_inks.y + 0.5); }
+    case 2u: { return u32(P.emit_inks.z + 0.5); }
+    default: { return u32(P.emit_inks.w + 0.5); }
+  }
 }
 
 @group(0) @binding(0) var<uniform> P: Params;
@@ -82,22 +106,32 @@ fn correct(@builtin(global_invocation_id) gid: vec3u) {
   // Dissipations : la fumée s'estompe lentement, la chaleur se refroidit vite.
   val = vec4f(val.xyz / (1.0 + P.diss.y * dt), val.w / (1.0 + P.diss.z * dt));
 
-  // Émetteur gaussien : chaleur + l'encre sélectionnée (canal xyz selon l'index).
-  let d = distance(center, P.emitter.xyz) / max(P.emitter.w, 1e-3);
-  let g = exp(-d * d * 3.0);
-  let ink = u32(P.blow_force.w + 0.5);
-  var inject = vec3f(0.0);
-  if (ink == 0u) {
-    inject.x = 1.0;
-  } else if (ink == 1u) {
-    inject.y = 1.0;
-  } else {
-    inject.z = 1.0;
+  // Émetteurs gaussiens : chaleur + l'encre propre à chacun (canal xyz selon l'index).
+  let count = u32(P.emit_meta.x + 0.5);
+  for (var i = 0u; i < count; i++) {
+    let e = emitter_pos(i);
+    let d = distance(center, e.xyz) / max(e.w, 1e-3);
+    let g = exp(-d * d * 3.0);
+    let ink = emitter_ink(i);
+    var inject = vec3f(0.0);
+    if (ink == 0u) {
+      inject.x = 1.0;
+    } else if (ink == 1u) {
+      inject.y = 1.0;
+    } else {
+      inject.z = 1.0;
+    }
+    val = vec4f(
+      val.xyz + inject * (P.emit_vals.y * dt * g),
+      val.w + P.emit_vals.x * dt * g,
+    );
   }
-  val = vec4f(
-    min(val.xyz + inject * (P.emit_vals.y * dt * g), vec3f(3.0)),
-    min(val.w + P.emit_vals.x * dt * g, 2.0),
-  );
+  val = min(val, vec4f(3.0, 3.0, 3.0, 2.0));
+
+  // Jamais d'encre ni de chaleur dans la sphère-obstacle.
+  if (P.sphere.w > 0.0 && distance(center, P.sphere.xyz) < P.sphere.w) {
+    val = vec4f(0.0);
+  }
 
   textureStore(den_dst, gid, max(val, vec4f(0.0)));
 }

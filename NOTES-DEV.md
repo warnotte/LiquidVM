@@ -123,6 +123,16 @@ Config actuelle : sim 1024², dye/scène 2048².
   clic droit, caméra orbitale, E = export VDB (encodeur généralisé multi-nœuds 16³,
   jusqu'à 4096³ ; density = somme des encres). 60 FPS à 256³ desktop, VDB 256³
   re-validé dans Blender.
+- **Interactions saisies** : clic gauche sur la flamme ou la boule = déplacer
+  (hitTest par rayon décide saisie vs orbite ; déplacement sur le plan face
+  caméra passant par l'objet), A = + émetteur sous le pointeur (max 4, chacun
+  son encre — 1/2/3 recolore l'émetteur ACTIF, le dernier ajouté ou saisi),
+  X = − émetteur, O = sphère-obstacle. La SPHÈRE est ANALYTIQUE : aucune texture
+  d'obstacles — chaque shader (advection, forces, confinement, gradient, lisseur
+  Jacobi ET multigrid à tous les niveaux via remontée en voxels fins) teste
+  centre-de-cellule-dans-la-sphère depuis l'uniforme, avec la même règle partout
+  (adjonction exacte préservée, aucun NaN). La fumée se fend autour de la boule
+  et se referme. 60 FPS avec sphère + 3 émetteurs à 256³.
 - **MacCormack 3D** : prédicteur/correcteur clampé par composante MAC (stencil du
   point rétro-advecté) — LE raffineur : le panache laminaire devient turbulent et
   structuré à lui seul.

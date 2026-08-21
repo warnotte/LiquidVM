@@ -55,7 +55,12 @@ async function boot(): Promise<void> {
       elevation: SIM3_DEFAULTS.camElevation,
       radius: SIM3_DEFAULTS.camRadius,
     },
+    pointer: { ndcX: 0, ndcY: 0 },
     blow: { active: false, ndcX: 0, ndcY: 0, moveX: 0, moveY: 0 },
+    grab: { active: false },
+    addEmitter: false,
+    removeEmitter: false,
+    sphereActive: true,
     exposure: SIM3_DEFAULTS.exposure,
     raymarchSteps: SIM3_DEFAULTS.raymarchSteps,
   };
@@ -63,16 +68,25 @@ async function boot(): Promise<void> {
     (window as unknown as Record<string, unknown>)['__frame3d'] = input;
   }
 
-  // Caméra orbitale : glisser (gauche) pour tourner, molette pour zoomer.
+  // Caméra orbitale : glisser (gauche) pour tourner — SAUF si le clic attrape un
+  // objet (flamme ou sphère : hitTest), auquel cas l'objet suit le pointeur.
   // Souffle : glisser au clic DROIT — le geste pousse le fluide le long du rayon.
   let dragging = false;
   let blowing = false;
   let lastX = 0;
   let lastY = 0;
+  const updatePointer = (e: PointerEvent): void => {
+    const rect = canvas.getBoundingClientRect();
+    input.pointer.ndcX = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+    input.pointer.ndcY = 1 - ((e.clientY - rect.top) / rect.height) * 2;
+  };
   canvas.addEventListener('contextmenu', (e) => e.preventDefault());
   canvas.addEventListener('pointerdown', (e) => {
+    updatePointer(e);
     if (e.button === 2) {
       blowing = true;
+    } else if (sim.hitTest(input.pointer.ndcX, input.pointer.ndcY)) {
+      input.grab.active = true;
     } else {
       dragging = true;
     }
@@ -86,12 +100,13 @@ async function boot(): Promise<void> {
     }
   });
   canvas.addEventListener('pointermove', (e) => {
+    updatePointer(e);
     if (blowing) {
       const rect = canvas.getBoundingClientRect();
       const b = input.blow;
       b.active = true;
-      b.ndcX = ((e.clientX - rect.left) / rect.width) * 2 - 1;
-      b.ndcY = 1 - ((e.clientY - rect.top) / rect.height) * 2;
+      b.ndcX = input.pointer.ndcX;
+      b.ndcY = input.pointer.ndcY;
       b.moveX += ((e.clientX - lastX) / rect.width) * 2;
       b.moveY += -((e.clientY - lastY) / rect.height) * 2;
       lastX = e.clientX;
@@ -113,6 +128,7 @@ async function boot(): Promise<void> {
     dragging = false;
     blowing = false;
     input.blow.active = false;
+    input.grab.active = false;
     canvas.classList.remove('dragging');
   };
   canvas.addEventListener('pointerup', endDrag);
@@ -169,6 +185,15 @@ async function boot(): Promise<void> {
     } else if (e.code === 'Digit3' || e.code === 'Numpad3') {
       input.emitInk = 2;
     }
+    // Lettres via e.key : indépendant de la disposition clavier (AZERTY…).
+    const k = e.key.toLowerCase();
+    if (k === 'a') {
+      input.addEmitter = true;
+    } else if (k === 'x') {
+      input.removeEmitter = true;
+    } else if (k === 'o') {
+      input.sphereActive = !input.sphereActive;
+    }
   });
 
   let last = performance.now();
@@ -186,6 +211,8 @@ async function boot(): Promise<void> {
     input.reset = false;
     input.blow.moveX = 0;
     input.blow.moveY = 0;
+    input.addEmitter = false;
+    input.removeEmitter = false;
     frames++;
 
     hudTimer += dt;
@@ -195,7 +222,8 @@ async function boot(): Promise<void> {
       hud.innerHTML =
         `<b>LiquidVM 3D</b> · ${GRID3}³ · encre : ${INK_NAMES[input.emitInk] ?? '?'} · ${solver} · ${Math.round(fps)} FPS` +
         `${input.paused ? ' · ⏸ pause' : ''}<br>` +
-        '1/2/3 : encre · glisser : orbiter · clic droit : souffler · molette : zoom · espace : pause · R : reset · E : export .vdb';
+        '1/2/3 : encre · glisser sur la flamme/boule : déplacer · A : + émetteur · X : − émetteur · O : boule<br>' +
+        'glisser : orbiter · clic droit : souffler · molette : zoom · espace : pause · R : reset · E : export .vdb';
     }
     if (selftest && frames === SELFTEST_FRAMES) {
       const report = document.createElement('div');

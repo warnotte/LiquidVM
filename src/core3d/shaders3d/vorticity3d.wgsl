@@ -9,6 +9,21 @@ struct Params {
   emitter: vec4f,
   emit_vals: vec4f,
   diss: vec4f,
+  blow_origin: vec4f,
+  blow_dir: vec4f,
+  blow_force: vec4f,
+  sphere: vec4f,    // xyz: centre (voxels), w: rayon (voxels, ≤0 = absente)
+}
+
+fn solid_cell(c: vec3i) -> bool {
+  if (P.sphere.w <= 0.0) {
+    return false;
+  }
+  return distance(vec3f(c) + vec3f(0.5), P.sphere.xyz) < P.sphere.w;
+}
+
+fn face_blocked(c: vec3i, axis: vec3i) -> bool {
+  return solid_cell(c) || solid_cell(c - axis);
 }
 
 @group(0) @binding(0) var<uniform> P: Params;
@@ -92,9 +107,9 @@ fn confine(@builtin(global_invocation_id) gid: vec3u) {
   vel.y += dt * confine_force(fc + vec3f(0.5, 0.0, 0.5)).y;
   vel.z += dt * confine_force(fc + vec3f(0.5, 0.5, 0.0)).z;
 
-  vel.x = select(vel.x, 0.0, c.x == 0);
-  vel.y = select(vel.y, 0.0, c.y == 0);
-  vel.z = select(vel.z, 0.0, c.z == 0);
+  vel.x = select(vel.x, 0.0, c.x == 0 || face_blocked(c, vec3i(1, 0, 0)));
+  vel.y = select(vel.y, 0.0, c.y == 0 || face_blocked(c, vec3i(0, 1, 0)));
+  vel.z = select(vel.z, 0.0, c.z == 0 || face_blocked(c, vec3i(0, 0, 1)));
 
   textureStore(vel_dst, gid, vec4f(vel, 0.0));
 }

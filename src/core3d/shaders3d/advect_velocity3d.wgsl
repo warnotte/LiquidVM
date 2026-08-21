@@ -9,7 +9,24 @@ struct Params {
   misc: vec4f,      // x: dt, y: temps, z: N, w: force de vorticité
   emitter: vec4f,
   emit_vals: vec4f,
-  diss: vec4f,      // x: dissipation vélocité, y: fumée, z: refroidissement, w: buoyancy
+  diss: vec4f,      // x: dissipation vélocité, y: encres, z: refroidissement, w: buoyancy
+  blow_origin: vec4f,
+  blow_dir: vec4f,
+  blow_force: vec4f,
+  sphere: vec4f,    // xyz: centre (voxels), w: rayon (voxels, ≤0 = absente)
+}
+
+// Sphère-obstacle analytique : la cellule est solide si son CENTRE est dans la
+// sphère — la même règle que le gradient et le lisseur (adjonction exacte).
+fn solid_cell(c: vec3i) -> bool {
+  if (P.sphere.w <= 0.0) {
+    return false;
+  }
+  return distance(vec3f(c) + vec3f(0.5), P.sphere.xyz) < P.sphere.w;
+}
+
+fn face_blocked(c: vec3i, axis: vec3i) -> bool {
+  return solid_cell(c) || solid_cell(c - axis);
 }
 
 @group(0) @binding(0) var<uniform> P: Params;
@@ -118,10 +135,10 @@ fn correct(@builtin(global_invocation_id) gid: vec3u) {
   v = clamp(v, mv.x, mv.y) * decay;
   w = clamp(w, mw.x, mw.y) * decay;
 
-  // Boîte fermée : non-pénétration aux faces frontières.
-  u = select(u, 0.0, c.x == 0);
-  v = select(v, 0.0, c.y == 0);
-  w = select(w, 0.0, c.z == 0);
+  // Boîte fermée + sphère-obstacle : non-pénétration.
+  u = select(u, 0.0, c.x == 0 || face_blocked(c, vec3i(1, 0, 0)));
+  v = select(v, 0.0, c.y == 0 || face_blocked(c, vec3i(0, 1, 0)));
+  w = select(w, 0.0, c.z == 0 || face_blocked(c, vec3i(0, 0, 1)));
 
   textureStore(vel_dst, gid, vec4f(u, v, w, 0.0));
 }

@@ -9,6 +9,7 @@ struct RenderParams {
   cam_up: vec4f,    // xyz, w: exposition
   cam_fwd: vec4f,   // xyz, w: pas de marche (nombre)
   light: vec4f,     // xyz: direction VERS la lumière, w: intensité
+  sphere: vec4f,    // xyz: centre (monde), w: rayon (monde, ≤0 = absente)
 }
 
 @group(0) @binding(0) var<uniform> R: RenderParams;
@@ -60,6 +61,21 @@ fn blackbody(heat: f32) -> vec3f {
   return vec3f(h * 1.6, h * h * 0.9, h * h * h * 0.42);
 }
 
+// Intersection rayon / sphère-obstacle : t d'entrée, ou 1e9 si manquée/absente.
+fn sphere_hit(ro: vec3f, rd: vec3f) -> f32 {
+  if (R.sphere.w <= 0.0) {
+    return 1e9;
+  }
+  let oc = ro - R.sphere.xyz;
+  let b = dot(oc, rd);
+  let disc = b * b - (dot(oc, oc) - R.sphere.w * R.sphere.w);
+  if (disc < 0.0) {
+    return 1e9;
+  }
+  let t = -b - sqrt(disc);
+  return select(1e9, t, t > 0.0);
+}
+
 // Hachage rapide pour décaler le départ de chaque rayon (casse le banding).
 fn hash12(p: vec2f) -> f32 {
   var q = fract(p * vec2f(123.34, 345.45));
@@ -82,12 +98,15 @@ fn fs_main(frag: VSOut) -> @location(0) vec4f {
 
   let hit = box_hit(ro, rd);
   let t0 = max(hit.x, 0.0);
+  // La marche s'arrête à la sphère-obstacle si le rayon la touche.
+  let t_sphere = sphere_hit(ro, rd);
+  let t_end = min(hit.y, t_sphere);
   var col: vec3f;
   if (hit.y <= t0) {
     col = bg;
   } else {
     let steps = max(R.cam_fwd.w, 16.0);
-    let step_len = (hit.y - t0) / steps;
+    let step_len = (max(t_end, t0 + 1e-4) - t0) / steps;
     var t = t0 + step_len * hash12(frag.uv * 917.0);
     var transmit = 1.0;
     var acc = vec3f(0.0);
@@ -124,6 +143,16 @@ fn fs_main(frag: VSOut) -> @location(0) vec4f {
         transmit *= exp(-ext * step_len);
       }
       t += step_len;
+    }
+    // Sphère-obstacle : surface mate ardoise, diffuse + lueur de contour.
+    if (t_sphere < hit.y && transmit > 0.005) {
+      let sp = ro + rd * t_sphere;
+      let nrm = normalize(sp - R.sphere.xyz);
+      let diff = max(dot(nrm, R.light.xyz), 0.0);
+      let rim = pow(1.0 - max(dot(nrm, -rd), 0.0), 3.0);
+      let sphere_col = vec3f(0.30, 0.32, 0.38) * (0.30 + 0.70 * diff) + vec3f(0.10) * rim;
+      acc += transmit * sphere_col;
+      transmit = 0.0;
     }
     col = acc + transmit * bg;
   }

@@ -9,10 +9,14 @@
 //    niveau le plus grossier (8³), directement dans le lisseur. NE PAS RETIRER.
 
 struct Params {
-  misc: vec4f,
+  misc: vec4f,      // z: N (grille fine — sert à remonter aux voxels fins)
   emitter: vec4f,
   emit_vals: vec4f,
   diss: vec4f,
+  blow_origin: vec4f,
+  blow_dir: vec4f,
+  blow_force: vec4f,
+  sphere: vec4f,    // xyz: centre (voxels fins), w: rayon (voxels fins, ≤0 = absente)
 }
 
 @group(0) @binding(0) var<uniform> P: Params;
@@ -30,10 +34,35 @@ fn p_at(c: vec3i, n: i32) -> f32 {
   return textureLoad(p_src, clamp(c, vec3i(0), vec3i(n - 1)), 0).x;
 }
 
+// Sphère-obstacle vue depuis un niveau grossier : le centre de la cellule du niveau
+// est remonté en voxels fins (même approximation « centre » qu'au niveau 0 — un
+// obstacle plus fin que la cellule grossière peut fuir, comme la restriction 2D).
+fn solid_cell(c: vec3i, n: i32) -> bool {
+  if (P.sphere.w <= 0.0) {
+    return false;
+  }
+  let scale = P.misc.z / f32(n);
+  return distance((vec3f(c) + vec3f(0.5)) * scale, P.sphere.xyz) < P.sphere.w;
+}
+
 fn neighbor_sum(c: vec3i, n: i32) -> f32 {
-  return p_at(c + vec3i(1, 0, 0), n) + p_at(c - vec3i(1, 0, 0), n) +
-    p_at(c + vec3i(0, 1, 0), n) + p_at(c - vec3i(0, 1, 0), n) +
-    p_at(c + vec3i(0, 0, 1), n) + p_at(c - vec3i(0, 0, 1), n);
+  let pc = p_at(c, n);
+  var sum = 0.0;
+  for (var a = 0; a < 6; a++) {
+    var off = vec3i(0);
+    let axis = a >> 1;
+    let sign = select(-1, 1, (a & 1) == 0);
+    if (axis == 0) {
+      off.x = sign;
+    } else if (axis == 1) {
+      off.y = sign;
+    } else {
+      off.z = sign;
+    }
+    let nb = c + off;
+    sum += select(p_at(nb, n), pc, solid_cell(nb, n));
+  }
+  return sum;
 }
 
 @compute @workgroup_size(4, 4, 4)

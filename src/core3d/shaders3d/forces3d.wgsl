@@ -4,12 +4,38 @@
 
 struct Params {
   misc: vec4f,      // x: dt, y: temps, z: N, w: force de vorticité
-  emitter: vec4f,   // xyz: centre (voxels), w: rayon (voxels)
-  emit_vals: vec4f, // x: débit chaleur, y: débit fumée, z: impulsion ↑, w: impulsion latérale
-  diss: vec4f,      // x: dissipation vélocité, y: dissipation fumée, z: refroidissement, w: buoyancy
+  emitter: vec4f,   // émetteur 0 : xyz centre (voxels), w: rayon (voxels)
+  emit_vals: vec4f, // x: débit chaleur, y: débit d'encre, z: impulsion ↑, w: impulsion latérale
+  diss: vec4f,      // x: dissipation vélocité, y: encres, z: refroidissement, w: buoyancy
   blow_origin: vec4f, // xyz: origine du rayon du pointeur (voxels), w: rayon du pinceau (voxels)
   blow_dir: vec4f,    // xyz: direction du rayon (normalisée), w: actif (0/1)
   blow_force: vec4f,  // xyz: force du souffle (voxels/s²), w: libre
+  sphere: vec4f,      // xyz: centre (voxels), w: rayon (voxels, ≤0 = absente)
+  emit_meta: vec4f,   // x: nombre d'émetteurs actifs (1..4)
+  emitter1: vec4f,
+  emitter2: vec4f,
+  emitter3: vec4f,
+  emit_inks: vec4f,   // encre (0/1/2) de chaque émetteur
+}
+
+fn emitter_pos(i: u32) -> vec4f {
+  switch i {
+    case 0u: { return P.emitter; }
+    case 1u: { return P.emitter1; }
+    case 2u: { return P.emitter2; }
+    default: { return P.emitter3; }
+  }
+}
+
+fn solid_cell(c: vec3i) -> bool {
+  if (P.sphere.w <= 0.0) {
+    return false;
+  }
+  return distance(vec3f(c) + vec3f(0.5), P.sphere.xyz) < P.sphere.w;
+}
+
+fn face_blocked(c: vec3i, axis: vec3i) -> bool {
+  return solid_cell(c) || solid_cell(c - axis);
 }
 
 @group(0) @binding(0) var<uniform> P: Params;
@@ -27,9 +53,16 @@ fn heat_at(p: vec3f) -> f32 {
   return textureSampleLevel(den_src, lin, p * inv_n(), 0.0).w;
 }
 
+// Poids gaussien cumulé de TOUS les émetteurs actifs à la position p.
 fn emitter_gauss(p: vec3f) -> f32 {
-  let d = distance(p, P.emitter.xyz) / max(P.emitter.w, 1e-3);
-  return exp(-d * d * 3.0);
+  var g = 0.0;
+  let count = u32(P.emit_meta.x + 0.5);
+  for (var i = 0u; i < count; i++) {
+    let e = emitter_pos(i);
+    let d = distance(p, e.xyz) / max(e.w, 1e-3);
+    g += exp(-d * d * 3.0);
+  }
+  return min(g, 1.5);
 }
 
 // Souffle du pointeur : poids gaussien autour du RAYON caméra→scène (un tube),
@@ -78,10 +111,10 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
   vel.y += dt * blow_gauss(pv) * P.blow_force.y;
   vel.z += dt * blow_gauss(pw) * P.blow_force.z;
 
-  // Boîte fermée : les faces frontières restent des murs.
-  vel.x = select(vel.x, 0.0, c.x == 0);
-  vel.y = select(vel.y, 0.0, c.y == 0);
-  vel.z = select(vel.z, 0.0, c.z == 0);
+  // Boîte fermée + sphère-obstacle : les faces bloquées restent des murs.
+  vel.x = select(vel.x, 0.0, c.x == 0 || face_blocked(c, vec3i(1, 0, 0)));
+  vel.y = select(vel.y, 0.0, c.y == 0 || face_blocked(c, vec3i(0, 1, 0)));
+  vel.z = select(vel.z, 0.0, c.z == 0 || face_blocked(c, vec3i(0, 0, 1)));
 
   textureStore(vel_dst, gid, vec4f(vel, 0.0));
 }

@@ -44,9 +44,19 @@ export interface Frame3DInput {
   emitInk: number;
   /** Caméra orbitale autour du centre de la boîte. */
   cam: { azimuth: number; elevation: number; radius: number };
+  /** Position courante du pointeur en NDC [-1,1] (mise à jour en continu). */
+  pointer: { ndcX: number; ndcY: number };
   /** Souffle du pointeur (clic droit + glisser) : position NDC [-1,1] et delta NDC
    *  accumulé depuis la dernière frame (consommé par la plateforme après frame()). */
   blow: { active: boolean; ndcX: number; ndcY: number; moveX: number; moveY: number };
+  /** Saisie (clic gauche sur un objet — voir hitTest) : l'objet suit le pointeur
+   *  sur le plan face caméra passant par sa position. */
+  grab: { active: boolean };
+  /** Ajout d'un émetteur sous le pointeur / retrait du dernier (consommés). */
+  addEmitter: boolean;
+  removeEmitter: boolean;
+  /** Sphère-obstacle présente. */
+  sphereActive: boolean;
   exposure: number;
   raymarchSteps: number;
 }
@@ -125,9 +135,25 @@ export class FluidSim3D {
   private pressIdx: PingIndex = 0;
   private simTime = 0;
 
-  private readonly simData = new Float32Array(28);
-  private readonly renderData = new Float32Array(20);
-  private lastRender = new Float32Array(20).fill(Number.NaN);
+  private readonly simData = new Float32Array(52);
+  private readonly renderData = new Float32Array(24);
+  private lastRender = new Float32Array(24).fill(Number.NaN);
+
+  /** Émetteurs (positions en voxels) — le premier est l'émetteur historique. */
+  private readonly emitters: { pos: [number, number, number]; ink: number }[] = [
+    { pos: [GRID3 * 0.5, GRID3 * 0.08, GRID3 * 0.5], ink: 0 },
+  ];
+  private activeEmitter = 0;
+  private readonly spherePos: [number, number, number] = [
+    GRID3 * SIM3_DEFAULTS.sphereStart[0],
+    GRID3 * SIM3_DEFAULTS.sphereStart[1],
+    GRID3 * SIM3_DEFAULTS.sphereStart[2],
+  ];
+  private sphereOn = true;
+  /** Cible saisie : -2 = aucune, -1 = sphère, ≥0 = index d'émetteur. */
+  private grabbed = -2;
+  private readonly rayO: [number, number, number] = [0, 0, 0];
+  private readonly rayD: [number, number, number] = [0, 0, 0];
   private readonly submitList: GPUCommandBuffer[] = [new Uint8Array(0) as unknown as GPUCommandBuffer];
 
   private constructor(
@@ -639,9 +665,10 @@ export class FluidSim3D {
   frame(input: Frame3DInput, target: GPUTextureView, aspect: number): void {
     const dt = Math.min(Math.max(input.dt, 0), 1 / 30);
     const running = !input.paused && dt > 0;
-    // Le rendu d'abord : writeSimUniforms lit la base caméra depuis renderData
-    // (rayon du souffle) — elle doit être celle de cette frame.
+    // Le rendu d'abord : la saisie et le souffle lisent la base caméra depuis
+    // renderData — elle doit être celle de cette frame.
     this.writeRenderUniforms(input, aspect);
+    this.processInteraction(input);
     if (running) {
       this.simTime += dt;
       this.writeSimUniforms(dt, input);
@@ -739,6 +766,131 @@ export class FluidSim3D {
 
     this.submitList[0] = encoder.finish();
     this.device.queue.submit(this.submitList);
+  }
+
+  /** Rayon caméra→scène pour un point NDC : origine en voxels, direction unitaire. */
+  private computeRay(ndcX: number, ndcY: number): void {
+    const r = this.renderData;
+    const tanf = r[3]!;
+    const aspect = r[7]!;
+    let dx = r[12]! + r[4]! * ndcX * tanf * aspect + r[8]! * ndcY * tanf;
+    let dy = r[13]! + r[5]! * ndcX * tanf * aspect + r[9]! * ndcY * tanf;
+    let dz = r[14]! + r[6]! * ndcX * tanf * aspect + r[10]! * ndcY * tanf;
+    const dl = Math.hypot(dx, dy, dz) || 1;
+    this.rayD[0] = dx / dl;
+    this.rayD[1] = dy / dl;
+    this.rayD[2] = dz / dl;
+    this.rayO[0] = (r[0]! + 0.5) * GRID3;
+    this.rayO[1] = (r[1]! + 0.5) * GRID3;
+    this.rayO[2] = (r[2]! + 0.5) * GRID3;
+  }
+
+  /** Distance point (voxels) → rayon courant ; +∞ si le point est derrière. */
+  private rayDistance(p: readonly number[]): number {
+    const vx = p[0]! - this.rayO[0];
+    const vy = p[1]! - this.rayO[1];
+    const vz = p[2]! - this.rayO[2];
+    const t = vx * this.rayD[0] + vy * this.rayD[1] + vz * this.rayD[2];
+    if (t <= 0) {
+      return Number.POSITIVE_INFINITY;
+    }
+    return Math.hypot(
+      vx - t * this.rayD[0],
+      vy - t * this.rayD[1],
+      vz - t * this.rayD[2],
+    );
+  }
+
+  /** La cible sous le rayon : -1 = sphère, ≥0 = émetteur, -2 = rien. */
+  private pickTarget(): number {
+    const limit = SIM3_DEFAULTS.grabRadius * GRID3;
+    let best = -2;
+    let bestDist = limit;
+    if (this.sphereOn) {
+      const d = this.rayDistance(this.spherePos);
+      if (d < bestDist + SIM3_DEFAULTS.sphereRadius * GRID3 * 0.5) {
+        best = -1;
+        bestDist = d;
+      }
+    }
+    for (let i = 0; i < this.emitters.length; i++) {
+      const d = this.rayDistance(this.emitters[i]!.pos);
+      if (d < bestDist) {
+        best = i;
+        bestDist = d;
+      }
+    }
+    return best;
+  }
+
+  /** Y a-t-il un objet saisissable sous ce point NDC ? (décide saisie vs orbite) */
+  hitTest(ndcX: number, ndcY: number): boolean {
+    this.computeRay(ndcX, ndcY);
+    return this.pickTarget() !== -2;
+  }
+
+  /** Saisie, ajout/retrait d'émetteurs, sphère — tout l'état interactif. */
+  private processInteraction(input: Frame3DInput): void {
+    if (input.reset) {
+      this.emitters.length = 1;
+      this.emitters[0] = { pos: [GRID3 * 0.5, GRID3 * 0.08, GRID3 * 0.5], ink: input.emitInk };
+      this.activeEmitter = 0;
+      this.spherePos[0] = GRID3 * SIM3_DEFAULTS.sphereStart[0];
+      this.spherePos[1] = GRID3 * SIM3_DEFAULTS.sphereStart[1];
+      this.spherePos[2] = GRID3 * SIM3_DEFAULTS.sphereStart[2];
+    }
+    this.sphereOn = input.sphereActive;
+    // L'encre sélectionnée s'applique à l'émetteur actif (dernier ajouté ou saisi).
+    this.emitters[this.activeEmitter]!.ink = input.emitInk;
+
+    if (input.addEmitter && this.emitters.length < SIM3_DEFAULTS.maxEmitters) {
+      // Nouvel émetteur : rayon du pointeur ∩ plan horizontal des émetteurs.
+      this.computeRay(input.pointer.ndcX, input.pointer.ndcY);
+      const planeY = GRID3 * 0.08;
+      const t = (planeY - this.rayO[1]) / (this.rayD[1] || 1e-6);
+      const clampXZ = (v: number): number => Math.min(Math.max(v, GRID3 * 0.08), GRID3 * 0.92);
+      const px = t > 0 ? clampXZ(this.rayO[0] + t * this.rayD[0]) : GRID3 * 0.5;
+      const pz = t > 0 ? clampXZ(this.rayO[2] + t * this.rayD[2]) : GRID3 * 0.5;
+      this.emitters.push({ pos: [px, planeY, pz], ink: input.emitInk });
+      this.activeEmitter = this.emitters.length - 1;
+    }
+    if (input.removeEmitter && this.emitters.length > 1) {
+      this.emitters.pop();
+      this.activeEmitter = Math.min(this.activeEmitter, this.emitters.length - 1);
+    }
+
+    if (input.grab.active) {
+      this.computeRay(input.pointer.ndcX, input.pointer.ndcY);
+      if (this.grabbed === -2) {
+        this.grabbed = this.pickTarget();
+        if (this.grabbed >= 0) {
+          this.activeEmitter = this.grabbed;
+        }
+      }
+      if (this.grabbed !== -2) {
+        // Déplacement sur le plan face caméra passant par la position de l'objet.
+        const target = this.grabbed === -1 ? this.spherePos : this.emitters[this.grabbed]!.pos;
+        const r = this.renderData;
+        const denom =
+          r[12]! * this.rayD[0] + r[13]! * this.rayD[1] + r[14]! * this.rayD[2];
+        if (Math.abs(denom) > 1e-5) {
+          const t =
+            (r[12]! * (target[0] - this.rayO[0]) +
+              r[13]! * (target[1] - this.rayO[1]) +
+              r[14]! * (target[2] - this.rayO[2])) /
+            denom;
+          if (t > 0) {
+            const lo = GRID3 * 0.05;
+            const hi = GRID3 * 0.95;
+            target[0] = Math.min(Math.max(this.rayO[0] + t * this.rayD[0], lo), hi);
+            target[1] = Math.min(Math.max(this.rayO[1] + t * this.rayD[1], GRID3 * 0.04), hi);
+            target[2] = Math.min(Math.max(this.rayO[2] + t * this.rayD[2], lo), hi);
+          }
+        }
+      }
+    } else {
+      this.grabbed = -2;
+    }
   }
 
   /**
@@ -843,11 +995,16 @@ export class FluidSim3D {
     d[1] = this.simTime;
     d[2] = GRID3;
     d[3] = input.vorticityStrength;
-    // Émetteur : bas de la boîte, centre légèrement mobile.
-    d[4] = GRID3 * (0.5 + 0.05 * Math.sin(this.simTime * 0.9));
-    d[5] = GRID3 * 0.08;
-    d[6] = GRID3 * (0.5 + 0.05 * Math.cos(this.simTime * 0.7));
-    d[7] = GRID3 * D.emitterRadius;
+    // Émetteurs : position d'état + petit balancement propre à chacun (déphasé).
+    const emitterSlot = (slot: number, i: number): void => {
+      const e = this.emitters[i]!;
+      const wob = GRID3 * 0.02;
+      d[slot] = e.pos[0] + wob * Math.sin(this.simTime * 0.9 + i * 2.1);
+      d[slot + 1] = e.pos[1];
+      d[slot + 2] = e.pos[2] + wob * Math.cos(this.simTime * 0.7 + i * 1.7);
+      d[slot + 3] = GRID3 * D.emitterRadius;
+    };
+    emitterSlot(4, 0);
     d[8] = D.emitHeat;
     d[9] = D.emitSmoke;
     // Forces absolues calibrées à 128³ → remises à l'échelle de la grille.
@@ -857,41 +1014,41 @@ export class FluidSim3D {
     d[13] = D.smokeDissipation;
     d[14] = D.heatCooling;
     d[15] = D.buoyancy * SCALE3;
-    // Souffle du pointeur : rayon caméra→scène reconstruit depuis la base déjà
-    // écrite dans renderData (même frame — voir l'ordre des écritures).
+    // Souffle du pointeur : rayon caméra→scène + force selon le geste écran.
     const b = input.blow;
     const r = this.renderData;
     if (b.active) {
-      const tanf = r[3]!;
-      const aspect = r[7]!;
-      const rgt = [r[4]!, r[5]!, r[6]!];
-      const up = [r[8]!, r[9]!, r[10]!];
-      const fwd = [r[12]!, r[13]!, r[14]!];
-      let dx = fwd[0]! + rgt[0]! * b.ndcX * tanf * aspect + up[0]! * b.ndcY * tanf;
-      let dy = fwd[1]! + rgt[1]! * b.ndcX * tanf * aspect + up[1]! * b.ndcY * tanf;
-      let dz = fwd[2]! + rgt[2]! * b.ndcX * tanf * aspect + up[2]! * b.ndcY * tanf;
-      const dl = Math.hypot(dx, dy, dz) || 1;
-      dx /= dl;
-      dy /= dl;
-      dz /= dl;
-      // Origine et force en voxels ; la force suit le geste écran (droite/haut caméra).
-      d[16] = (r[0]! + 0.5) * GRID3;
-      d[17] = (r[1]! + 0.5) * GRID3;
-      d[18] = (r[2]! + 0.5) * GRID3;
+      this.computeRay(b.ndcX, b.ndcY);
+      d[16] = this.rayO[0];
+      d[17] = this.rayO[1];
+      d[18] = this.rayO[2];
       d[19] = D.blowRadius * GRID3;
-      d[20] = dx;
-      d[21] = dy;
-      d[22] = dz;
+      d[20] = this.rayD[0];
+      d[21] = this.rayD[1];
+      d[22] = this.rayD[2];
       d[23] = 1;
       const s = D.blowForce * GRID3;
-      d[24] = (rgt[0]! * b.moveX + up[0]! * b.moveY) * s;
-      d[25] = (rgt[1]! * b.moveX + up[1]! * b.moveY) * s;
-      d[26] = (rgt[2]! * b.moveX + up[2]! * b.moveY) * s;
+      d[24] = (r[4]! * b.moveX + r[8]! * b.moveY) * s;
+      d[25] = (r[5]! * b.moveX + r[9]! * b.moveY) * s;
+      d[26] = (r[6]! * b.moveX + r[10]! * b.moveY) * s;
     } else {
       d[23] = 0;
     }
-    // blow_force.w détourné : index de l'encre émise (lu par advect_density3d).
-    d[27] = input.emitInk;
+    // Sphère-obstacle (voxels ; rayon ≤ 0 = absente).
+    d[28] = this.spherePos[0];
+    d[29] = this.spherePos[1];
+    d[30] = this.spherePos[2];
+    d[31] = this.sphereOn ? GRID3 * D.sphereRadius : -1;
+    // Émetteurs supplémentaires + encres.
+    d[32] = this.emitters.length;
+    for (let i = 1; i < 4; i++) {
+      if (i < this.emitters.length) {
+        emitterSlot(32 + i * 4, i);
+      }
+    }
+    for (let i = 0; i < 4; i++) {
+      d[48 + i] = this.emitters[i]?.ink ?? 0;
+    }
     this.device.queue.writeBuffer(this.simUniforms, 0, d);
   }
 
@@ -938,6 +1095,11 @@ export class FluidSim3D {
     d[17] = 0.74;
     d[18] = 0.45;
     d[19] = 1.0;
+    // Sphère-obstacle en unités monde pour le rendu.
+    d[20] = this.spherePos[0] / GRID3 - 0.5;
+    d[21] = this.spherePos[1] / GRID3 - 0.5;
+    d[22] = this.spherePos[2] / GRID3 - 0.5;
+    d[23] = input.sphereActive ? SIM3_DEFAULTS.sphereRadius : -1;
     let dirty = false;
     for (let i = 0; i < d.length; i++) {
       if (d[i] !== this.lastRender[i]) {
