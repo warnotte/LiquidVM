@@ -46,6 +46,14 @@ typecheck strict + bundle. Aucune dépendance runtime.
   --enable-unsafe-webgpu --disable-backgrounding-occluded-windows` (sans ce dernier,
   rAF est gelé pour une fenêtre hors écran). Le headless pur (`--headless=new`) ne
   fournit PAS d'adapter WebGPU sur cette machine — toujours headed hors écran + CDP.
+- **Vue 6 « résidu MG »** : mosaïque de la pyramide multigrid (4 colonnes × 2 rangées,
+  du niveau fin au grossier ; chaque cellule = résidu du dernier V-cycle en haut,
+  pression du niveau en bas — mg_debug.wgsl, composée seulement si la vue est active).
+  Lecture : un résidu qui flambe désigne l'étage qui ne converge pas ; une pression qui
+  explose désigne l'étage où la stabilité se perd en premier ; on y voit aussi le masque
+  d'obstacles se dégrader en descendant la pyramide (restriction majoritaire). En mode
+  Jacobi, les étages > 0 restent figés sur le dernier V-cycle (normal). L'instrument à
+  ouvrir EN PREMIER si le multigrid re-déraille — construit pour le chantier 3D.
 
 ## Pièges durement payés — ne pas re-tomber dedans
 
@@ -96,7 +104,113 @@ Config actuelle : sim 1024², dye/scène 2048².
   (`platform/web/preview.ts` + son câblage main.ts/styles) — il sert TOUS les
   outils, pas que la marbrure.
 
+## Chantier 3D (branche `3d`)
+
+- **Page séparée `3d.html`** (`src/platform/web/main3d.ts`) — l'appli 2D n'est pas
+  touchée. `src/core3d/` : même doctrine que core/ (zéro DOM, zéro alloc/frame, un
+  encoder, bind groups pré-créés), `config3d.ts` (GRID3 = 128) + `sim3d.ts` (tout
+  l'orchestrateur) + `shaders3d/`.
+- **État** : 256³ (GRID3, forces remises à l'échelle par SCALE3 = GRID3/128 pour
+  garder le comportement physique), MAC 3D MacCormack, TROIS ENCRES COLORÉES
+  (canaux xyz de la densité, palette INK_COLORS bleu/magenta/ambre dupliquée dans
+  raymarch.wgsl, touches 1/2/3 = encre de l'émetteur via blow_force.w, albédo
+  mélangé par voxel au rendu), poussée thermique, projection MULTIGRID 3D
+  (V-cycle GRID3→8³, 2 cycles/frame — pin p(0,0,0)=0 au 8³ appliqué d'office,
+  le clamp des voisins EST l'opérateur Neumann exact, adjoint du couple
+  divergence/gradient compact ; repli Jacobi comparatif via
+  `__frame3d.multigrid=false`), émetteur de panache balancé, ray-marching
+  (Beer-Lambert + corps noir + ombre interne 6 pas + liseré de boîte), souffle au
+  clic droit, caméra orbitale, E = export VDB (encodeur généralisé multi-nœuds 16³,
+  jusqu'à 4096³ ; density = somme des encres). 60 FPS à 256³ desktop, VDB 256³
+  re-validé dans Blender.
+- **Interactions saisies** : clic gauche sur la flamme ou la boule = déplacer
+  (hitTest par rayon décide saisie vs orbite ; déplacement sur le plan face
+  caméra passant par l'objet), A = + émetteur sous le pointeur (max 4, chacun
+  son encre — 1/2/3 recolore l'émetteur ACTIF, le dernier ajouté ou saisi),
+  X = − émetteur, O = sphère-obstacle. La SPHÈRE est ANALYTIQUE : aucune texture
+  d'obstacles — chaque shader (advection, forces, confinement, gradient, lisseur
+  Jacobi ET multigrid à tous les niveaux via remontée en voxels fins) teste
+  centre-de-cellule-dans-la-sphère depuis l'uniforme, avec la même règle partout
+  (adjonction exacte préservée, aucun NaN). La fumée se fend autour de la boule
+  et se referme. 60 FPS avec sphère + 3 émetteurs à 256³.
+- **La boule brasse le fluide** : condition de bord MOBILE — les faces bloquées
+  portent la vitesse de la sphère (suivie à la saisie, EMA 0.55/0.45, plafond
+  420·SCALE3 voxels/s, amortie ×0.82 au relâcher, uniform sphere_vel). Le
+  gradient PRESCRIT ces faces (ne les zéroe plus), la divergence les lit comme
+  débit connu, le lisseur reste l'adjoint exact (faces fermées côté pression).
+- **Rendu ancré** : sol sous la boîte (plan y=−0.502, tapis radial) recevant
+  l'ombre volumétrique de la fumée (12 pas vers la lumière) + l'ombre analytique
+  de la boule ; la boule s'ombre aussi DANS la fumée (test rayon-sphère par
+  échantillon éclairé) et rougeoie au corps noir (chaleur échantillonnée à sa
+  surface). Le tout tient les 60 FPS à 256³.
+- **COMBUSTION (Feldman/Fedkiw simplifié)** : matière 3 = vapeur de CARBURANT,
+  émise froide (pas de chaleur) et légèrement lourde → nappes au sol. Réaction
+  dans advect_density (ignition smoothstep(0.28, 0.55) sur la chaleur, taux
+  emit_meta.y, chaleur dégagée emit_meta.z plafonnée 1.9, suie 0.35·burn dans
+  le canal fumée) ; EXPANSION = source de divergence au front de flamme
+  (emit_meta.w, la passe divergence lit les densités [vel][den] et recalcule le
+  même critère). Poids propres des matières dans forces (ink_weights slot 14 —
+  Boussinesq deux voies, l'encre magenta retombe en fontaines). CALIBRATION
+  DUREMENT PAYÉE : chaleur 2.0 + expansion 40 = runaway → boîte entière
+  incandescente (boîte fermée : l'expansion nette ne peut pas sortir, tout
+  s'accumule) ; valeurs sûres 0.7/10, dissipation matières 0.20/s pour
+  l'auto-nettoyage. UX : 1/2/3 = encre des FUTURS émetteurs + celui EN MAIN
+  uniquement (recolorer l'actif à distance éteignait la flamme pilote).
+  Allumage jouable : amener/souffler la nappe vers une flamme. 53-60 FPS.
+- **Numérique** : advection à traces RK2 point-milieu (backtrace/forwardtrace
+  dans les deux advections MacCormack) ; refroidissement RADIATIF T⁴ sur la
+  chaleur (0.30·T⁴/s — pointes de flammes nettes, fumée tiède persistante).
+- **OXYGÈNE / système d'espèces** : texture rgba16float ping-pong (x = O₂ init 1
+  via clear_one, yzw = espèces futures), passe species3d (advection RK2 + chimie)
+  APRÈS l'advection des densités (elle lit les densités fraîches — cohérence du
+  taux de réaction). La combustion et l'expansion sont modulées par
+  clamp(O₂/0.25, 0, 1) ; consommation 0.55·burn ; récupération 0.015/s (boîte
+  qui fuit) ; le souffle INJECTE de l'O₂ le long de son rayon (soufflet de
+  forge). En vase clos une flamme soutenue s'étouffe — la raviver au souffle.
+- **Perf (60 FPS partout à 256³)** : résolution de rendu dynamique pilotée FPS
+  (0.6–1.0×, hystérésis 50/58.5, HUD « rendu N % ») ; pas adaptatif du raymarch
+  (air vide = double enjambée, intégrales sur la longueur réelle) ; V-cycles = 1
+  (warm start — 2 coûtaient ~6 balayages de plus sans gain visible). Si ça
+  ralentit à nouveau : le budget sim est plein, chercher là (le rendu s'adapte
+  seul).
+- **Interface (panel3d.ts)** : panneau à sections (Tab) + barre d'outils,
+  ENTIÈREMENT déclaratifs — ajouter un réglage = une entrée de spec dans main3d.
+  Toute la physique est réglable à chaud via Sim3Tuning (Frame3DInput.params,
+  défauts de defaultTuning3()) : combustion, débits, dissipations, poussée,
+  souffle, vitesse du temps, rendu. Barre : matières en pastilles, ± émetteur,
+  boule, démo, réglages ; sélecteur de résolution (recharge avec ?grid=).
+- **Mode DÉMO (showcase)** : touche D ou `?demo` — chorégraphie en boucle ~80 s
+  (pilote → fontaine magenta → fumée → nappe de carburant → souffle scripté →
+  embrasement → boule en lemniscate → grand souffle → accalmie → reset), caméra
+  en orbite avec respiration. DemoDriver dans main3d.ts ; pilotage scripté via
+  sim.driveSphere / sim.addEmitterAt (mêmes chemins que la saisie réelle).
+- **MacCormack 3D** : prédicteur/correcteur clampé par composante MAC (stencil du
+  point rétro-advecté) — LE raffineur : le panache laminaire devient turbulent et
+  structuré à lui seul.
+- **Confinement de vorticité 3D** : implémenté (ω vectoriel aux centres, F = ε N̂×ω
+  par face) mais DÉFAUT ε = 0 — à 128³, le gradient de |ω| à ±1 voxel injecte du
+  grain à l'échelle de la grille dès ε≈3 et détruit le panache vers ε≈10 (calibré
+  par captures EPS-0/3/6/10). Réglable à chaud : `__frame3d.vorticityStrength`.
+  Avant de le réactiver : lisser |ω| (flou 3D) avant d'en prendre le gradient.
+- **Souffle au pointeur** : clic droit + glisser = force gaussienne dans un TUBE le
+  long du rayon caméra→scène, dirigée selon le geste (base caméra lue depuis
+  renderData — écrite AVANT les uniforms sim). Réglages : blowRadius/blowForce.
+- **Export OpenVDB (touche E)** : readback ponctuel hors boucle (seule lecture
+  GPU→CPU du moteur 3D) + encodeur .vdb pur TS (core3d/vdb.ts) + téléchargement.
+  Grilles float denses `density` et `temperature`, arbre 5-4-3 sans compression,
+  Y sim → +Z monde (la fumée monte dans Blender), boîte 1³ centrée. VALIDÉ dans
+  Blender 5.1.2 : import + volume-to-mesh (4720 sommets) + rendu Cycles du panache.
+  Pièges du format durement payés : masque de feuille = 8 **u64** = 64 octets (pas
+  8 octets !) ; masques du nœud 32³ = 4096 octets chacun ; UUID = 36 chars BRUTS
+  sans préfixe de longueur. Référence : article JangaFX « VDB: a deep dive » +
+  github.com/jangafx/simple-vdb-writer (et tinyvdbio pour le point de vue lecteur).
+  Piège Blender headless : --factory-startup garde le cube par défaut (dans la
+  collection enfant) — purger bpy.data.objects avant tout rendu de test.
+- **Prochaines briques** : séquences VDB animées (File System Access API) ;
+  encres colorées (canaux yz réservés dans la densité) ; qualité du confinement
+  de vorticité (flouter |ω|).
+
 ## Pistes suivantes
 
-Vue debug du résidu multigrid par niveau · test smartphone (1024², vérifier les limites
-WebGPU mobiles) · sim 3D ~128³ + rendu volumétrique (la vraie « vue de côté »).
+Test smartphone (1024², vérifier les limites WebGPU mobiles) · suite du chantier 3D
+ci-dessus.

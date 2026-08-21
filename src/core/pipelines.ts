@@ -27,6 +27,8 @@ export interface SimLayouts {
   /** Multigrid : restriction (résidu/obstacles) et prolongation de la correction. */
   readonly mgRestrict: GPUBindGroupLayout;
   readonly mgProlong: GPUBindGroupLayout;
+  /** Vue debug 6 : composition de la mosaïque des niveaux (group(0) autonome). */
+  readonly mgDebug: GPUBindGroupLayout;
   readonly vorticity: GPUBindGroupLayout;
   /** Pinceau à murs : storage read-write sur le champ d'obstacles. */
   readonly walls: GPUBindGroupLayout;
@@ -124,6 +126,10 @@ export function createLayouts(device: GPUDevice): SimLayouts {
       label: 'mg-prolong-layout',
       entries: [sampledScalar(0), sampledScalar(1), storage(2, SCALAR_FORMAT)],
     }),
+    mgDebug: device.createBindGroupLayout({
+      label: 'mg-debug-layout',
+      entries: [sampledScalar(0), sampledScalar(1), storage(2, DENSITY_FORMAT)],
+    }),
     vorticity: device.createBindGroupLayout({
       label: 'vorticity-layout',
       entries: [sampledFloat(0), sampledFloat(1), storage(2, VELOCITY_FORMAT), sampledScalar(3)],
@@ -202,6 +208,7 @@ export function createLayouts(device: GPUDevice): SimLayouts {
         { binding: 6, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
         { binding: 7, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
         { binding: 8, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
+        { binding: 9, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
       ],
     }),
     bloom: device.createBindGroupLayout({

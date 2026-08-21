@@ -30,10 +30,11 @@ export const BOUNDARY_MODE_COUNT = 3;
 /**
  * Vue de rendu : 0 = fluides, 1 = vélocité (teinte = direction, luminosité = norme),
  * 2 = pression, 3 = divergence (doit rester ~nulle après projection), 4 = vorticité,
- * 5 = caméra (image webcam + flux optique en couleurs — l'instrument de debug du flux).
+ * 5 = caméra (image webcam + flux optique en couleurs — l'instrument de debug du flux),
+ * 6 = résidu MG (mosaïque de la pyramide multigrid : résidu + pression par niveau).
  */
-export type ViewMode = 0 | 1 | 2 | 3 | 4 | 5;
-export const VIEW_MODE_COUNT = 6;
+export type ViewMode = 0 | 1 | 2 | 3 | 4 | 5 | 6;
+export const VIEW_MODE_COUNT = 7;
 
 /**
  * Outil du clic gauche : 0 = injecter (la matière sélectionnée + impulsion du geste),

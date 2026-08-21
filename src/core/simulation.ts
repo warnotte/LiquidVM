@@ -31,11 +31,13 @@ import {
   DYE_DISPATCH_SIZE,
   FLOW_DISPATCH,
   FLOW_SIZE,
+  GRID_SIZE,
   MG_COARSE_SMOOTH,
   MG_POST_SMOOTH,
   MG_PRE_SMOOTH,
   PARTICLE_DISPATCH,
   SIM_DEFAULTS,
+  WORKGROUP_SIZE,
 } from './config';
 import { createAdvectPasses, type AdvectPasses } from './passes/advect';
 import { createClearPasses, type ClearPasses } from './passes/clear';
@@ -65,6 +67,10 @@ import {
 
 /** Bind groups du groupe 0, un par BoundaryMode (le sampler clamp/repeat diffère). */
 type Group0Variants = readonly [GPUBindGroup, GPUBindGroup, GPUBindGroup];
+
+/** Dispatch d'une cellule de la mosaïque debug MG : grille 4 colonnes × 2 rangées. */
+const MG_DEBUG_DISPATCH_X = Math.ceil(GRID_SIZE / 4 / WORKGROUP_SIZE);
+const MG_DEBUG_DISPATCH_Y = Math.ceil(GRID_SIZE / 2 / WORKGROUP_SIZE);
 
 export interface FluidSimOptions {
   /** Format de la cible de rendu (canvas côté web, swapchain côté natif). */
@@ -319,6 +325,17 @@ export class FluidSim {
       }
       for (let s = 0; s < substeps; s++) {
         this.encodeStep(cp, s, input);
+      }
+      // Vue 6 « résidu MG » : mosaïque de la pyramide, composée uniquement quand la
+      // vue est active. Résidus laissés par la descente du dernier V-cycle (moitié
+      // haute des cellules) + pression de chaque niveau (moitié basse). Layout
+      // autonome en group(0), encodé en dernier dans la passe : rien à rebinder.
+      if (input.viewMode === 6) {
+        cp.setPipeline(this.mg.composePipeline);
+        for (let l = 0; l < this.mg.levels.length; l++) {
+          cp.setBindGroup(0, this.mg.levels[l]!.composeBind[(this.mgIdx[l] ?? 0) as PingIndex]);
+          cp.dispatchWorkgroups(MG_DEBUG_DISPATCH_X, MG_DEBUG_DISPATCH_Y);
+        }
       }
       cp.end();
     }
