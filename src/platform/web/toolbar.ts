@@ -157,6 +157,17 @@ export class MobileToolbar {
     });
     actionGroup.appendChild(this.settingsBtn);
 
+    // Page 3D volumétrique (URL relative : fonctionne en dev et sous /LiquidVM/ sur Pages)
+    const btn3d = document.createElement('button');
+    btn3d.type = 'button';
+    btn3d.className = 'toolbar-btn action-btn';
+    btn3d.textContent = '🧊 3D';
+    btn3d.title = 'Ouvrir la simulation 3D volumétrique';
+    btn3d.addEventListener('click', () => {
+      location.href = './3d.html';
+    });
+    actionGroup.appendChild(btn3d);
+
     content.appendChild(actionGroup);
     this.root.appendChild(this.toggleBtn);
     this.root.appendChild(content);

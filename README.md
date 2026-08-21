@@ -11,6 +11,23 @@ réglable, résolutions configurables en une constante (`GRID_SIZE`/`DYE_SIZE`, 
 champs internes, tout l'état résidant sur GPU. TypeScript strict + Vite, zéro dépendance
 runtime, shaders WGSL en fichiers séparés.
 
+**Démo en ligne** : [warnotte.github.io/LiquidVM](https://warnotte.github.io/LiquidVM/) —
+chaque push sur `main` redéploie automatiquement (GitHub Pages).
+
+## Simulation 3D volumétrique (`3d.html`)
+
+Deuxième page de l'appli (bouton « 🧊 3D » de la barre d'outils, ou
+[/3d.html](https://warnotte.github.io/LiquidVM/3d.html)) : solveur MAC 3D 256³
+(128³–320³ via `?grid=`), advection MacCormack à traces RK2, projection multigrid
+V-cycle, combustion à trois réactifs (carburant / chaleur / oxygène) avec expansion
+volumique au front de flamme et refroidissement radiatif T⁴, trois encres colorées,
+sphère-obstacle déplaçable à condition de bord mobile (elle brasse le fluide),
+multi-émetteurs, souffle au pointeur, rendu ray-marching (Beer-Lambert, corps noir,
+ombres volumétriques, sol), export OpenVDB (touche `E`, validé dans Blender), mode
+démo chorégraphié (`D`), panneau de réglages déclaratif (`Tab`, toute la physique à
+chaud). Même contrat que le 2D : état 100 % GPU, zéro readback en boucle de frame,
+`src/core3d/` portable sans DOM.
+
 ## Commandes
 
 ```sh
