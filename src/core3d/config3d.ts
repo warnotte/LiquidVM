@@ -4,16 +4,29 @@
  * zéro allocation par frame, zéro lecture GPU→CPU, un seul CommandEncoder.
  */
 
-/** Côté de la grille cubique (voxels). 256³ ≈ 16,8 M de cellules. */
-export const GRID3 = 256;
+/** Côté de la grille cubique (voxels). 256³ ≈ 16,8 M de cellules par défaut ;
+ *  choisissable à l'init via setGrid3 (la plateforme lit ?grid=128|256|320).
+ *  Mesuré sur la machine de référence : 256³ ET 320³ (~2,8 Go, 32,8 M voxels)
+ *  tiennent 60 FPS ; 384³+ (≥ 4,7 Go) échoue en écran noir SILENCIEUX — Dawn
+ *  n'émet ni erreur out-of-memory ni device-lost à l'allocation, d'où la liste
+ *  blanche stricte. L'export VDB n'est disponible qu'aux multiples de 128. */
+export let GRID3 = 256;
+export let SCALE3 = GRID3 / 128;
 
-/** Les forces absolues (voxels/s²) sont calibrées à 128³ — cette échelle les
- *  convertit pour que le comportement PHYSIQUE reste identique à toute résolution. */
-export const SCALE3 = GRID3 / 128;
+const GRID3_CHOICES = [128, 256, 320] as const;
+
+/** À appeler AVANT la création de la simulation. Valide et propage les dérivés. */
+export function setGrid3(n: number): void {
+  if ((GRID3_CHOICES as readonly number[]).includes(n)) {
+    GRID3 = n;
+    SCALE3 = n / 128;
+    DISPATCH3 = Math.ceil(n / WG3);
+  }
+}
 
 /** Workgroups 4×4×4 = 64 threads ; dispatch cubique. */
 export const WG3 = 4;
-export const DISPATCH3 = Math.ceil(GRID3 / WG3);
+export let DISPATCH3 = Math.ceil(GRID3 / WG3);
 
 /** Multigrid 3D : pyramide GRID3 → 8³, lissages du V-cycle. */
 export const MG3_COARSEST_SIZE = 8;

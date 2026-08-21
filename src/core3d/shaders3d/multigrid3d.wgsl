@@ -27,7 +27,9 @@ struct Params {
 @group(1) @binding(3) var scalar_dst: texture_storage_3d<r32float, write>;
 @group(1) @binding(4) var fine_src: texture_3d<f32>;  // prolong : pression fine courante
 
-const COARSEST = 8;
+// Le niveau le plus grossier est le SEUL de taille < 16 quelle que soit la
+// pyramide (8 pour les grilles 2^k, 12 pour 384) — l'ancrage se détecte ainsi.
+const COARSEST_LIMIT = 16;
 const OMEGA = 0.8;
 
 fn p_at(c: vec3i, n: i32) -> f32 {
@@ -76,7 +78,7 @@ fn smooth_jacobi(@builtin(global_invocation_id) gid: vec3u) {
   let upd = (neighbor_sum(c, n) - b) / 6.0;
   var value = mix(p_at(c, n), upd, OMEGA);
   // Ancrage de l'espace nul au niveau le plus grossier.
-  if (n == COARSEST && all(c == vec3i(0))) {
+  if (n < COARSEST_LIMIT && all(c == vec3i(0))) {
     value = 0.0;
   }
   textureStore(scalar_dst, gid, vec4f(value, 0.0, 0.0, 0.0));

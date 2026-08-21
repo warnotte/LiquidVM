@@ -217,7 +217,10 @@ export class FluidSim3D {
   private readonly mgIdx: number[];
 
   static async create(device: GPUDevice, targetFormat: GPUTextureFormat): Promise<FluidSim3D> {
-    return withValidation(device, 'init-3d', async () => {
+    // Les grosses grilles échouent en OUT-OF-MEMORY, pas en validation — sans ce
+    // scope, l'échec est silencieux (écran noir, HUD à 60 FPS). Ici : erreur claire.
+    device.pushErrorScope('out-of-memory');
+    const sim = await withValidation(device, 'init-3d', async () => {
       const velocity = pair((i) => tex3d(device, `vel3d-${i}`, 'rgba16float'));
       // Les textures de densité gardent leur handle : l'export VDB les copie (COPY_SRC).
       const denTextures = pair((i) =>
@@ -727,6 +730,13 @@ export class FluidSim3D {
         denTextures,
       );
     });
+    const oom = await device.popErrorScope();
+    if (oom) {
+      throw new Error(
+        `Mémoire GPU insuffisante pour une grille ${GRID3}³ — relancer avec ?grid=256 (ou 320).`,
+      );
+    }
+    return sim;
   }
 
   /** Encode et soumet une frame complète : simulation (sauf pause) + rendu. */

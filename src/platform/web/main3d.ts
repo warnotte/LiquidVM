@@ -5,7 +5,7 @@
  * Mode ?selftest : rapport JSON dans #selftest + titre SELFTEST-OK/FAIL après 240 frames.
  */
 
-import { GRID3, INK_NAMES, SIM3_DEFAULTS } from '../../core3d/config3d';
+import { GRID3, INK_NAMES, setGrid3, SIM3_DEFAULTS } from '../../core3d/config3d';
 import { FluidSim3D, type Frame3DInput } from '../../core3d/sim3d';
 import { encodeVdb } from '../../core3d/vdb';
 import { acquireDevice } from './gpu';
@@ -106,6 +106,9 @@ async function boot(): Promise<void> {
   const urlParams = new URLSearchParams(location.search);
   const selftest = urlParams.has('selftest');
   let demoOn = urlParams.has('demo');
+  // Résolution à la demande : ?grid=128|256|320 (défaut 256 ; 320 = le plafond
+  // mesuré de la machine de référence, toujours à 60 FPS).
+  setGrid3(Number(urlParams.get('grid') ?? 256));
   const canvas = document.getElementById('canvas3d') as HTMLCanvasElement;
   const hud = document.getElementById('hud3d') as HTMLDivElement;
 
@@ -255,6 +258,7 @@ async function boot(): Promise<void> {
     }
     exporting = true;
     try {
+      // Au-delà de 256³, le readback dépasse maxBufferSize (256 Mo) par défaut.
       const { density, heat } = await sim.exportVolume();
       const data = encodeVdb(
         [
@@ -270,6 +274,9 @@ async function boot(): Promise<void> {
       a.download = `liquidvm-${Date.now()}.vdb`;
       a.click();
       setTimeout(() => URL.revokeObjectURL(url), 10000);
+    } catch (err) {
+      toast(`export impossible à ${GRID3}³ (limite mémoire GPU) — utiliser 256³`);
+      console.warn('export VDB:', err);
     } finally {
       exporting = false;
     }
