@@ -42,6 +42,7 @@ fn emitter_ink(i: u32) -> u32 {
 @group(1) @binding(1) var vel_src: texture_3d<f32>;
 @group(1) @binding(2) var aux: texture_3d<f32>;
 @group(1) @binding(3) var den_dst: texture_storage_3d<rgba16float, write>;
+@group(1) @binding(4) var oxy_src: texture_3d<f32>;
 
 fn n_size() -> i32 {
   return i32(P.misc.z);
@@ -116,8 +117,11 @@ fn correct(@builtin(global_invocation_id) gid: vec3u) {
   // COMBUSTION (Feldman/Fedkiw simplifié) : au-dessus de la température d'ignition,
   // le carburant (canal z) se consume — il dégage de la chaleur et de la suie grise
   // (canal x). L'expansion volumique associée est injectée par la passe divergence.
+  // Le triangle du feu est complet : sans OXYGÈNE, la flamme faiblit puis s'étouffe.
+  let o2 = textureSampleLevel(oxy_src, lin, center * inv_n(), 0.0).x;
+  let oxy_factor = clamp(o2 / 0.25, 0.0, 1.0);
   let ignite = smoothstep(0.28, 0.55, val.w);
-  let burn = min(val.z * P.emit_meta.y * dt * ignite, val.z);
+  let burn = min(val.z * P.emit_meta.y * dt * ignite, val.z) * oxy_factor;
   val.z -= burn;
   val.w = min(val.w + P.emit_meta.z * burn, 1.9);
   val.x += 0.35 * burn;

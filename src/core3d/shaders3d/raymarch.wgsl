@@ -154,10 +154,18 @@ fn fs_main(frag: VSOut) -> @location(0) vec4f {
     let ldir = R.light.xyz;
     let shadow_step = 0.5 / 6.0;
     for (var i = 0u; i < 256u; i++) {
-      if (f32(i) >= steps || transmit < 0.01) {
+      if (t >= t_end || transmit < 0.015) {
         break;
       }
       let pos = ro + rd * t;
+      let s = textureSampleLevel(density_tex, lin, pos + vec3f(0.5), 0.0);
+      let ext = extinction(s);
+      // Pas ADAPTATIF : l'air vide se traverse à double enjambée (gros gain quand
+      // la boîte est peu remplie), les intégrales utilisent la longueur réelle.
+      var adv = step_len;
+      if (ext <= 0.005) {
+        adv = step_len * 2.0;
+      }
       // Retour visuel du souffle : fuseau lumineux le long du rayon du geste —
       // visible même dans l'air vide, pour voir OÙ le souffle agit.
       if (R.blow_b.w > 0.5) {
@@ -165,11 +173,9 @@ fn fs_main(frag: VSOut) -> @location(0) vec4f {
         let bt = dot(bv, R.blow_b.xyz);
         if (bt > 0.0) {
           let bd = distance(pos, R.blow_a.xyz + R.blow_b.xyz * bt) / max(R.blow_a.w, 1e-4);
-          acc += transmit * exp(-bd * bd * 2.0) * vec3f(0.05, 0.08, 0.13) * step_len * 22.0;
+          acc += transmit * exp(-bd * bd * 2.0) * vec3f(0.05, 0.08, 0.13) * adv * 22.0;
         }
       }
-      let s = textureSampleLevel(density_tex, lin, pos + vec3f(0.5), 0.0);
-      let ext = extinction(s);
       if (ext > 0.005) {
         // Ombre interne : marche courte vers la lumière.
         var occ = 0.0;
@@ -186,11 +192,11 @@ fn fs_main(frag: VSOut) -> @location(0) vec4f {
         let albedo = ink_albedo(s);
         let lo = blackbody(s.w) * 2.2 +
           albedo * R.light.w * (shade * 0.92 + 0.08) * min(ext, 3.0) * 0.28;
-        let a = 1.0 - exp(-ext * step_len);
+        let a = 1.0 - exp(-ext * adv);
         acc += transmit * lo * a;
-        transmit *= exp(-ext * step_len);
+        transmit *= exp(-ext * adv);
       }
-      t += step_len;
+      t += adv;
     }
     // Sphère-obstacle : surface mate ardoise, diffuse + lueur de contour —
     // et elle ROUGEOIE au corps noir quand la flamme la lèche.

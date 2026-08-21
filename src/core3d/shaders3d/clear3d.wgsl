@@ -16,3 +16,11 @@ fn clear_scalar(@builtin(global_invocation_id) gid: vec3u) {
     textureStore(scalar_dst, gid, vec4f(0.0));
   }
 }
+
+// Initialisation de la texture d'espèces : oxygène = 1 partout, le reste à 0.
+@compute @workgroup_size(4, 4, 4)
+fn clear_one(@builtin(global_invocation_id) gid: vec3u) {
+  if (all(gid < textureDimensions(rgba_dst))) {
+    textureStore(rgba_dst, gid, vec4f(1.0, 0.0, 0.0, 0.0));
+  }
+}

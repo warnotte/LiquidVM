@@ -131,8 +131,11 @@ async function boot(): Promise<void> {
   }
   context.configure({ device, format, alphaMode: 'opaque' });
 
+  // RÉSOLUTION DYNAMIQUE : le ray-marching est payé par pixel — l'échelle de rendu
+  // s'ajuste au FPS (hystérésis), imperceptible en mouvement, gros gain en charge.
+  let renderScale = 1;
   const resize = (): void => {
-    const scale = Math.min(window.devicePixelRatio || 1, 2);
+    const scale = Math.min(window.devicePixelRatio || 1, 2) * renderScale;
     canvas.width = Math.max(1, Math.round(canvas.clientWidth * scale));
     canvas.height = Math.max(1, Math.round(canvas.clientHeight * scale));
   };
@@ -347,9 +350,17 @@ async function boot(): Promise<void> {
     hudTimer += dt;
     if (hudTimer > 0.5) {
       hudTimer = 0;
+      if (fps < 50 && renderScale > 0.6) {
+        renderScale = Math.max(0.6, renderScale - 0.1);
+        resize();
+      } else if (fps > 58.5 && renderScale < 1) {
+        renderScale = Math.min(1, renderScale + 0.05);
+        resize();
+      }
       const solver = input.multigrid ? `MG ×${input.vcycles}` : `jacobi ${input.jacobiIterations} it.`;
       hud.innerHTML =
         `<b>LiquidVM 3D</b> · ${GRID3}³ · encre : ${INK_NAMES[input.emitInk] ?? '?'} · ${solver} · ${Math.round(fps)} FPS` +
+        `${renderScale < 1 ? ` · rendu ${Math.round(renderScale * 100)} %` : ''}` +
         `${input.paused ? ' · ⏸ pause' : ''}${demoOn ? ' · <b>DÉMO</b> (D : reprendre la main)' : ' · D : démo'}<br>` +
         '1/2/3 : encre · glisser sur la flamme/boule : déplacer · A : + émetteur · X : − émetteur · O : boule · F : retours<br>' +
         'glisser : orbiter · clic droit : souffler · molette : zoom · espace : pause · R : reset · E : export .vdb';

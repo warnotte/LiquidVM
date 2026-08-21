@@ -11,6 +11,7 @@ import advectDenWGSL from './shaders3d/advect_density3d.wgsl?raw';
 import forcesWGSL from './shaders3d/forces3d.wgsl?raw';
 import vorticityWGSL from './shaders3d/vorticity3d.wgsl?raw';
 import projectWGSL from './shaders3d/project3d.wgsl?raw';
+import speciesWGSL from './shaders3d/species3d.wgsl?raw';
 import multigridWGSL from './shaders3d/multigrid3d.wgsl?raw';
 import raymarchWGSL from './shaders3d/raymarch.wgsl?raw';
 import clearWGSL from './shaders3d/clear3d.wgsl?raw';
@@ -135,7 +136,10 @@ export class FluidSim3D {
   private velIdx: PingIndex = 0;
   private denIdx: PingIndex = 0;
   private pressIdx: PingIndex = 0;
+  private oxyIdx: PingIndex = 0;
   private simTime = 0;
+  /** Première frame : initialiser la texture d'espèces (O₂ = 1 partout). */
+  private needSpeciesInit = true;
 
   private readonly simData = new Float32Array(60);
   private readonly renderData = new Float32Array(32);
@@ -180,6 +184,8 @@ export class FluidSim3D {
       mgResidual: GPUComputePipeline;
       mgRestrict: GPUComputePipeline;
       mgProlong: GPUComputePipeline;
+      species: GPUComputePipeline;
+      clearOne: GPUComputePipeline;
       clearRgba: GPUComputePipeline;
       clearScalar: GPUComputePipeline;
       render: GPURenderPipeline;
@@ -191,8 +197,10 @@ export class FluidSim3D {
       curl: Pair<GPUBindGroup>; // [vel] → curl
       confine: Pair<GPUBindGroup>; // [vel] (+curl) → flip(vel)
       denPredict: Pair<Pair<GPUBindGroup>>; // [den][vel] → scratch
-      denCorrect: Pair<Pair<GPUBindGroup>>; // [den][vel] (+scratch) → flip(den)
-      divergence: Pair<Pair<GPUBindGroup>>; // [vel][den] (expansion de combustion)
+      denCorrect: Pair<Pair<Pair<GPUBindGroup>>>; // [den][vel][oxy] (+scratch) → flip(den)
+      divergence: Pair<Pair<Pair<GPUBindGroup>>>; // [vel][den][oxy] (expansion)
+      species: Pair<Pair<Pair<GPUBindGroup>>>; // [oxy][vel][den] → flip(oxy)
+      clearsOne: readonly GPUBindGroup[]; // espèces → O₂ = 1
       jacobi: Pair<GPUBindGroup>; // [press]
       gradient: Pair<Pair<GPUBindGroup>>; // [press][vel]
       render: Pair<GPUBindGroup>; // [den]
@@ -231,6 +239,8 @@ export class FluidSim3D {
       const velScratch = tex3d(device, 'vel3d-hat', 'rgba16float');
       const denScratch = tex3d(device, 'den3d-hat', 'rgba16float');
       const curlTex = tex3d(device, 'curl3d', 'rgba16float');
+      // Espèces transportées : x = oxygène (init 1), yzw réservés.
+      const species = pair((i) => tex3d(device, `species3d-${i}`, 'rgba16float'));
 
       const sampler = device.createSampler({
         label: 'lin3d',
@@ -285,11 +295,21 @@ export class FluidSim3D {
         }),
         denCorrect: device.createBindGroupLayout({
           label: 'den-correct-3d',
+          entries: [
+            sampled3d(0),
+            sampled3d(1),
+            sampled3d(2),
+            storage3d(3, 'rgba16float'),
+            sampled3d(4),
+          ],
+        }),
+        species: device.createBindGroupLayout({
+          label: 'species-3d',
           entries: [sampled3d(0), sampled3d(1), sampled3d(2), storage3d(3, 'rgba16float')],
         }),
         divergence: device.createBindGroupLayout({
           label: 'divergence-3d',
-          entries: [sampled3d(0), storage3d(3, 'r32float'), sampled3d(5)],
+          entries: [sampled3d(0), storage3d(3, 'r32float'), sampled3d(5), sampled3d(6)],
         }),
         jacobi: device.createBindGroupLayout({
           label: 'jacobi-3d',
@@ -336,6 +356,7 @@ export class FluidSim3D {
           createShaderModule(device, 'clear3d.wgsl', clearWGSL),
         ]);
       const multigridM = await createShaderModule(device, 'multigrid3d.wgsl', multigridWGSL);
+      const speciesM = await createShaderModule(device, 'species3d.wgsl', speciesWGSL);
 
       const compute = (
         label: string,
@@ -352,7 +373,7 @@ export class FluidSim3D {
           compute: { module, entryPoint },
         });
 
-      const [velPredict, velCorrect, forces, curlPipe, confine, denPredict, denCorrect, divergencePipe, jacobi, gradient, mgSmooth, mgResidual, mgRestrictPipe, mgProlongPipe, clearRgba, clearScalar, render] =
+      const [velPredict, velCorrect, forces, curlPipe, confine, denPredict, denCorrect, divergencePipe, jacobi, gradient, mgSmooth, mgResidual, mgRestrictPipe, mgProlongPipe, speciesPipe, clearOne, clearRgba, clearScalar, render] =
         await Promise.all([
           compute('vel-predict-3d', L.velPredict, advectVelM, 'predict'),
           compute('vel-correct-3d', L.velCorrect, advectVelM, 'correct'),
@@ -368,6 +389,15 @@ export class FluidSim3D {
           compute('mg-residual-3d', L.jacobi, multigridM, 'residual'),
           compute('mg-restrict-3d', L.mgRestrict, multigridM, 'restrict_rhs'),
           compute('mg-prolong-3d', L.mgProlong, multigridM, 'prolong_add'),
+          compute('species-3d', L.species, speciesM, 'main'),
+          device.createComputePipelineAsync({
+            label: 'clear-one-3d',
+            layout: device.createPipelineLayout({
+              label: 'clear-one-3d-pl',
+              bindGroupLayouts: [L.clearRgba],
+            }),
+            compute: { module: clearM, entryPoint: 'clear_one' },
+          }),
           device.createComputePipelineAsync({
             label: 'clear-rgba-3d',
             layout: device.createPipelineLayout({ label: 'clear-rgba-3d-pl', bindGroupLayouts: [L.clearRgba] }),
@@ -467,29 +497,58 @@ export class FluidSim3D {
         ),
         denCorrect: pair((d) =>
           pair((v) =>
-            device.createBindGroup({
-              label: `den-correct-3d-d${d}-v${v}`,
-              layout: L.denCorrect,
-              entries: [
-                { binding: 0, resource: density[d] },
-                { binding: 1, resource: velocity[v] },
-                { binding: 2, resource: denScratch },
-                { binding: 3, resource: density[flip(d)] },
-              ],
-            }),
+            pair((o) =>
+              device.createBindGroup({
+                label: `den-correct-3d-d${d}-v${v}-o${o}`,
+                layout: L.denCorrect,
+                entries: [
+                  { binding: 0, resource: density[d] },
+                  { binding: 1, resource: velocity[v] },
+                  { binding: 2, resource: denScratch },
+                  { binding: 3, resource: density[flip(d)] },
+                  { binding: 4, resource: species[o] },
+                ],
+              }),
+            ),
           ),
+        ),
+        species: pair((o) =>
+          pair((v) =>
+            pair((d) =>
+              device.createBindGroup({
+                label: `species-3d-o${o}-v${v}-d${d}`,
+                layout: L.species,
+                entries: [
+                  { binding: 0, resource: species[o] },
+                  { binding: 1, resource: velocity[v] },
+                  { binding: 2, resource: density[d] },
+                  { binding: 3, resource: species[flip(o)] },
+                ],
+              }),
+            ),
+          ),
+        ),
+        clearsOne: [species[0], species[1]].map((view, i) =>
+          device.createBindGroup({
+            label: `clear-one-3d-${i}`,
+            layout: L.clearRgba,
+            entries: [{ binding: 0, resource: view }],
+          }),
         ),
         divergence: pair((v) =>
           pair((dn) =>
-            device.createBindGroup({
-              label: `divergence-3d-v${v}-d${dn}`,
-              layout: L.divergence,
-              entries: [
-                { binding: 0, resource: velocity[v] },
-                { binding: 3, resource: divergence },
-                { binding: 5, resource: density[dn] },
-              ],
-            }),
+            pair((o) =>
+              device.createBindGroup({
+                label: `divergence-3d-v${v}-d${dn}-o${o}`,
+                layout: L.divergence,
+                entries: [
+                  { binding: 0, resource: velocity[v] },
+                  { binding: 3, resource: divergence },
+                  { binding: 5, resource: density[dn] },
+                  { binding: 6, resource: species[o] },
+                ],
+              }),
+            ),
           ),
         ),
         jacobi: pair((p) =>
@@ -657,6 +716,8 @@ export class FluidSim3D {
           mgResidual,
           mgRestrict: mgRestrictPipe,
           mgProlong: mgProlongPipe,
+          species: speciesPipe,
+          clearOne,
           clearRgba,
           clearScalar,
           render,
@@ -685,6 +746,15 @@ export class FluidSim3D {
     if (running || input.reset) {
       const cp = encoder.beginComputePass({ label: 'sim3d' });
       const n = DISPATCH3;
+      // Initialisation / reset des espèces : O₂ = 1 partout.
+      if (this.needSpeciesInit || input.reset) {
+        this.needSpeciesInit = false;
+        cp.setPipeline(this.pipelines.clearOne);
+        for (const bind of this.binds.clearsOne) {
+          cp.setBindGroup(0, bind);
+          cp.dispatchWorkgroups(n, n, n);
+        }
+      }
       if (input.reset) {
         cp.setPipeline(this.pipelines.clearRgba);
         for (const bind of this.binds.clearsRgba) {
@@ -726,7 +796,7 @@ export class FluidSim3D {
         }
 
         cp.setPipeline(this.pipelines.divergence);
-        cp.setBindGroup(1, this.binds.divergence[this.velIdx][this.denIdx]);
+        cp.setBindGroup(1, this.binds.divergence[this.velIdx][this.denIdx][this.oxyIdx]);
         cp.dispatchWorkgroups(n, n, n);
 
         // Pression : V-cycles multigrid (défaut) ou Jacobi simple — warm start
@@ -755,9 +825,15 @@ export class FluidSim3D {
         cp.setBindGroup(1, this.binds.denPredict[this.denIdx][this.velIdx]);
         cp.dispatchWorkgroups(n, n, n);
         cp.setPipeline(this.pipelines.denCorrect);
-        cp.setBindGroup(1, this.binds.denCorrect[this.denIdx][this.velIdx]);
+        cp.setBindGroup(1, this.binds.denCorrect[this.denIdx][this.velIdx][this.oxyIdx]);
         cp.dispatchWorkgroups(n, n, n);
         this.denIdx = flip(this.denIdx);
+
+        // Espèces (oxygène…) : advection RK2 + chimie, sur les densités fraîches.
+        cp.setPipeline(this.pipelines.species);
+        cp.setBindGroup(1, this.binds.species[this.oxyIdx][this.velIdx][this.denIdx]);
+        cp.dispatchWorkgroups(n, n, n);
+        this.oxyIdx = flip(this.oxyIdx);
       }
       cp.end();
     }
@@ -1120,6 +1196,9 @@ export class FluidSim3D {
     d[56] = D.inkWeights[0] * SCALE3;
     d[57] = D.inkWeights[1] * SCALE3;
     d[58] = D.inkWeights[2] * SCALE3;
+    // Oxygène : apport du souffle (blow_force.w) et récupération lente.
+    d[27] = D.blowOxygen;
+    d[59] = D.oxygenRecover;
     this.device.queue.writeBuffer(this.simUniforms, 0, d);
   }
 

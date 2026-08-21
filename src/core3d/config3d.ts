@@ -33,9 +33,10 @@ export const INK_COLORS = [
 export const INK_NAMES = ['fumée', 'encre', 'carburant'] as const;
 
 export const SIM3_DEFAULTS = {
-  /** Solveur de pression : multigrid par défaut, Jacobi en repli comparatif. */
+  /** Solveur de pression : multigrid par défaut, Jacobi en repli comparatif.
+   *  1 V-cycle warm-starté suffit pour le visuel — 2 coûtent ~6 balayages de plus. */
   multigrid: true,
-  vcycles: 2,
+  vcycles: 1,
   /** Itérations de Jacobi quand le multigrid est coupé. */
   jacobiIterations: 36,
   /** Force du vorticity confinement (ε). Défaut 0 : à 128³, le gradient de |ω| à
@@ -72,6 +73,11 @@ export const SIM3_DEFAULTS = {
   burnRate: 3.0,
   heatYield: 0.7,
   expansion: 10,
+  /** OXYGÈNE (canal x de la texture d'espèces, initialisé à 1 partout) : la
+   *  combustion le consomme (stœchiométrie dans le shader), il revient lentement
+   *  (la boîte « fuit ») et le SOUFFLE en apporte — le soufflet de forge. */
+  oxygenRecover: 0.015,
+  blowOxygen: 2.5,
   /** Poids propre des matières (voxels/s² par unité — remis à l'échelle SCALE3) :
    *  la fumée flotte, l'encre magenta est lourde, la vapeur de carburant coule
    *  doucement (elle s'accumule et s'étale tant qu'elle ne brûle pas). */
