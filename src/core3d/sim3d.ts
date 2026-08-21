@@ -834,6 +834,31 @@ export class FluidSim3D {
     return this.pickTarget() !== -2;
   }
 
+  /** Pilotage scripté (mode démo) : déplace la sphère vers (nx,ny,nz) ∈ [0,1]³,
+   *  en communiquant sa vitesse au fluide comme une saisie réelle. */
+  driveSphere(nx: number, ny: number, nz: number, dt: number): void {
+    const clamp01 = (v: number): number => Math.min(Math.max(v, 0.05), 0.95);
+    const target = [clamp01(nx) * GRID3, clamp01(ny) * GRID3, clamp01(nz) * GRID3];
+    if (dt > 0) {
+      for (let a = 0; a < 3; a++) {
+        const inst = (target[a]! - this.spherePos[a]!) / dt;
+        this.sphereVel[a] = 0.55 * this.sphereVel[a]! + 0.45 * inst;
+      }
+    }
+    this.spherePos[0] = target[0]!;
+    this.spherePos[1] = target[1]!;
+    this.spherePos[2] = target[2]!;
+  }
+
+  /** Pilotage scripté : pose un émetteur à (nx,ny,nz) ∈ [0,1]³ avec son encre. */
+  addEmitterAt(nx: number, ny: number, nz: number, ink: number): void {
+    if (this.emitters.length >= SIM3_DEFAULTS.maxEmitters) {
+      return;
+    }
+    this.emitters.push({ pos: [nx * GRID3, ny * GRID3, nz * GRID3], ink });
+    this.activeEmitter = this.emitters.length - 1;
+  }
+
   /** Saisie, ajout/retrait d'émetteurs, sphère — tout l'état interactif. */
   private processInteraction(input: Frame3DInput, dt: number): void {
     if (input.reset) {

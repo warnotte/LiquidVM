@@ -13,8 +13,83 @@ import { showFatalError } from './overlay';
 
 const SELFTEST_FRAMES = 240;
 
+/**
+ * Mode DÉMO (touche D ou ?demo) : chorégraphie scriptée du moteur — le showcase.
+ * Caméra en orbite lente, fontaine d'encre, nappe de carburant soufflée dans la
+ * flamme (embrasement), boule qui brasse les panaches, accalmie, et boucle.
+ */
+class DemoDriver {
+  private t = 0;
+  private readonly fired = new Set<number>();
+
+  constructor(
+    private readonly input: Frame3DInput,
+    private readonly sim: FluidSim3D,
+  ) {}
+
+  private at(mark: number, action: () => void): void {
+    if (this.t >= mark && !this.fired.has(mark)) {
+      this.fired.add(mark);
+      action();
+    }
+  }
+
+  tick(dt: number): void {
+    this.t += dt;
+    const input = this.input;
+
+    // Caméra : orbite lente, élévation et distance qui respirent.
+    input.cam.azimuth += dt * 0.1;
+    input.cam.elevation = 0.24 + 0.1 * Math.sin(this.t * 0.11);
+    input.cam.radius = 2.05 + 0.28 * Math.sin(this.t * 0.07);
+
+    // Acte I : la flamme pilote seule (0–6 s), puis les matières entrent.
+    this.at(6, () => this.sim.addEmitterAt(0.27, 0.08, 0.5, 1)); // fontaine magenta
+    this.at(13, () => this.sim.addEmitterAt(0.73, 0.08, 0.6, 0)); // colonne de fumée
+    // Acte II : la nappe de carburant se répand (20 s)…
+    this.at(20, () => this.sim.addEmitterAt(0.6, 0.08, 0.33, 2));
+    // …et un souffle la pousse dans la flamme pilote : embrasement (30–34 s).
+    if (this.t > 30 && this.t < 34) {
+      input.blow.active = true;
+      input.blow.ndcX = 0.2;
+      input.blow.ndcY = -0.4;
+      input.blow.moveX += -dt * 1.4;
+    }
+    this.at(34, () => (input.blow.active = false));
+    // Acte III : la boule brasse les panaches en lemniscate (40–58 s).
+    if (this.t > 40 && this.t < 58) {
+      const u = (this.t - 40) * 0.33;
+      this.sim.driveSphere(
+        0.5 + 0.3 * Math.sin(u),
+        0.4 + 0.17 * Math.sin(u * 0.71),
+        0.5 + 0.16 * Math.sin(2.0 * u),
+        dt,
+      );
+    }
+    // Acte IV : grand souffle transversal (62–65 s), puis accalmie.
+    if (this.t > 62 && this.t < 65) {
+      input.blow.active = true;
+      input.blow.ndcX = -0.3;
+      input.blow.ndcY = 0.0;
+      input.blow.moveX += dt * 1.2;
+      input.blow.moveY += dt * 0.3;
+    }
+    this.at(65, () => (input.blow.active = false));
+    this.at(70, () => (input.removeEmitter = true));
+    this.at(72, () => (input.removeEmitter = true));
+    // Boucle.
+    if (this.t > 82) {
+      input.reset = true;
+      this.t = 0;
+      this.fired.clear();
+    }
+  }
+}
+
 async function boot(): Promise<void> {
-  const selftest = new URLSearchParams(location.search).has('selftest');
+  const urlParams = new URLSearchParams(location.search);
+  const selftest = urlParams.has('selftest');
+  let demoOn = urlParams.has('demo');
   const canvas = document.getElementById('canvas3d') as HTMLCanvasElement;
   const hud = document.getElementById('hud3d') as HTMLDivElement;
 
@@ -193,9 +268,15 @@ async function boot(): Promise<void> {
       input.removeEmitter = true;
     } else if (k === 'o') {
       input.sphereActive = !input.sphereActive;
+    } else if (k === 'd') {
+      demoOn = !demoOn;
+      if (!demoOn) {
+        input.blow.active = false;
+      }
     }
   });
 
+  const demoDriver = new DemoDriver(input, sim);
   let last = performance.now();
   let fps = 60;
   let frames = 0;
@@ -205,6 +286,9 @@ async function boot(): Promise<void> {
     last = now;
     if (dt > 0) {
       fps = fps * 0.95 + (1 / dt) * 0.05;
+    }
+    if (demoOn) {
+      demoDriver.tick(dt);
     }
     input.dt = dt;
     sim.frame(input, context.getCurrentTexture().createView(), canvas.width / canvas.height);
@@ -221,7 +305,7 @@ async function boot(): Promise<void> {
       const solver = input.multigrid ? `MG ×${input.vcycles}` : `jacobi ${input.jacobiIterations} it.`;
       hud.innerHTML =
         `<b>LiquidVM 3D</b> · ${GRID3}³ · encre : ${INK_NAMES[input.emitInk] ?? '?'} · ${solver} · ${Math.round(fps)} FPS` +
-        `${input.paused ? ' · ⏸ pause' : ''}<br>` +
+        `${input.paused ? ' · ⏸ pause' : ''}${demoOn ? ' · <b>DÉMO</b> (D : reprendre la main)' : ' · D : démo'}<br>` +
         '1/2/3 : encre · glisser sur la flamme/boule : déplacer · A : + émetteur · X : − émetteur · O : boule<br>' +
         'glisser : orbiter · clic droit : souffler · molette : zoom · espace : pause · R : reset · E : export .vdb';
     }

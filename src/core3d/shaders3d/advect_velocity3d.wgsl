@@ -65,6 +65,18 @@ fn velocity_at(p: vec3f) -> vec3f {
   return vec3f(src_u(p), src_v(p), src_w(p));
 }
 
+// Remontée de caractéristique RK2 (point milieu) : en écoulement courbe, l'erreur
+// d'un pas d'Euler est en O(dt²·courbure) — le point milieu la réduit d'un ordre.
+fn backtrace(p: vec3f, dt: f32) -> vec3f {
+  let mid = p - 0.5 * dt * velocity_at(p);
+  return p - dt * velocity_at(mid);
+}
+
+fn forwardtrace(p: vec3f, dt: f32) -> vec3f {
+  let mid = p + 0.5 * dt * velocity_at(p);
+  return p + dt * velocity_at(mid);
+}
+
 fn aux_u(p: vec3f) -> f32 {
   return textureSampleLevel(aux, lin, (p + OFF_U) * inv_n(), 0.0).x;
 }
@@ -104,9 +116,9 @@ fn predict(@builtin(global_invocation_id) gid: vec3u) {
   let pu = fc + vec3f(0.0, 0.5, 0.5);
   let pv = fc + vec3f(0.5, 0.0, 0.5);
   let pw = fc + vec3f(0.5, 0.5, 0.0);
-  let u = src_u(pu - dt * velocity_at(pu));
-  let v = src_v(pv - dt * velocity_at(pv));
-  let w = src_w(pw - dt * velocity_at(pw));
+  let u = src_u(backtrace(pu, dt));
+  let v = src_v(backtrace(pv, dt));
+  let w = src_w(backtrace(pw, dt));
   textureStore(vel_dst, gid, vec4f(u, v, w, 0.0));
 }
 
@@ -126,17 +138,14 @@ fn correct(@builtin(global_invocation_id) gid: vec3u) {
   let pu = fc + vec3f(0.0, 0.5, 0.5);
   let pv = fc + vec3f(0.5, 0.0, 0.5);
   let pw = fc + vec3f(0.5, 0.5, 0.0);
-  let vel_u = velocity_at(pu);
-  let vel_v = velocity_at(pv);
-  let vel_w = velocity_at(pw);
 
-  // φ' = φ̂ + ½(φ − φ̃), clampé au stencil du point rétro-advecté.
-  var u = hat.x + 0.5 * (orig.x - aux_u(pu + dt * vel_u));
-  var v = hat.y + 0.5 * (orig.y - aux_v(pv + dt * vel_v));
-  var w = hat.z + 0.5 * (orig.z - aux_w(pw + dt * vel_w));
-  let mu = stencil_minmax(pu - dt * vel_u, OFF_U, 0);
-  let mv = stencil_minmax(pv - dt * vel_v, OFF_V, 1);
-  let mw = stencil_minmax(pw - dt * vel_w, OFF_W, 2);
+  // φ' = φ̂ + ½(φ − φ̃), clampé au stencil du point rétro-advecté (traces RK2).
+  var u = hat.x + 0.5 * (orig.x - aux_u(forwardtrace(pu, dt)));
+  var v = hat.y + 0.5 * (orig.y - aux_v(forwardtrace(pv, dt)));
+  var w = hat.z + 0.5 * (orig.z - aux_w(forwardtrace(pw, dt)));
+  let mu = stencil_minmax(backtrace(pu, dt), OFF_U, 0);
+  let mv = stencil_minmax(backtrace(pv, dt), OFF_V, 1);
+  let mw = stencil_minmax(backtrace(pw, dt), OFF_W, 2);
   u = clamp(u, mu.x, mu.y) * decay;
   v = clamp(v, mv.x, mv.y) * decay;
   w = clamp(w, mw.x, mw.y) * decay;

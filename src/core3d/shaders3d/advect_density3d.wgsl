@@ -63,6 +63,17 @@ fn velocity_at(p: vec3f) -> vec3f {
   return vec3f(sample_u(p), sample_v(p), sample_w(p));
 }
 
+// Traces de caractéristiques RK2 (point milieu) — voir advect_velocity3d.
+fn backtrace(p: vec3f, dt: f32) -> vec3f {
+  let mid = p - 0.5 * dt * velocity_at(p);
+  return p - dt * velocity_at(mid);
+}
+
+fn forwardtrace(p: vec3f, dt: f32) -> vec3f {
+  let mid = p + 0.5 * dt * velocity_at(p);
+  return p + dt * velocity_at(mid);
+}
+
 @compute @workgroup_size(4, 4, 4)
 fn predict(@builtin(global_invocation_id) gid: vec3u) {
   let n = n_size();
@@ -71,7 +82,7 @@ fn predict(@builtin(global_invocation_id) gid: vec3u) {
     return;
   }
   let center = vec3f(c) + vec3f(0.5);
-  let back = center - P.misc.x * velocity_at(center);
+  let back = backtrace(center, P.misc.x);
   textureStore(den_dst, gid, textureSampleLevel(den_src, lin, back * inv_n(), 0.0));
 }
 
@@ -84,14 +95,13 @@ fn correct(@builtin(global_invocation_id) gid: vec3u) {
   }
   let dt = P.misc.x;
   let center = vec3f(c) + vec3f(0.5);
-  let vel = velocity_at(center);
   let orig = textureLoad(den_src, c, 0);
   let hat = textureLoad(aux, c, 0);
-  let tilde = textureSampleLevel(aux, lin, (center + dt * vel) * inv_n(), 0.0);
+  let tilde = textureSampleLevel(aux, lin, forwardtrace(center, dt) * inv_n(), 0.0);
   var val = hat + 0.5 * (orig - tilde);
 
-  // Clamp au stencil trilinéaire du point rétro-advecté (par canal).
-  let back = center - dt * vel;
+  // Clamp au stencil trilinéaire du point rétro-advecté (par canal, trace RK2).
+  let back = backtrace(center, dt);
   let base = vec3i(floor(back - vec3f(0.5)));
   var lo = vec4f(1e30);
   var hi = vec4f(-1e30);
@@ -112,8 +122,12 @@ fn correct(@builtin(global_invocation_id) gid: vec3u) {
   val.w = min(val.w + P.emit_meta.z * burn, 1.9);
   val.x += 0.35 * burn;
 
-  // Dissipations : la fumée s'estompe lentement, la chaleur se refroidit vite.
-  val = vec4f(val.xyz / (1.0 + P.diss.y * dt), val.w / (1.0 + P.diss.z * dt));
+  // Dissipations : la fumée s'estompe lentement, la chaleur se refroidit vite —
+  // avec un terme RADIATIF en T⁴ (Fedkiw) : les gaz les plus chauds s'éteignent
+  // brutalement (pointes de flammes nettes), la fumée tiède flotte longtemps.
+  var heat = val.w / (1.0 + P.diss.z * dt);
+  heat = max(heat - dt * 0.30 * heat * heat * heat * heat, 0.0);
+  val = vec4f(val.xyz / (1.0 + P.diss.y * dt), heat);
 
   // Émetteurs gaussiens : chaleur + l'encre propre à chacun (canal xyz selon l'index).
   let count = u32(P.emit_meta.x + 0.5);
