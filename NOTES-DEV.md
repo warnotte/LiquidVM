@@ -133,6 +133,16 @@ Config actuelle : sim 1024², dye/scène 2048².
   centre-de-cellule-dans-la-sphère depuis l'uniforme, avec la même règle partout
   (adjonction exacte préservée, aucun NaN). La fumée se fend autour de la boule
   et se referme. 60 FPS avec sphère + 3 émetteurs à 256³.
+- **La boule brasse le fluide** : condition de bord MOBILE — les faces bloquées
+  portent la vitesse de la sphère (suivie à la saisie, EMA 0.55/0.45, plafond
+  420·SCALE3 voxels/s, amortie ×0.82 au relâcher, uniform sphere_vel). Le
+  gradient PRESCRIT ces faces (ne les zéroe plus), la divergence les lit comme
+  débit connu, le lisseur reste l'adjoint exact (faces fermées côté pression).
+- **Rendu ancré** : sol sous la boîte (plan y=−0.502, tapis radial) recevant
+  l'ombre volumétrique de la fumée (12 pas vers la lumière) + l'ombre analytique
+  de la boule ; la boule s'ombre aussi DANS la fumée (test rayon-sphère par
+  échantillon éclairé) et rougeoie au corps noir (chaleur échantillonnée à sa
+  surface). Le tout tient les 60 FPS à 256³.
 - **MacCormack 3D** : prédicteur/correcteur clampé par composante MAC (stencil du
   point rétro-advecté) — LE raffineur : le panache laminaire devient turbulent et
   structuré à lui seul.
