@@ -173,6 +173,12 @@ Config actuelle : sim 1024², dye/scène 2048².
   (warm start — 2 coûtaient ~6 balayages de plus sans gain visible). Si ça
   ralentit à nouveau : le budget sim est plein, chercher là (le rendu s'adapte
   seul).
+- **Interface (panel3d.ts)** : panneau à sections (Tab) + barre d'outils,
+  ENTIÈREMENT déclaratifs — ajouter un réglage = une entrée de spec dans main3d.
+  Toute la physique est réglable à chaud via Sim3Tuning (Frame3DInput.params,
+  défauts de defaultTuning3()) : combustion, débits, dissipations, poussée,
+  souffle, vitesse du temps, rendu. Barre : matières en pastilles, ± émetteur,
+  boule, démo, réglages ; sélecteur de résolution (recharge avec ?grid=).
 - **Mode DÉMO (showcase)** : touche D ou `?demo` — chorégraphie en boucle ~80 s
   (pilote → fontaine magenta → fumée → nappe de carburant → souffle scripté →
   embrasement → boule en lemniscate → grand souffle → accalmie → reset), caméra
