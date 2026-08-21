@@ -25,6 +25,7 @@ class DemoDriver {
   constructor(
     private readonly input: Frame3DInput,
     private readonly sim: FluidSim3D,
+    private readonly toast: (text: string) => void,
   ) {}
 
   private at(mark: number, action: () => void): void {
@@ -44,10 +45,21 @@ class DemoDriver {
     input.cam.radius = 2.05 + 0.28 * Math.sin(this.t * 0.07);
 
     // Acte I : la flamme pilote seule (0–6 s), puis les matières entrent.
-    this.at(6, () => this.sim.addEmitterAt(0.27, 0.08, 0.5, 1)); // fontaine magenta
-    this.at(13, () => this.sim.addEmitterAt(0.73, 0.08, 0.6, 0)); // colonne de fumée
+    this.at(0.5, () => this.toast('Acte I — la flamme pilote'));
+    this.at(6, () => {
+      this.sim.addEmitterAt(0.27, 0.08, 0.5, 1);
+      this.toast("fontaine d'encre magenta — elle retombe en refroidissant");
+    });
+    this.at(13, () => {
+      this.sim.addEmitterAt(0.73, 0.08, 0.6, 0);
+      this.toast('colonne de fumée');
+    });
     // Acte II : la nappe de carburant se répand (20 s)…
-    this.at(20, () => this.sim.addEmitterAt(0.6, 0.08, 0.33, 2));
+    this.at(20, () => {
+      this.sim.addEmitterAt(0.6, 0.08, 0.33, 2);
+      this.toast('Acte II — vapeur de carburant : elle coule et nappe le sol');
+    });
+    this.at(30, () => this.toast('un souffle pousse la nappe dans la flamme…'));
     // …et un souffle la pousse dans la flamme pilote : embrasement (30–34 s).
     if (this.t > 30 && this.t < 34) {
       input.blow.active = true;
@@ -56,7 +68,9 @@ class DemoDriver {
       input.blow.moveX += -dt * 1.4;
     }
     this.at(34, () => (input.blow.active = false));
+    this.at(36, () => this.toast('embrasement — la déflagration court le long de la nappe'));
     // Acte III : la boule brasse les panaches en lemniscate (40–58 s).
+    this.at(40, () => this.toast('Acte III — la boule brasse les panaches'));
     if (this.t > 40 && this.t < 58) {
       const u = (this.t - 40) * 0.33;
       this.sim.driveSphere(
@@ -67,6 +81,7 @@ class DemoDriver {
       );
     }
     // Acte IV : grand souffle transversal (62–65 s), puis accalmie.
+    this.at(62, () => this.toast('Acte IV — grand souffle'));
     if (this.t > 62 && this.t < 65) {
       input.blow.active = true;
       input.blow.ndcX = -0.3;
@@ -75,6 +90,7 @@ class DemoDriver {
       input.blow.moveY += dt * 0.3;
     }
     this.at(65, () => (input.blow.active = false));
+    this.at(69, () => this.toast('accalmie…'));
     this.at(70, () => (input.removeEmitter = true));
     this.at(72, () => (input.removeEmitter = true));
     // Boucle.
@@ -92,6 +108,15 @@ async function boot(): Promise<void> {
   let demoOn = urlParams.has('demo');
   const canvas = document.getElementById('canvas3d') as HTMLCanvasElement;
   const hud = document.getElementById('hud3d') as HTMLDivElement;
+
+  // Retours visuels débrayables : toasts d'événements + fuseau du souffle (core).
+  const toast = (text: string): void => {
+    const el = document.createElement('div');
+    el.className = 'toast';
+    el.textContent = text;
+    document.body.appendChild(el);
+    setTimeout(() => el.remove(), 1700);
+  };
 
   const { device, format } = await acquireDevice();
   device.lost.then((info) => {
@@ -136,6 +161,7 @@ async function boot(): Promise<void> {
     addEmitter: false,
     removeEmitter: false,
     sphereActive: true,
+    feedback: true,
     exposure: SIM3_DEFAULTS.exposure,
     raymarchSteps: SIM3_DEFAULTS.raymarchSteps,
   };
@@ -262,21 +288,40 @@ async function boot(): Promise<void> {
     }
     // Lettres via e.key : indépendant de la disposition clavier (AZERTY…).
     const k = e.key.toLowerCase();
+    const say = (text: string): void => {
+      if (input.feedback) {
+        toast(text);
+      }
+    };
     if (k === 'a') {
       input.addEmitter = true;
+      say(`➕ émetteur : ${INK_NAMES[input.emitInk] ?? '?'}`);
     } else if (k === 'x') {
       input.removeEmitter = true;
+      say('➖ émetteur');
     } else if (k === 'o') {
       input.sphereActive = !input.sphereActive;
+      say(input.sphereActive ? 'boule : présente' : 'boule : retirée');
     } else if (k === 'd') {
       demoOn = !demoOn;
       if (!demoOn) {
         input.blow.active = false;
       }
+      say(demoOn ? 'DÉMO — D pour reprendre la main' : 'à toi de jouer');
+    } else if (k === 'f') {
+      input.feedback = !input.feedback;
+      toast(input.feedback ? 'retours visuels : actifs' : 'retours visuels : coupés');
+    }
+    if (e.code === 'Digit1' || e.code === 'Digit2' || e.code === 'Digit3') {
+      say(`encre : ${INK_NAMES[input.emitInk] ?? '?'}`);
     }
   });
 
-  const demoDriver = new DemoDriver(input, sim);
+  const demoDriver = new DemoDriver(input, sim, (text) => {
+    if (input.feedback) {
+      toast(text);
+    }
+  });
   let last = performance.now();
   let fps = 60;
   let frames = 0;
@@ -306,7 +351,7 @@ async function boot(): Promise<void> {
       hud.innerHTML =
         `<b>LiquidVM 3D</b> · ${GRID3}³ · encre : ${INK_NAMES[input.emitInk] ?? '?'} · ${solver} · ${Math.round(fps)} FPS` +
         `${input.paused ? ' · ⏸ pause' : ''}${demoOn ? ' · <b>DÉMO</b> (D : reprendre la main)' : ' · D : démo'}<br>` +
-        '1/2/3 : encre · glisser sur la flamme/boule : déplacer · A : + émetteur · X : − émetteur · O : boule<br>' +
+        '1/2/3 : encre · glisser sur la flamme/boule : déplacer · A : + émetteur · X : − émetteur · O : boule · F : retours<br>' +
         'glisser : orbiter · clic droit : souffler · molette : zoom · espace : pause · R : reset · E : export .vdb';
     }
     if (selftest && frames === SELFTEST_FRAMES) {

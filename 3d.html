@@ -45,6 +45,39 @@
         color: #e6e9f2;
         font-weight: 600;
       }
+      .toast {
+        position: fixed;
+        top: 22px;
+        left: 50%;
+        transform: translateX(-50%);
+        color: #dfe4f0;
+        font-size: 14px;
+        background: rgba(18, 20, 30, 0.88);
+        border: 1px solid rgba(130, 140, 170, 0.35);
+        border-radius: 999px;
+        padding: 8px 18px;
+        pointer-events: none;
+        user-select: none;
+        animation: toast-life 1.6s ease-out forwards;
+        white-space: nowrap;
+      }
+      @keyframes toast-life {
+        0% {
+          opacity: 0;
+          transform: translateX(-50%) translateY(-8px);
+        }
+        12% {
+          opacity: 1;
+          transform: translateX(-50%) translateY(0);
+        }
+        75% {
+          opacity: 1;
+        }
+        100% {
+          opacity: 0;
+          transform: translateX(-50%) translateY(-6px);
+        }
+      }
       .fatal {
         position: fixed;
         inset: 0;

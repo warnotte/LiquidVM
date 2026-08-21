@@ -57,6 +57,8 @@ export interface Frame3DInput {
   removeEmitter: boolean;
   /** Sphère-obstacle présente. */
   sphereActive: boolean;
+  /** Retours visuels (fuseau du souffle…) — débrayables (touche F). */
+  feedback: boolean;
   exposure: number;
   raymarchSteps: number;
 }
@@ -136,8 +138,8 @@ export class FluidSim3D {
   private simTime = 0;
 
   private readonly simData = new Float32Array(60);
-  private readonly renderData = new Float32Array(24);
-  private lastRender = new Float32Array(24).fill(Number.NaN);
+  private readonly renderData = new Float32Array(32);
+  private lastRender = new Float32Array(32).fill(Number.NaN);
 
   /** Émetteurs (positions en voxels) — le premier est l'émetteur historique. */
   private readonly emitters: { pos: [number, number, number]; ink: number }[] = [
@@ -1169,6 +1171,20 @@ export class FluidSim3D {
     d[21] = this.spherePos[1] / GRID3 - 0.5;
     d[22] = this.spherePos[2] / GRID3 - 0.5;
     d[23] = input.sphereActive ? SIM3_DEFAULTS.sphereRadius : -1;
+    // Retour visuel du souffle : fuseau le long du rayon (unités monde), si actif.
+    if (input.feedback && input.blow.active) {
+      this.computeRay(input.blow.ndcX, input.blow.ndcY);
+      d[24] = this.rayO[0] / GRID3 - 0.5;
+      d[25] = this.rayO[1] / GRID3 - 0.5;
+      d[26] = this.rayO[2] / GRID3 - 0.5;
+      d[27] = SIM3_DEFAULTS.blowRadius;
+      d[28] = this.rayD[0];
+      d[29] = this.rayD[1];
+      d[30] = this.rayD[2];
+      d[31] = 1;
+    } else {
+      d[31] = 0;
+    }
     let dirty = false;
     for (let i = 0; i < d.length; i++) {
       if (d[i] !== this.lastRender[i]) {

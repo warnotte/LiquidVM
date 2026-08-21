@@ -10,6 +10,8 @@ struct RenderParams {
   cam_fwd: vec4f,   // xyz, w: pas de marche (nombre)
   light: vec4f,     // xyz: direction VERS la lumière, w: intensité
   sphere: vec4f,    // xyz: centre (monde), w: rayon (monde, ≤0 = absente)
+  blow_a: vec4f,    // retour visuel du souffle : xyz origine (monde), w rayon
+  blow_b: vec4f,    // xyz direction, w actif (0/1)
 }
 
 @group(0) @binding(0) var<uniform> R: RenderParams;
@@ -156,6 +158,16 @@ fn fs_main(frag: VSOut) -> @location(0) vec4f {
         break;
       }
       let pos = ro + rd * t;
+      // Retour visuel du souffle : fuseau lumineux le long du rayon du geste —
+      // visible même dans l'air vide, pour voir OÙ le souffle agit.
+      if (R.blow_b.w > 0.5) {
+        let bv = pos - R.blow_a.xyz;
+        let bt = dot(bv, R.blow_b.xyz);
+        if (bt > 0.0) {
+          let bd = distance(pos, R.blow_a.xyz + R.blow_b.xyz * bt) / max(R.blow_a.w, 1e-4);
+          acc += transmit * exp(-bd * bd * 2.0) * vec3f(0.05, 0.08, 0.13) * step_len * 22.0;
+        }
+      }
       let s = textureSampleLevel(density_tex, lin, pos + vec3f(0.5), 0.0);
       let ext = extinction(s);
       if (ext > 0.005) {
