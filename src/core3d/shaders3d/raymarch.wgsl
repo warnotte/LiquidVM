@@ -41,10 +41,11 @@ fn box_hit(ro: vec3f, rd: vec3f) -> vec2f {
   return vec2f(max(max(tmin.x, tmin.y), tmin.z), min(min(tmax.x, tmax.y), tmax.z));
 }
 
-// Palette des trois encres (canaux xyz) — dupliquée depuis config3d.ts.
-const INK0 = vec3f(0.35, 0.60, 1.00);
+// Palette des trois matières (canaux xyz) — dupliquée depuis config3d.ts :
+// fumée grise, encre magenta, vapeur de carburant ambrée.
+const INK0 = vec3f(0.55, 0.60, 0.68);
 const INK1 = vec3f(1.00, 0.30, 0.80);
-const INK2 = vec3f(1.00, 0.85, 0.55);
+const INK2 = vec3f(1.00, 0.80, 0.45);
 
 fn extinction(s: vec4f) -> f32 {
   return (s.x + s.y + s.z) * 22.0 + s.w * 5.0;

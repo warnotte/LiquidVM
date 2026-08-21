@@ -17,6 +17,7 @@ struct Params {
   emitter3: vec4f,
   emit_inks: vec4f,   // encre (0/1/2) de chaque émetteur
   sphere_vel: vec4f,  // xyz: vitesse de la sphère (voxels/s) — condition de bord mobile
+  ink_weights: vec4f, // xyz: poids propre des matières (voxels/s² par unité)
 }
 
 fn emitter_pos(i: u32) -> vec4f {
@@ -49,9 +50,9 @@ fn inv_n() -> vec3f {
   return vec3f(1.0) / vec3f(f32(P.misc.z));
 }
 
-fn heat_at(p: vec3f) -> f32 {
+fn density_at(p: vec3f) -> vec4f {
   // Les densités sont aux centres des cellules : échantillonnage direct.
-  return textureSampleLevel(den_src, lin, p * inv_n(), 0.0).w;
+  return textureSampleLevel(den_src, lin, p * inv_n(), 0.0);
 }
 
 // Poids gaussien cumulé de TOUS les émetteurs actifs à la position p.
@@ -97,8 +98,10 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
 
   var vel = textureLoad(vel_src, c, 0).xyz;
 
-  // Poussée thermique sur les faces verticales.
-  vel.y += dt * P.diss.w * heat_at(pv);
+  // Boussinesq à deux voies : la chaleur pousse vers le haut, le poids propre des
+  // matières tire vers le bas (l'encre lourde retombe, le carburant froid coule).
+  let dn = density_at(pv);
+  vel.y += dt * (P.diss.w * dn.w - dot(P.ink_weights.xyz, dn.xyz));
 
   // Impulsion de l'émetteur : jet montant + balancement latéral (fréquences
   // incommensurables pour ne jamais boucler visiblement).

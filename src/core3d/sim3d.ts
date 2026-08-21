@@ -135,7 +135,7 @@ export class FluidSim3D {
   private pressIdx: PingIndex = 0;
   private simTime = 0;
 
-  private readonly simData = new Float32Array(56);
+  private readonly simData = new Float32Array(60);
   private readonly renderData = new Float32Array(24);
   private lastRender = new Float32Array(24).fill(Number.NaN);
 
@@ -190,7 +190,7 @@ export class FluidSim3D {
       confine: Pair<GPUBindGroup>; // [vel] (+curl) → flip(vel)
       denPredict: Pair<Pair<GPUBindGroup>>; // [den][vel] → scratch
       denCorrect: Pair<Pair<GPUBindGroup>>; // [den][vel] (+scratch) → flip(den)
-      divergence: Pair<GPUBindGroup>; // [vel]
+      divergence: Pair<Pair<GPUBindGroup>>; // [vel][den] (expansion de combustion)
       jacobi: Pair<GPUBindGroup>; // [press]
       gradient: Pair<Pair<GPUBindGroup>>; // [press][vel]
       render: Pair<GPUBindGroup>; // [den]
@@ -287,7 +287,7 @@ export class FluidSim3D {
         }),
         divergence: device.createBindGroupLayout({
           label: 'divergence-3d',
-          entries: [sampled3d(0), storage3d(3, 'r32float')],
+          entries: [sampled3d(0), storage3d(3, 'r32float'), sampled3d(5)],
         }),
         jacobi: device.createBindGroupLayout({
           label: 'jacobi-3d',
@@ -478,14 +478,17 @@ export class FluidSim3D {
           ),
         ),
         divergence: pair((v) =>
-          device.createBindGroup({
-            label: `divergence-3d-${v}`,
-            layout: L.divergence,
-            entries: [
-              { binding: 0, resource: velocity[v] },
-              { binding: 3, resource: divergence },
-            ],
-          }),
+          pair((dn) =>
+            device.createBindGroup({
+              label: `divergence-3d-v${v}-d${dn}`,
+              layout: L.divergence,
+              entries: [
+                { binding: 0, resource: velocity[v] },
+                { binding: 3, resource: divergence },
+                { binding: 5, resource: density[dn] },
+              ],
+            }),
+          ),
         ),
         jacobi: pair((p) =>
           device.createBindGroup({
@@ -721,7 +724,7 @@ export class FluidSim3D {
         }
 
         cp.setPipeline(this.pipelines.divergence);
-        cp.setBindGroup(1, this.binds.divergence[this.velIdx]);
+        cp.setBindGroup(1, this.binds.divergence[this.velIdx][this.denIdx]);
         cp.dispatchWorkgroups(n, n, n);
 
         // Pression : V-cycles multigrid (défaut) ou Jacobi simple — warm start
@@ -842,8 +845,12 @@ export class FluidSim3D {
       this.spherePos[2] = GRID3 * SIM3_DEFAULTS.sphereStart[2];
     }
     this.sphereOn = input.sphereActive;
-    // L'encre sélectionnée s'applique à l'émetteur actif (dernier ajouté ou saisi).
-    this.emitters[this.activeEmitter]!.ink = input.emitInk;
+    // L'encre sélectionnée s'applique aux FUTURS émetteurs — et à celui qu'on tient
+    // en main (manipulation directe). Jamais à un émetteur posé et lâché : changer
+    // d'encre ne doit pas éteindre la flamme pilote à distance.
+    if (this.grabbed >= 0) {
+      this.emitters[this.grabbed]!.ink = input.emitInk;
+    }
 
     if (input.addEmitter && this.emitters.length < SIM3_DEFAULTS.maxEmitters) {
       // Nouvel émetteur : rayon du pointeur ∩ plan horizontal des émetteurs.
@@ -1065,8 +1072,11 @@ export class FluidSim3D {
     d[29] = this.spherePos[1];
     d[30] = this.spherePos[2];
     d[31] = this.sphereOn ? GRID3 * D.sphereRadius : -1;
-    // Émetteurs supplémentaires + encres.
+    // Émetteurs + combustion (taux, chaleur dégagée, expansion en voxels/s).
     d[32] = this.emitters.length;
+    d[33] = D.burnRate;
+    d[34] = D.heatYield;
+    d[35] = D.expansion * SCALE3;
     for (let i = 1; i < 4; i++) {
       if (i < this.emitters.length) {
         emitterSlot(32 + i * 4, i);
@@ -1079,6 +1089,10 @@ export class FluidSim3D {
     d[52] = this.sphereOn ? this.sphereVel[0] : 0;
     d[53] = this.sphereOn ? this.sphereVel[1] : 0;
     d[54] = this.sphereOn ? this.sphereVel[2] : 0;
+    // Poids propre des matières (fumée / encre / carburant).
+    d[56] = D.inkWeights[0] * SCALE3;
+    d[57] = D.inkWeights[1] * SCALE3;
+    d[58] = D.inkWeights[2] * SCALE3;
     this.device.queue.writeBuffer(this.simUniforms, 0, d);
   }
 

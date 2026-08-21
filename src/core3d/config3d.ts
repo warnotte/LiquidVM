@@ -21,14 +21,16 @@ export const MG3_PRE_SMOOTH = 2;
 export const MG3_POST_SMOOTH = 2;
 export const MG3_COARSE_SMOOTH = 16;
 
-/** Palette des trois encres (canaux xyz de la densité) : bleu, magenta, ambre.
- *  Dupliquée dans raymarch.wgsl (les shaders sont autonomes, comme en 2D). */
+/** Palette des trois MATIÈRES (canaux xyz de la densité) : fumée grise (produit de
+ *  combustion et encre neutre), encre magenta (lourde, retombe en refroidissant),
+ *  CARBURANT ambré (vapeur inflammable — n'émet pas de chaleur, s'embrase au contact
+ *  d'une flamme). Dupliquée dans raymarch.wgsl (les shaders sont autonomes). */
 export const INK_COLORS = [
-  [0.35, 0.6, 1.0],
+  [0.55, 0.6, 0.68],
   [1.0, 0.3, 0.8],
-  [1.0, 0.85, 0.55],
+  [1.0, 0.8, 0.45],
 ] as const;
-export const INK_NAMES = ['bleu', 'magenta', 'ambre'] as const;
+export const INK_NAMES = ['fumée', 'encre', 'carburant'] as const;
 
 export const SIM3_DEFAULTS = {
   /** Solveur de pression : multigrid par défaut, Jacobi en repli comparatif. */
@@ -43,7 +45,7 @@ export const SIM3_DEFAULTS = {
   vorticityStrength: 0,
   /** Dissipations (1/s) : vélocité, fumée, refroidissement de la chaleur. */
   velocityDissipation: 0.03,
-  smokeDissipation: 0.10,
+  smokeDissipation: 0.20,
   heatCooling: 0.9,
   /** Poussée thermique (voxels/s² par unité de chaleur). */
   buoyancy: 150,
@@ -64,6 +66,16 @@ export const SIM3_DEFAULTS = {
   sphereStart: [0.5, 0.45, 0.5],
   /** Nombre maximal d'émetteurs simultanés. */
   maxEmitters: 4,
+  /** Combustion (modèle Feldman/Fedkiw simplifié) : taux de réaction (1/s au-dessus
+   *  de l'ignition), chaleur dégagée par unité de carburant, expansion volumique au
+   *  front de flamme (source de divergence, voxels/s — remise à l'échelle SCALE3). */
+  burnRate: 3.0,
+  heatYield: 0.7,
+  expansion: 10,
+  /** Poids propre des matières (voxels/s² par unité — remis à l'échelle SCALE3) :
+   *  la fumée flotte, l'encre magenta est lourde, la vapeur de carburant coule
+   *  doucement (elle s'accumule et s'étale tant qu'elle ne brûle pas). */
+  inkWeights: [0, 55, 16],
   /** Rendu. */
   raymarchSteps: 160,
   exposure: 1.25,

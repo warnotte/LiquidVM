@@ -37,6 +37,7 @@ fn solid_cell(c: vec3i) -> bool {
 @group(1) @binding(2) var divergence_src: texture_3d<f32>;
 @group(1) @binding(3) var scalar_dst: texture_storage_3d<r32float, write>;
 @group(1) @binding(4) var vel_dst: texture_storage_3d<rgba16float, write>;
+@group(1) @binding(5) var den_src: texture_3d<f32>;
 
 fn n_size() -> i32 {
   return i32(P.misc.z);
@@ -59,7 +60,13 @@ fn divergence(@builtin(global_invocation_id) gid: vec3u) {
   let ux = select(0.0, textureLoad(vel_src, c + vec3i(1, 0, 0), 0).x, c.x + 1 < n);
   let vy = select(0.0, textureLoad(vel_src, c + vec3i(0, 1, 0), 0).y, c.y + 1 < n);
   let wz = select(0.0, textureLoad(vel_src, c + vec3i(0, 0, 1), 0).z, c.z + 1 < n);
-  textureStore(scalar_dst, gid, vec4f(ux - v0.x + vy - v0.y + wz - v0.z, 0.0, 0.0, 0.0));
+  var div = ux - v0.x + vy - v0.y + wz - v0.z;
+  // EXPANSION de combustion : source de divergence au front de flamme (le gaz
+  // brûlé gonfle) — même critère d'ignition que la réaction dans l'advection.
+  let dn = textureLoad(den_src, c, 0);
+  let ignite = smoothstep(0.28, 0.55, dn.w);
+  div -= P.emit_meta.w * min(dn.z, 1.0) * ignite;
+  textureStore(scalar_dst, gid, vec4f(div, 0.0, 0.0, 0.0));
 }
 
 fn p_at(c: vec3i) -> f32 {

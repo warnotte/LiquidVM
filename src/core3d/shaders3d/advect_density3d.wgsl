@@ -11,7 +11,7 @@ struct Params {
   blow_dir: vec4f,
   blow_force: vec4f,
   sphere: vec4f,    // xyz: centre (voxels), w: rayon (voxels, ≤0 = absente)
-  emit_meta: vec4f, // x: nombre d'émetteurs actifs (1..4)
+  emit_meta: vec4f, // x: nb d'émetteurs, y: taux de combustion, z: chaleur dégagée, w: expansion
   emitter1: vec4f,
   emitter2: vec4f,
   emitter3: vec4f,
@@ -103,6 +103,15 @@ fn correct(@builtin(global_invocation_id) gid: vec3u) {
   }
   val = clamp(val, lo, hi);
 
+  // COMBUSTION (Feldman/Fedkiw simplifié) : au-dessus de la température d'ignition,
+  // le carburant (canal z) se consume — il dégage de la chaleur et de la suie grise
+  // (canal x). L'expansion volumique associée est injectée par la passe divergence.
+  let ignite = smoothstep(0.28, 0.55, val.w);
+  let burn = min(val.z * P.emit_meta.y * dt * ignite, val.z);
+  val.z -= burn;
+  val.w = min(val.w + P.emit_meta.z * burn, 1.9);
+  val.x += 0.35 * burn;
+
   // Dissipations : la fumée s'estompe lentement, la chaleur se refroidit vite.
   val = vec4f(val.xyz / (1.0 + P.diss.y * dt), val.w / (1.0 + P.diss.z * dt));
 
@@ -121,9 +130,13 @@ fn correct(@builtin(global_invocation_id) gid: vec3u) {
     } else {
       inject.z = 1.0;
     }
+    // Le CARBURANT est émis froid : pour l'embraser, il faut l'amener au contact
+    // d'une flamme (chaleur d'un autre panache, souffle...). Émission de chaleur
+    // pour les autres matières uniquement.
+    let heat_rate = select(P.emit_vals.x, 0.0, ink == 2u);
     val = vec4f(
       val.xyz + inject * (P.emit_vals.y * dt * g),
-      val.w + P.emit_vals.x * dt * g,
+      val.w + heat_rate * dt * g,
     );
   }
   val = min(val, vec4f(3.0, 3.0, 3.0, 2.0));
