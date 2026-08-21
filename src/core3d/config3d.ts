@@ -45,6 +45,41 @@ export const INK_COLORS = [
 ] as const;
 export const INK_NAMES = ['fumée', 'encre', 'carburant'] as const;
 
+/** Réglages à chaud (panneau) : tous initialisés depuis SIM3_DEFAULTS. */
+export interface Sim3Tuning {
+  timeScale: number;
+  buoyancy: number;
+  vorticityStrength: number;
+  velocityDissipation: number;
+  emitHeat: number;
+  emitInkRate: number;
+  heatCooling: number;
+  inkDissipation: number;
+  burnRate: number;
+  heatYield: number;
+  expansion: number;
+  oxygenRecover: number;
+  blowForce: number;
+}
+
+export function defaultTuning3(): Sim3Tuning {
+  return {
+    timeScale: 1,
+    buoyancy: SIM3_DEFAULTS.buoyancy,
+    vorticityStrength: SIM3_DEFAULTS.vorticityStrength,
+    velocityDissipation: SIM3_DEFAULTS.velocityDissipation,
+    emitHeat: SIM3_DEFAULTS.emitHeat,
+    emitInkRate: SIM3_DEFAULTS.emitSmoke,
+    heatCooling: SIM3_DEFAULTS.heatCooling,
+    inkDissipation: SIM3_DEFAULTS.smokeDissipation,
+    burnRate: SIM3_DEFAULTS.burnRate,
+    heatYield: SIM3_DEFAULTS.heatYield,
+    expansion: SIM3_DEFAULTS.expansion,
+    oxygenRecover: SIM3_DEFAULTS.oxygenRecover,
+    blowForce: SIM3_DEFAULTS.blowForce,
+  };
+}
+
 export const SIM3_DEFAULTS = {
   /** Solveur de pression : multigrid par défaut, Jacobi en repli comparatif.
    *  1 V-cycle warm-starté suffit pour le visuel — 2 coûtent ~6 balayages de plus. */

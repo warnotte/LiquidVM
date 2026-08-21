@@ -30,7 +30,7 @@
       .hud {
         position: fixed;
         left: 16px;
-        bottom: 16px;
+        bottom: 92px;
         color: #aab2c5;
         font-size: 12px;
         line-height: 1.7;
@@ -44,6 +44,109 @@
       .hud b {
         color: #e6e9f2;
         font-weight: 600;
+      }
+      .panel3d {
+        position: fixed;
+        top: 14px;
+        right: 14px;
+        width: 314px;
+        max-height: calc(100vh - 28px);
+        overflow-y: auto;
+        background: rgba(16, 18, 26, 0.92);
+        border: 1px solid rgba(120, 130, 160, 0.3);
+        border-radius: 10px;
+        padding: 12px 14px;
+        color: #c6ccdc;
+        font-size: 12px;
+        user-select: none;
+      }
+      .panel3d.hidden {
+        display: none;
+      }
+      .panel3d-title {
+        color: #e8ebf5;
+        font-weight: 600;
+        margin-bottom: 6px;
+      }
+      .panel3d-section {
+        color: #8f97ad;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        font-size: 10px;
+        margin: 10px 0 4px;
+        border-bottom: 1px solid rgba(120, 130, 160, 0.2);
+        padding-bottom: 3px;
+      }
+      .panel3d-row {
+        display: grid;
+        grid-template-columns: 108px 1fr 52px;
+        align-items: center;
+        gap: 8px;
+        margin: 4px 0;
+      }
+      .panel3d-row input[type='range'] {
+        width: 100%;
+        accent-color: #7d8cff;
+      }
+      .panel3d-value {
+        text-align: right;
+        color: #e8ebf5;
+        font-variant-numeric: tabular-nums;
+      }
+      .panel3d-check {
+        grid-template-columns: auto 1fr;
+      }
+      .panel3d-check input {
+        accent-color: #7d8cff;
+      }
+      .panel3d-buttons {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin: 6px 0;
+      }
+      .panel3d-buttons button,
+      .toolbar3d button {
+        background: rgba(50, 55, 75, 0.85);
+        border: 1px solid rgba(130, 140, 170, 0.35);
+        border-radius: 7px;
+        color: #dfe4f0;
+        font: inherit;
+        padding: 6px 10px;
+        cursor: pointer;
+      }
+      .panel3d-buttons button:hover,
+      .toolbar3d button:hover {
+        background: rgba(70, 78, 105, 0.9);
+      }
+      .toolbar3d {
+        position: fixed;
+        bottom: 14px;
+        left: 50%;
+        transform: translateX(-50%);
+        display: flex;
+        gap: 14px;
+        background: rgba(16, 18, 26, 0.88);
+        border: 1px solid rgba(120, 130, 160, 0.3);
+        border-radius: 12px;
+        padding: 8px 12px;
+        user-select: none;
+        font-size: 13px;
+      }
+      .toolbar3d-group {
+        display: flex;
+        gap: 6px;
+      }
+      .toolbar3d button.active {
+        background: rgba(96, 108, 160, 0.95);
+        border-color: rgba(170, 180, 220, 0.8);
+      }
+      .toolbar3d-chip {
+        display: inline-block;
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        margin-right: 6px;
       }
       .toast {
         position: fixed;

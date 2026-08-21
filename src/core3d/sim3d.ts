@@ -25,6 +25,7 @@ import {
   SCALE3,
   SIM3_DEFAULTS,
   WG3,
+  type Sim3Tuning,
 } from './config3d';
 import { createShaderModule, withValidation } from '../core/pipelines';
 import { flip, type Pair, type PingIndex } from '../core/types';
@@ -39,9 +40,9 @@ export interface Frame3DInput {
   multigrid: boolean;
   vcycles: number;
   jacobiIterations: number;
-  /** Force du vorticity confinement ε (0 = physique brute), réglable à chaud. */
-  vorticityStrength: number;
-  /** Encre émise par l'émetteur : 0 = bleu, 1 = magenta, 2 = ambre. */
+  /** Réglages à chaud de la physique (panneau — voir Sim3Tuning). */
+  params: Sim3Tuning;
+  /** Encre émise par l'émetteur : 0 = fumée, 1 = encre, 2 = carburant. */
   emitInk: number;
   /** Caméra orbitale autour du centre de la boîte. */
   cam: { azimuth: number; elevation: number; radius: number };
@@ -741,7 +742,7 @@ export class FluidSim3D {
 
   /** Encode et soumet une frame complète : simulation (sauf pause) + rendu. */
   frame(input: Frame3DInput, target: GPUTextureView, aspect: number): void {
-    const dt = Math.min(Math.max(input.dt, 0), 1 / 30);
+    const dt = Math.min(Math.max(input.dt, 0), 1 / 30) * input.params.timeScale;
     const running = !input.paused && dt > 0;
     // Le rendu d'abord : la saisie et le souffle lisent la base caméra depuis
     // renderData — elle doit être celle de cette frame.
@@ -795,7 +796,7 @@ export class FluidSim3D {
 
         // Vorticity confinement : rotationnel vectoriel puis force de renforcement.
         // Passes sautées à ε = 0 (défaut — voir config3d.ts sur le grain de grille).
-        if (input.vorticityStrength > 0) {
+        if (input.params.vorticityStrength > 0) {
           cp.setPipeline(this.pipelines.curl);
           cp.setBindGroup(1, this.binds.curl[this.velIdx]);
           cp.dispatchWorkgroups(n, n, n);
@@ -1137,10 +1138,11 @@ export class FluidSim3D {
   private writeSimUniforms(dt: number, input: Frame3DInput): void {
     const d = this.simData;
     const D = SIM3_DEFAULTS;
+    const p = input.params;
     d[0] = dt;
     d[1] = this.simTime;
     d[2] = GRID3;
-    d[3] = input.vorticityStrength;
+    d[3] = p.vorticityStrength;
     // Émetteurs : position d'état + petit balancement propre à chacun (déphasé).
     const emitterSlot = (slot: number, i: number): void => {
       const e = this.emitters[i]!;
@@ -1151,15 +1153,15 @@ export class FluidSim3D {
       d[slot + 3] = GRID3 * D.emitterRadius;
     };
     emitterSlot(4, 0);
-    d[8] = D.emitHeat;
-    d[9] = D.emitSmoke;
+    d[8] = p.emitHeat;
+    d[9] = p.emitInkRate;
     // Forces absolues calibrées à 128³ → remises à l'échelle de la grille.
     d[10] = D.emitUpVelocity * SCALE3;
     d[11] = D.emitWobbleVelocity * SCALE3;
-    d[12] = D.velocityDissipation;
-    d[13] = D.smokeDissipation;
-    d[14] = D.heatCooling;
-    d[15] = D.buoyancy * SCALE3;
+    d[12] = p.velocityDissipation;
+    d[13] = p.inkDissipation;
+    d[14] = p.heatCooling;
+    d[15] = p.buoyancy * SCALE3;
     // Souffle du pointeur : rayon caméra→scène + force selon le geste écran.
     const b = input.blow;
     const r = this.renderData;
@@ -1173,7 +1175,7 @@ export class FluidSim3D {
       d[21] = this.rayD[1];
       d[22] = this.rayD[2];
       d[23] = 1;
-      const s = D.blowForce * GRID3;
+      const s = p.blowForce * GRID3;
       d[24] = (r[4]! * b.moveX + r[8]! * b.moveY) * s;
       d[25] = (r[5]! * b.moveX + r[9]! * b.moveY) * s;
       d[26] = (r[6]! * b.moveX + r[10]! * b.moveY) * s;
@@ -1187,9 +1189,9 @@ export class FluidSim3D {
     d[31] = this.sphereOn ? GRID3 * D.sphereRadius : -1;
     // Émetteurs + combustion (taux, chaleur dégagée, expansion en voxels/s).
     d[32] = this.emitters.length;
-    d[33] = D.burnRate;
-    d[34] = D.heatYield;
-    d[35] = D.expansion * SCALE3;
+    d[33] = p.burnRate;
+    d[34] = p.heatYield;
+    d[35] = p.expansion * SCALE3;
     for (let i = 1; i < 4; i++) {
       if (i < this.emitters.length) {
         emitterSlot(32 + i * 4, i);
@@ -1208,7 +1210,7 @@ export class FluidSim3D {
     d[58] = D.inkWeights[2] * SCALE3;
     // Oxygène : apport du souffle (blow_force.w) et récupération lente.
     d[27] = D.blowOxygen;
-    d[59] = D.oxygenRecover;
+    d[59] = p.oxygenRecover;
     this.device.queue.writeBuffer(this.simUniforms, 0, d);
   }
 

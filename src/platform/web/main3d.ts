@@ -5,9 +5,17 @@
  * Mode ?selftest : rapport JSON dans #selftest + titre SELFTEST-OK/FAIL après 240 frames.
  */
 
-import { GRID3, INK_NAMES, setGrid3, SIM3_DEFAULTS } from '../../core3d/config3d';
+import {
+  defaultTuning3,
+  GRID3,
+  INK_COLORS,
+  INK_NAMES,
+  setGrid3,
+  SIM3_DEFAULTS,
+} from '../../core3d/config3d';
 import { FluidSim3D, type Frame3DInput } from '../../core3d/sim3d';
 import { encodeVdb } from '../../core3d/vdb';
+import { Panel3D, Toolbar3D } from './panel3d';
 import { acquireDevice } from './gpu';
 import { showFatalError } from './overlay';
 
@@ -154,7 +162,7 @@ async function boot(): Promise<void> {
     multigrid: SIM3_DEFAULTS.multigrid,
     vcycles: SIM3_DEFAULTS.vcycles,
     jacobiIterations: SIM3_DEFAULTS.jacobiIterations,
-    vorticityStrength: SIM3_DEFAULTS.vorticityStrength,
+    params: defaultTuning3(),
     emitInk: 0,
     cam: {
       azimuth: SIM3_DEFAULTS.camAzimuth,
@@ -313,10 +321,7 @@ async function boot(): Promise<void> {
       input.sphereActive = !input.sphereActive;
       say(input.sphereActive ? 'boule : présente' : 'boule : retirée');
     } else if (k === 'd') {
-      demoOn = !demoOn;
-      if (!demoOn) {
-        input.blow.active = false;
-      }
+      toggleDemo();
       say(demoOn ? 'DÉMO — D pour reprendre la main' : 'à toi de jouer');
     } else if (k === 'f') {
       input.feedback = !input.feedback;
@@ -332,6 +337,97 @@ async function boot(): Promise<void> {
       toast(text);
     }
   });
+
+  // INTERFACE déclarative : panneau à sections (Tab) + barre d'outils tactile.
+  // Ajouter un réglage futur = une entrée ici, rien d'autre.
+  const p = input.params;
+  const inkCss = INK_COLORS.map((c) => `rgb(${c.map((v) => Math.round(v * 255)).join(',')})`);
+  const toggleDemo = (): void => {
+    demoOn = !demoOn;
+    if (!demoOn) {
+      input.blow.active = false;
+    }
+  };
+  const panel = new Panel3D(document.body, [
+    {
+      title: 'simulation',
+      sliders: [
+        { label: 'vitesse du temps', min: 0, max: 1.5, step: 0.05, get: () => p.timeScale, set: (x) => (p.timeScale = x), format: (x) => `×${x.toFixed(2)}` },
+        { label: 'poussée thermique', min: 0, max: 400, step: 5, get: () => p.buoyancy, set: (x) => (p.buoyancy = x), format: (x) => x.toFixed(0) },
+        { label: 'vorticité', min: 0, max: 30, step: 0.5, get: () => p.vorticityStrength, set: (x) => (p.vorticityStrength = x), format: (x) => x.toFixed(1) },
+        { label: 'viscosité', min: 0, max: 0.2, step: 0.005, get: () => p.velocityDissipation, set: (x) => (p.velocityDissipation = x), format: (x) => x.toFixed(3) },
+      ],
+      checks: [
+        { label: 'pression multigrid (sinon Jacobi)', get: () => input.multigrid, set: (v) => (input.multigrid = v) },
+      ],
+    },
+    {
+      title: 'matières',
+      sliders: [
+        { label: 'débit chaleur', min: 0, max: 8, step: 0.1, get: () => p.emitHeat, set: (x) => (p.emitHeat = x) },
+        { label: 'débit matière', min: 0, max: 6, step: 0.1, get: () => p.emitInkRate, set: (x) => (p.emitInkRate = x) },
+        { label: 'refroidissement', min: 0.2, max: 2, step: 0.05, get: () => p.heatCooling, set: (x) => (p.heatCooling = x) },
+        { label: 'dissipation', min: 0, max: 0.6, step: 0.01, get: () => p.inkDissipation, set: (x) => (p.inkDissipation = x) },
+      ],
+    },
+    {
+      title: 'combustion',
+      sliders: [
+        { label: 'taux de réaction', min: 0, max: 8, step: 0.1, get: () => p.burnRate, set: (x) => (p.burnRate = x) },
+        { label: 'chaleur dégagée', min: 0, max: 1.5, step: 0.05, get: () => p.heatYield, set: (x) => (p.heatYield = x) },
+        { label: 'expansion', min: 0, max: 40, step: 1, get: () => p.expansion, set: (x) => (p.expansion = x), format: (x) => x.toFixed(0) },
+        { label: 'retour d’oxygène', min: 0, max: 0.08, step: 0.002, get: () => p.oxygenRecover, set: (x) => (p.oxygenRecover = x), format: (x) => x.toFixed(3) },
+      ],
+    },
+    {
+      title: 'interaction & rendu',
+      sliders: [
+        { label: 'force du souffle', min: 0, max: 800, step: 10, get: () => p.blowForce, set: (x) => (p.blowForce = x), format: (x) => x.toFixed(0) },
+        { label: 'exposition', min: 0.4, max: 3, step: 0.05, get: () => input.exposure, set: (x) => (input.exposure = x) },
+        { label: 'pas de marche', min: 64, max: 256, step: 16, get: () => input.raymarchSteps, set: (x) => (input.raymarchSteps = x), format: (x) => x.toFixed(0) },
+      ],
+      checks: [
+        { label: 'boule-obstacle (O)', get: () => input.sphereActive, set: (v) => (input.sphereActive = v) },
+        { label: 'retours visuels (F)', get: () => input.feedback, set: (v) => (input.feedback = v) },
+      ],
+      buttons: [
+        { label: '⏯ pause (espace)', action: () => (input.paused = !input.paused) },
+        { label: '↺ reset (R)', action: () => (input.reset = true) },
+        { label: '🎬 démo (D)', action: toggleDemo },
+        { label: '⬇ .vdb (E)', action: () => void exportVdbFile() },
+      ],
+    },
+    {
+      title: 'résolution (recharge la page)',
+      buttons: [128, 256, 320].map((n) => ({
+        label: `${n}³${n === GRID3 ? ' ✓' : ''}`,
+        action: (): void => {
+          const url = new URL(location.href);
+          url.searchParams.set('grid', String(n));
+          location.href = url.toString();
+        },
+      })),
+    },
+  ]);
+  const toolbar = new Toolbar3D(document.body, [
+    INK_NAMES.map((name, i) => ({
+      label: name,
+      color: inkCss[i]!,
+      isActive: () => input.emitInk === i,
+      action: (): void => {
+        input.emitInk = i;
+      },
+    })),
+    [
+      { label: '➕ émetteur', action: () => (input.addEmitter = true) },
+      { label: '➖', action: () => (input.removeEmitter = true) },
+      { label: '⚪ boule', isActive: () => input.sphereActive, action: () => (input.sphereActive = !input.sphereActive) },
+    ],
+    [
+      { label: '🎬 démo', isActive: () => demoOn, action: toggleDemo },
+      { label: '⚙ réglages', action: () => panel.toggle() },
+    ],
+  ]);
   let last = performance.now();
   let fps = 60;
   let frames = 0;
@@ -357,6 +453,8 @@ async function boot(): Promise<void> {
     hudTimer += dt;
     if (hudTimer > 0.5) {
       hudTimer = 0;
+      panel.refresh();
+      toolbar.refresh();
       if (fps < 50 && renderScale > 0.6) {
         renderScale = Math.max(0.6, renderScale - 0.1);
         resize();
