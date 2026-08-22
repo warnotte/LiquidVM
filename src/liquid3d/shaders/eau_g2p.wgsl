@@ -1,0 +1,130 @@
+// J1 — transfert grille → particules (G2P) + advection.
+// FLIP/PIC : v = mix(v_grille, v_particule + Δv_grille, α) où Δv = velNew −
+// velOld (la grille avant forces/projection). α = 1 → FLIP pur (vif, bruité),
+// α = 0 → PIC pur (amorti). Advection RK2 point-milieu sur velNew, déplacement
+// borné (garde CFL), clamp aux parois avec annulation de la composante normale.
+
+struct UEau {
+  sim: vec4f,  // x: N, y: nb particules, z: dt sous-pas, w: gravité
+  sim2: vec4f, // x: mélange FLIP
+  cam_pos: vec4f,
+  cam_right: vec4f,
+  cam_up: vec4f,
+  cam_fwd: vec4f,
+}
+
+@group(0) @binding(0) var<uniform> U: UEau;
+@group(0) @binding(1) var lin: sampler;
+@group(1) @binding(0) var<storage, read_write> particles: array<vec4f>;
+@group(1) @binding(1) var vel_new: texture_3d<f32>;
+@group(1) @binding(2) var vel_old: texture_3d<f32>;
+@group(1) @binding(3) var<storage, read_write> census: array<atomic<u32>>;
+
+fn inv_n() -> vec3f {
+  return vec3f(1.0) / vec3f(U.sim.x);
+}
+
+// Convention MAC du moteur (identique à advect_density3d.wgsl du feu).
+fn sample_new(p: vec3f) -> vec3f {
+  return vec3f(
+    textureSampleLevel(vel_new, lin, (p + vec3f(0.5, 0.0, 0.0)) * inv_n(), 0.0).x,
+    textureSampleLevel(vel_new, lin, (p + vec3f(0.0, 0.5, 0.0)) * inv_n(), 0.0).y,
+    textureSampleLevel(vel_new, lin, (p + vec3f(0.0, 0.0, 0.5)) * inv_n(), 0.0).z,
+  );
+}
+
+fn sample_old(p: vec3f) -> vec3f {
+  return vec3f(
+    textureSampleLevel(vel_old, lin, (p + vec3f(0.5, 0.0, 0.0)) * inv_n(), 0.0).x,
+    textureSampleLevel(vel_old, lin, (p + vec3f(0.0, 0.5, 0.0)) * inv_n(), 0.0).y,
+    textureSampleLevel(vel_old, lin, (p + vec3f(0.0, 0.0, 0.5)) * inv_n(), 0.0).z,
+  );
+}
+
+const MAX_MOVE = 3.0; // voxels/sous-pas — garde CFL (plan : « clamp + sous-pas »)
+const MARGIN = 1.001;
+
+@compute @workgroup_size(64)
+fn g2p(@builtin(global_invocation_id) gid: vec3u) {
+  let i = gid.x;
+  if (f32(i) >= U.sim.y) {
+    return;
+  }
+  let n = U.sim.x;
+  let dt = U.sim.z;
+  let pos = particles[2u * i].xyz;
+  let vel_p = particles[2u * i + 1u].xyz;
+
+  // Mise à jour de vitesse FLIP/PIC.
+  let g_new = sample_new(pos);
+  let g_old = sample_old(pos);
+  let v_pic = g_new;
+  let v_flip = vel_p + (g_new - g_old);
+  // Filet float16 : les textures de vitesse sont en rgba16float — au-delà de
+  // ~65k tout devient inf puis NaN (leçon durement payée du 2D). Une vitesse
+  // physique ne dépasse jamais ~600 voxels/s ici : tout excès est une erreur
+  // numérique qu'on écrase avant qu'elle ne contamine.
+  var v = clamp(mix(v_pic, v_flip, U.sim2.x), vec3f(-600.0), vec3f(600.0));
+
+  // Advection RK2 (point milieu) sur le champ projeté, déplacement borné.
+  // NB : « move » est un mot réservé WGSL (comme « from » et « target »).
+  let mid = pos + 0.5 * dt * sample_new(pos);
+  var disp = dt * sample_new(mid);
+  let disp_len = length(disp);
+  if (disp_len > MAX_MOVE) {
+    disp *= MAX_MOVE / disp_len;
+  }
+  var p_new = pos + disp;
+
+  // Parois : clamp + annulation de la composante normale entrante.
+  let lo = vec3f(MARGIN);
+  let hi = vec3f(n - MARGIN);
+  if (p_new.x < lo.x || p_new.x > hi.x) {
+    v.x = 0.0;
+  }
+  if (p_new.y < lo.y || p_new.y > hi.y) {
+    v.y = 0.0;
+  }
+  if (p_new.z < lo.z || p_new.z > hi.z) {
+    v.z = 0.0;
+  }
+  p_new = clamp(p_new, lo, hi);
+
+  particles[2u * i] = vec4f(p_new, 0.0);
+  particles[2u * i + 1u] = vec4f(v, 0.0);
+}
+
+// RECENSEMENT (l'instrument du jalon J1 : « compteur de particules au HUD ») :
+// [0] valides, [1] positions NaN/hors monde, [2] vitesses suspectes (> 550).
+// NaN se détecte par x != x (un NaN n'est jamais égal à lui-même).
+@compute @workgroup_size(64)
+fn census_pass(@builtin(global_invocation_id) gid: vec3u) {
+  let i = gid.x;
+  if (f32(i) >= U.sim.y) {
+    return;
+  }
+  let pos = particles[2u * i].xyz;
+  let vel = particles[2u * i + 1u].xyz;
+  let pos_ok = pos.x == pos.x && pos.y == pos.y && pos.z == pos.z &&
+    all(pos >= vec3f(0.0)) && all(pos <= vec3f(U.sim.x));
+  let vel_ok = vel.x == vel.x && vel.y == vel.y && vel.z == vel.z;
+  if (pos_ok && vel_ok) {
+    atomicAdd(&census[0], 1u);
+  } else {
+    atomicAdd(&census[1], 1u);
+  }
+  if (vel_ok && length(vel) > 550.0) {
+    atomicAdd(&census[2], 1u);
+  }
+  // Échantillon brut : 8 particules espacées, pos+vel dans census[4..68]
+  // (u32 = bits float, décodés côté CPU) — voir les données, pas les deviner.
+  if (i % 262144u == 0u) {
+    let slot = 4u + (i / 262144u) * 8u;
+    atomicStore(&census[slot], bitcast<u32>(pos.x));
+    atomicStore(&census[slot + 1u], bitcast<u32>(pos.y));
+    atomicStore(&census[slot + 2u], bitcast<u32>(pos.z));
+    atomicStore(&census[slot + 3u], bitcast<u32>(vel.x));
+    atomicStore(&census[slot + 4u], bitcast<u32>(vel.y));
+    atomicStore(&census[slot + 5u], bitcast<u32>(vel.z));
+  }
+}

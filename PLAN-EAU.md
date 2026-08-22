@@ -130,6 +130,28 @@ NOTES-DEV mis à jour à chaque jalon, pièges payés documentés immédiatement
   maintenir l'état trié en régime. Verdict : la voie particules+grille est
   praticable à 60 FPS, on construit.
 
+- **J1 — EN COURS (2026-08-22) : STABLE EN EAU PEU PROFONDE.** Le dam break
+  64×32×128 (profondeur 32) s'effondre, déferle, clapote et SE CALME en bassin
+  plat d'épaisseur 16 (volume exactement conservé) — 2 097 152 particules
+  valides / 0 perdue / 0 « rapide », 56-60 FPS, selftest OK. Trois batailles
+  documentées, dans l'ordre où elles ont été gagnées :
+  1. **Fromage** (filaments + trous, fonte du volume) → contrôle de densité de
+     Bridson : divergence cible positive dans les cellules > 8 particules,
+     bornée à 1× (débordée, elle cause la bataille 2), jamais de correction en
+     sous-densité (elle combattrait la surface).
+  2. **Explosion d'énergie** (toutes les particules à vitesse max, écrasées
+     dans les coins) → cause racine PROUVÉE par l'instrument de recensement
+     (valides/perdues/rapides + échantillon de 8 particules brutes, readback
+     diagnostique 288 o toutes les 30 frames) : **Jacobi ne converge pas
+     l'hydrostatique au-delà de ~32 cellules de profondeur d'eau** (~1 cellule
+     de propagation par balayage). Le FLIP et le tri, suspectés d'abord, sont
+     INNOCENTS (prouvé par A/B). Conséquence ferme : le **multigrid masqué
+     (prévu J4) est REMONTÉ dans J1** — la colonne profonde 64 est l'épreuve
+     d'entrée, pas une option.
+  3. Pièges WGSL/WebGPU payés : « move » est réservé (avec « from » et
+     « target ») ; un layout storageTexture 3D doit déclarer viewDimension
+     ('2d' par défaut) ; filet anti-float16 sur les vitesses particules (±600).
+
 ## Conventions du chantier
 
 - Branche `eau` (depuis `main`). Merge dans `main` par JALON VERT uniquement —

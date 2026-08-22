@@ -19,3 +19,34 @@ export const FIXED_POINT_SCALE = 256;
 /** Workgroup du scatter (1D sur les particules) et des passes de grille (3D). */
 export const WG_PARTICLES = 64;
 export const WG_GRID = 4;
+
+/** Tri périodique par BLOC de 8³ voxels (16³ = 4096 blocs) : maintient l'état
+ *  « trié » validé par J0 (1,83 ms vs 2,57 ms en désordre). Toutes les
+ *  SORT_INTERVAL frames — le désordre croît lentement. */
+export const SORT_BLOCK = 8;
+export const SORT_BLOCKS = (GRID_EAU / SORT_BLOCK) ** 3;
+export const SORT_INTERVAL = 12;
+
+/** Défauts de la simulation (réglables à chaud au panneau). */
+export const EAU_DEFAULTS = {
+  /** Gravité (voxels/s²) : ~9,81 m/s² pour une boîte de ~1,5 m. */
+  gravity: 840,
+  /** Mélange FLIP/PIC : 1 = FLIP pur (vif, bruité), 0 = PIC pur (amorti). */
+  flipBlend: 0.92,
+  /** Balayages Jacobi par sous-pas. LEÇON J1 : Jacobi propage ~1 cellule par
+   *  balayage — il ne tient l'hydrostatique que jusqu'à ~32 cellules de
+   *  profondeur d'eau (100 it.). Au-delà : explosion d'énergie (le fond se
+   *  comprime, la correction de densité surréagit, FLIP accumule). L'eau
+   *  PROFONDE attend le multigrid masqué. */
+  jacobiIterations: 100,
+  /** Sous-pas par frame : CFL ~2-3 voxels/sous-pas aux vitesses de chute. */
+  substeps: 2,
+  timeScale: 1,
+  /** Rendu points. */
+  pointSize: 0.0035,
+  exposure: 1.0,
+  /** Caméra orbitale initiale. */
+  camAzimuth: 0.55,
+  camElevation: 0.18,
+  camRadius: 2.2,
+} as const;

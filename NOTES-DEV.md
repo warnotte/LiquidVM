@@ -106,10 +106,16 @@ Config actuelle : sim 1024², dye/scène 2048².
 
 ## Chantier suivant : EAU liquide (branche `eau`)
 
-Conception complète dans [PLAN-EAU.md](PLAN-EAU.md) — méthode (FLIP/PIC),
-architecture (`eau.html` + `src/liquid3d/`, pont atomics→textures), jalons
-J0–J5 avec critères de sortie mesurables, risques/mitigations, conventions
-(merge dans main par jalon vert uniquement). À lire AVANT d'écrire du code eau.
+Conception complète dans [PLAN-EAU.md](PLAN-EAU.md) — méthode (PIC/FLIP →
+APIC), architecture (`eau.html` + `src/liquid3d/`, pont atomics→textures),
+jalons J0–J6 avec critères de sortie mesurables ET LEUR JOURNAL (résultats,
+batailles gagnées, leçons — dont LA leçon de J1 : Jacobi ne tient pas
+l'hydrostatique au-delà de ~32 cellules de profondeur d'eau, le multigrid
+masqué est l'épreuve d'entrée du jalon). À lire AVANT d'écrire du code eau.
+Instrument clé : le recensement (`census_pass` dans eau_g2p.wgsl — compteurs
+valides/perdues/rapides + 8 particules brutes, readback diagnostique 288 o
+toutes les 30 frames, affiché au HUD) : c'est lui qui a innocenté le tri et
+le FLIP et confondu Jacobi. S'en servir AVANT de spéculer.
 
 ## Chantier 3D (branche `3d`)
 
