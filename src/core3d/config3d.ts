@@ -153,7 +153,10 @@ export const SIM3_DEFAULTS = {
   exposure: 1.25,
   glowStrength: 1.8,
   bloomStrength: 0.35,
-  /** Débit des braises (0 = coupées : passes entièrement sautées). */
+  /** Braises : interrupteur (défaut COUPÉ — utilité en cours d'évaluation par
+   *  l'utilisateur, touche B) et débit quand actives. Coupées = les passes
+   *  update et draw sont entièrement sautées, coût strictement nul. */
+  embersOn: false,
   emberStrength: 0.7,
   /** Caméra orbitale initiale. */
   camAzimuth: 0.6,

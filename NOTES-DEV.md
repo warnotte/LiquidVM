@@ -229,9 +229,15 @@ Config actuelle : sim 1024², dye/scène 2048².
   [d·right/(tanf·aspect), d·up/tanf, ·, d·fwd]) ; occlusion PAR PARTICULE au
   vertex (4 échantillons d'extinction vers la caméra + segment contre la
   boule) ; braise morte = quad dégénéré (zéro pixel). Corps noir 1.05–1.45
-  refroidissant (doré→orange, jamais blanc). Slider « braises » (0–1, défaut
-  0.7 ; 0 = passes entièrement sautées). R.style.z = débit (lu par le compute
-  via renderUniforms bindé en groupe 1), R.style.w = N. 60 FPS à 256³.
+  refroidissant (doré→orange, jamais blanc). INTERRUPTEUR « braises (B) »
+  (défaut COUPÉ — l'utilisateur évalue encore l'utilité) + slider de débit ;
+  coupées = passes entièrement sautées. R.style.z = débit (lu par le compute
+  via renderUniforms bindé en groupe 1), R.style.w = N. COÛT MESURÉ : 0,0 FPS
+  de différence en A-B-A-B à 384³ à état de sim égal — le ralentissement
+  ressenti pendant l'essai venait de la BOÎTE QUI SE REMPLIT de fumée (le
+  raymarch paie chaque voxel non vide : le FPS à 384³ passe de ~34 panache
+  jeune à ~22 en régime enfumé, braises ou pas). Leçon de banc : toujours
+  mesurer en A-B-A-B alterné, jamais avant/après — l'état de la sim évolue.
   PIÈGE WGSL : « target » est un mot réservé (comme « from »).
 - **Éclairage volumétrique (2026-08-22)** : la flamme éclaire sa propre fumée.
   (1) VOLUME DE LUEUR (glow3d.wgsl, grille GRID3/8, paire ping-pong) : inject =

@@ -71,7 +71,8 @@ export interface Frame3DInput {
   /** Lueur du feu (in-scattering du volume de lueur) et intensité du bloom. */
   glowStrength: number;
   bloomStrength: number;
-  /** Débit des braises (0 = passes sautées). */
+  /** Braises : interrupteur (coupé = passes entièrement sautées) et débit. */
+  embersOn: boolean;
   emberStrength: number;
 }
 
@@ -1162,8 +1163,8 @@ export class FluidSim3D {
       gp.setBindGroup(1, this.binds.glowBlurAB);
       gp.dispatchWorkgroups(gd, gd, gd);
       // Braises : mise à jour des particules (naissances autorégulées dans le
-      // chaud, portage par le fluide) — sautée en pause ou à débit nul.
-      if (running && input.emberStrength > 0) {
+      // chaud, portage par le fluide) — sautée si coupées, en pause ou à débit nul.
+      if (running && input.embersOn && input.emberStrength > 0) {
         gp.setPipeline(this.pipelines.embersUpdate);
         gp.setBindGroup(1, this.binds.embersSim[this.velIdx][this.denIdx]);
         gp.dispatchWorkgroups(EMBERS3 / 64);
@@ -1183,7 +1184,7 @@ export class FluidSim3D {
     rp.draw(3);
     // Braises : billboards additifs par-dessus le volume (occlusion par
     // particule au vertex) — elles hériteront du bloom.
-    if (input.emberStrength > 0) {
+    if (input.embersOn && input.emberStrength > 0) {
       rp.setPipeline(this.pipelines.embersDraw);
       rp.setBindGroup(0, this.binds.embersDraw[this.denIdx]);
       rp.draw(6, EMBERS3);
@@ -1640,7 +1641,7 @@ export class FluidSim3D {
     // N (conversion voxels → monde du tracé des braises).
     d[32] = input.glowStrength;
     d[33] = input.bloomStrength;
-    d[34] = input.emberStrength;
+    d[34] = input.embersOn ? input.emberStrength : 0;
     d[35] = GRID3;
     let dirty = false;
     for (let i = 0; i < d.length; i++) {

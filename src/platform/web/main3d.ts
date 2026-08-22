@@ -196,6 +196,7 @@ async function boot(): Promise<void> {
     raymarchSteps: SIM3_DEFAULTS.raymarchSteps,
     glowStrength: SIM3_DEFAULTS.glowStrength,
     bloomStrength: SIM3_DEFAULTS.bloomStrength,
+    embersOn: SIM3_DEFAULTS.embersOn,
     emberStrength: SIM3_DEFAULTS.emberStrength,
   };
   if (selftest) {
@@ -340,6 +341,9 @@ async function boot(): Promise<void> {
     } else if (k === 'o') {
       input.sphereActive = !input.sphereActive;
       say(input.sphereActive ? 'boule : présente' : 'boule : retirée');
+    } else if (k === 'b') {
+      input.embersOn = !input.embersOn;
+      say(input.embersOn ? '✨ braises : actives' : 'braises : coupées');
     } else if (k === 'd') {
       toggleDemo();
       say(demoOn ? 'DÉMO — D pour reprendre la main' : 'à toi de jouer');
@@ -448,11 +452,12 @@ async function boot(): Promise<void> {
         { label: 'exposition', min: 0.4, max: 3, step: 0.05, get: () => input.exposure, set: (x) => (input.exposure = x) },
         { label: 'lueur du feu', min: 0, max: 3, step: 0.05, get: () => input.glowStrength, set: (x) => (input.glowStrength = x) },
         { label: 'bloom', min: 0, max: 1, step: 0.05, get: () => input.bloomStrength, set: (x) => (input.bloomStrength = x) },
-        { label: 'braises', min: 0, max: 1, step: 0.05, get: () => input.emberStrength, set: (x) => (input.emberStrength = x) },
+        { label: 'braises : débit', min: 0, max: 1, step: 0.05, get: () => input.emberStrength, set: (x) => (input.emberStrength = x) },
         { label: 'pas de marche', min: 64, max: 256, step: 16, get: () => input.raymarchSteps, set: (x) => (input.raymarchSteps = x), format: (x) => x.toFixed(0) },
       ],
       checks: [
         { label: 'boule-obstacle (O)', get: () => input.sphereActive, set: (v) => (input.sphereActive = v) },
+        { label: 'braises (B)', get: () => input.embersOn, set: (v) => (input.embersOn = v) },
         { label: 'retours visuels (F)', get: () => input.feedback, set: (v) => (input.feedback = v) },
       ],
       buttons: [
@@ -536,7 +541,7 @@ async function boot(): Promise<void> {
         `<b>LiquidVM 3D</b> · ${GRID3}³ · encre : ${INK_NAMES[input.emitInk] ?? '?'} · ${solver} · ${Math.round(fps)} FPS` +
         `${renderScale < 1 ? ` · rendu ${Math.round(renderScale * 100)} %` : ''}` +
         `${input.paused ? ' · ⏸ pause' : ''}${demoOn ? ' · <b>DÉMO</b> (D : reprendre la main)' : ' · D : démo'}<br>` +
-        '1/2/3 : encre · glisser sur la flamme/boule : déplacer · A : + émetteur · X : − émetteur · O : boule · F : retours<br>' +
+        '1/2/3 : encre · glisser sur la flamme/boule : déplacer · A : + émetteur · X : − émetteur · O : boule · B : braises · F : retours<br>' +
         'glisser : orbiter · clic droit : souffler · molette : zoom · espace : pause · R : reset · E : export .vdb';
     }
     if (selftest && frames === SELFTEST_FRAMES) {
