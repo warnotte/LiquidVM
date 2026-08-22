@@ -1,22 +1,28 @@
 // Rendu volumétrique : ray-marching à travers la boîte [-½, ½]³, absorption
 // Beer-Lambert + émission corps noir (chaleur) + diffusion éclairée par une
-// lumière directionnelle avec ombre portée interne (marche secondaire courte).
-// La boîte est suggérée par un liseré discret sur ses arêtes à l'entrée du rayon.
+// lumière directionnelle (phase Henyey-Greenstein, ombre interne à DEUX octaves
+// d'extinction — le « powder » des moteurs de nuages : la lumière pénètre plus
+// profond qu'une Beer-Lambert simple) + IN-SCATTERING du volume de lueur :
+// la flamme éclaire sa propre fumée, le sol et la sphère (glow_tex, voir
+// glow3d.wgsl). Sortie : HDR LINÉAIRE — tone-mapping et gamma vivent dans
+// post3d.wgsl (présentation), après le bloom.
 
 struct RenderParams {
   cam_pos: vec4f,   // xyz: position caméra, w: tan(fov/2)
   cam_right: vec4f, // xyz, w: aspect (largeur/hauteur)
-  cam_up: vec4f,    // xyz, w: exposition
+  cam_up: vec4f,    // xyz, w: exposition (consommée par la présentation)
   cam_fwd: vec4f,   // xyz, w: pas de marche (nombre)
   light: vec4f,     // xyz: direction VERS la lumière, w: intensité
   sphere: vec4f,    // xyz: centre (monde), w: rayon (monde, ≤0 = absente)
   blow_a: vec4f,    // retour visuel du souffle : xyz origine (monde), w rayon
   blow_b: vec4f,    // xyz direction, w actif (0/1)
+  style: vec4f,     // x: lueur du feu, y: bloom (présentation), zw: libres
 }
 
 @group(0) @binding(0) var<uniform> R: RenderParams;
 @group(0) @binding(1) var lin: sampler;
 @group(0) @binding(2) var density_tex: texture_3d<f32>;
+@group(0) @binding(3) var glow_tex: texture_3d<f32>;
 
 struct VSOut {
   @builtin(position) pos: vec4f,
@@ -64,6 +70,19 @@ fn blackbody(heat: f32) -> vec3f {
   return vec3f(h * 1.6, h * h * 0.9, h * h * h * 0.42);
 }
 
+// Lueur du feu diffusée (volume grossier, trilinéaire = flou voulu).
+fn glow_at(pos: vec3f) -> vec3f {
+  return textureSampleLevel(glow_tex, lin, pos + vec3f(0.5), 0.0).rgb * R.style.x;
+}
+
+// Phase Henyey-Greenstein (g = 0.45), ~0.85 à 90°, ~2.7 plein contre-jour :
+// le liseré argenté des fumées entre caméra et lumière.
+fn phase_hg(mu: f32) -> f32 {
+  let g = 0.45;
+  let g2 = g * g;
+  return 0.55 + 0.45 * (1.0 - g2) / pow(1.0 + g2 - 2.0 * g * mu, 1.5);
+}
+
 // Intersection rayon / sphère-obstacle : t d'entrée, ou 1e9 si manquée/absente.
 fn sphere_hit(ro: vec3f, rd: vec3f) -> f32 {
   if (R.sphere.w <= 0.0) {
@@ -108,7 +127,10 @@ fn floor_shade(fp: vec3f, bg: vec3f, ldir: vec3f) -> vec3f {
   }
   let shadow = exp(-occ * 0.8);
   let base = vec3f(0.075, 0.080, 0.098);
-  return mix(bg, base * (0.30 + 0.70 * shadow), reach);
+  // Flaque de lumière chaude sous la flamme : la lueur échantillonnée juste
+  // au-dessus du sol éclaire le tapis (clamp-to-edge au-delà de la boîte).
+  let pool = glow_at(vec3f(fp.x, -0.46, fp.z)) * 0.5;
+  return mix(bg, base * (0.30 + 0.70 * shadow) + pool * shadow, reach);
 }
 
 @fragment
@@ -153,6 +175,8 @@ fn fs_main(frag: VSOut) -> @location(0) vec4f {
 
     let ldir = R.light.xyz;
     let shadow_step = 0.5 / 6.0;
+    // Phase directionnelle : constante par rayon (mu = angle vue/lumière).
+    let phase = phase_hg(dot(rd, ldir));
     for (var i = 0u; i < 256u; i++) {
       if (t >= t_end || transmit < 0.015) {
         break;
@@ -184,14 +208,22 @@ fn fs_main(frag: VSOut) -> @location(0) vec4f {
           let ss = textureSampleLevel(density_tex, lin, sp + vec3f(0.5), 0.0);
           occ += extinction(ss);
         }
-        var shade = exp(-occ * shadow_step * 0.9);
+        // DEUX octaves d'extinction (« powder ») : la seconde, 4× plus
+        // transparente, laisse la lumière pénétrer les cœurs épais — la fumée
+        // dense devient lumineuse en profondeur au lieu de virer au noir.
+        var shade = 0.62 * exp(-occ * shadow_step * 0.9) + 0.38 * exp(-occ * shadow_step * 0.22);
         // La boule projette son ombre dans la fumée.
         if (sphere_hit(pos, ldir) < 1e8) {
           shade *= 0.25;
         }
         let albedo = ink_albedo(s);
         let lo = blackbody(s.w) * 2.2 +
-          albedo * R.light.w * (shade * 0.92 + 0.08) * min(ext, 3.0) * 0.28;
+          albedo * (
+            R.light.w * phase * (shade * 0.92 + 0.08) * 0.28 +
+            // In-scattering de la lueur du feu : les volutes voisines de la
+            // flamme baignent dans sa lumière (sans direction — déjà diffusée).
+            glow_at(pos)
+          ) * min(ext, 3.0);
         let a = 1.0 - exp(-ext * adv);
         acc += transmit * lo * a;
         transmit *= exp(-ext * adv);
@@ -208,14 +240,14 @@ fn fs_main(frag: VSOut) -> @location(0) vec4f {
       let heat_here = textureSampleLevel(density_tex, lin, sp + nrm * 0.012 + vec3f(0.5), 0.0).w;
       var sphere_col = vec3f(0.30, 0.32, 0.38) * (0.30 + 0.70 * diff) + vec3f(0.10) * rim;
       sphere_col += blackbody(heat_here) * 0.9;
+      // La lueur du feu éclaire aussi la boule (lumière de zone diffusée).
+      sphere_col += glow_at(sp) * 0.7;
       acc += transmit * sphere_col;
       transmit = 0.0;
     }
     col = acc + transmit * bg;
   }
 
-  // Tone-mapping exponentiel + gamma (le format canvas n'est pas une vue sRGB).
-  let exposure = R.cam_up.w;
-  let mapped = vec3f(1.0) - exp(-col * exposure);
-  return vec4f(pow(mapped, vec3f(1.0 / 2.2)), 1.0);
+  // Sortie HDR LINÉAIRE : tone-mapping et gamma dans post3d.wgsl, après bloom.
+  return vec4f(col, 1.0);
 }

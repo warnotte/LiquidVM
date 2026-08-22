@@ -98,11 +98,13 @@ export const SIM3_DEFAULTS = {
   vcycles: 1,
   /** Itérations de Jacobi quand le multigrid est coupé. */
   jacobiIterations: 36,
-  /** Force du vorticity confinement (ε). Défaut 0 : à 128³, le gradient de |ω| à
-   *  ±1 voxel injecte du grain à l'échelle de la grille dès ε≈3 (calibré par
-   *  captures EPS-*) — MacCormack seul donne un panache turbulent superbe. À
-   *  réactiver quand le gradient sera lissé (piste : flouter |ω| avant ∇). */
-  vorticityStrength: 0,
+  /** Force du vorticity confinement (ε). RÉACTIVÉ (2026-08-22) : |ω| est flouté
+   *  (boîte 3³, passe blur_curl) AVANT le gradient — c'était le gradient de la
+   *  magnitude brute à ±1 voxel qui injectait le grain de grille (ancien défaut
+   *  0). Calibré par captures EPS2-0/8/16/24 à 256³ : 8 = subtil, 16 = riche
+   *  encore cohérent, 24 = panache déchiqueté (sans grain — l'échec est devenu
+   *  « trop chaotique », plus jamais granuleux). Défaut 12 = vivant avec marge. */
+  vorticityStrength: 12,
   /** Dissipations (1/s) : vélocité, fumée, refroidissement de la chaleur. */
   velocityDissipation: 0.03,
   smokeDissipation: 0.20,
@@ -141,9 +143,12 @@ export const SIM3_DEFAULTS = {
    *  la fumée flotte, l'encre magenta est lourde, la vapeur de carburant coule
    *  doucement (elle s'accumule et s'étale tant qu'elle ne brûle pas). */
   inkWeights: [0, 55, 16],
-  /** Rendu. */
+  /** Rendu. Lueur = in-scattering du volume de lueur (glow3d.wgsl) ; bloom =
+   *  halo HDR de la présentation (post3d.wgsl). */
   raymarchSteps: 160,
   exposure: 1.25,
+  glowStrength: 1.8,
+  bloomStrength: 0.35,
   /** Caméra orbitale initiale. */
   camAzimuth: 0.6,
   camElevation: 0.25,

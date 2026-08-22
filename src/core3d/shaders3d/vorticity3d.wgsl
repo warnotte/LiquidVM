@@ -1,7 +1,12 @@
 // Vorticity confinement 3D. En 3D la vorticité est un VECTEUR : ω = ∇×v.
-// curl : ω aux centres des cellules (différences centrées des vitesses centrées).
-// confine : force F = ε (N̂ × ω) avec N̂ = ∇|ω| normalisé — pousse vers les cœurs
-// de tourbillons, restitue l'énergie rotationnelle que l'advection dissipe.
+// curl : ω aux centres des cellules (différences centrées des vitesses centrées),
+//        |ω| dans le canal w.
+// blur_curl : |ω| flouté (boîte 3³) — LE fix du grain : le gradient de |ω| brut
+//        à ±1 voxel injectait du bruit à l'échelle de la grille (calibré EPS-*,
+//        d'où l'ancien défaut ε=0) ; flouter la magnitude AVANT d'en prendre le
+//        gradient donne des normales N̂ cohérentes sur ~3 voxels. ω passe tel quel.
+// confine : force F = ε (N̂ × ω) avec N̂ = ∇|ω|flou normalisé — pousse vers les
+//        cœurs de tourbillons, restitue l'énergie que l'advection dissipe.
 // Chaque composante de force est évaluée à SA position de face MAC.
 
 struct Params {
@@ -77,18 +82,42 @@ fn curl(@builtin(global_invocation_id) gid: vec3u) {
     (zp.x - zm.x) - (xp.z - xm.z),
     (xp.y - xm.y) - (yp.x - ym.x),
   );
-  textureStore(curl_dst, gid, vec4f(omega, 0.0));
+  textureStore(curl_dst, gid, vec4f(omega, length(omega)));
+}
+
+// |ω| flouté (boîte 3³, 27 loads), ω du centre passé tel quel : le confinement
+// lit UNE texture. Entrée : la texture de rotationnel via le binding 0 (même
+// layout que curl), sortie : velScratch (libre à ce point de la frame).
+@compute @workgroup_size(4, 4, 4)
+fn blur_curl(@builtin(global_invocation_id) gid: vec3u) {
+  let n = n_size();
+  let c = vec3i(gid);
+  if (c.x >= n || c.y >= n || c.z >= n) {
+    return;
+  }
+  var sum = 0.0;
+  for (var dz = -1; dz <= 1; dz++) {
+    for (var dy = -1; dy <= 1; dy++) {
+      for (var dx = -1; dx <= 1; dx++) {
+        let q = clamp(c + vec3i(dx, dy, dz), vec3i(0), vec3i(n - 1));
+        sum += textureLoad(vel_src, q, 0).w;
+      }
+    }
+  }
+  let omega = textureLoad(vel_src, c, 0).xyz;
+  textureStore(curl_dst, gid, vec4f(omega, sum / 27.0));
 }
 
 fn omega_at(p: vec3f) -> vec3f {
   return textureSampleLevel(curl_src, lin, p * inv_n(), 0.0).xyz;
 }
 
+// |ω| FLOUTÉ (canal w écrit par blur_curl) — jamais la magnitude brute.
 fn omega_len(p: vec3f) -> f32 {
-  return length(omega_at(p));
+  return textureSampleLevel(curl_src, lin, p * inv_n(), 0.0).w;
 }
 
-// Force de confinement à la position p : ε (N̂ × ω), N̂ = ∇|ω| normalisé.
+// Force de confinement à la position p : ε (N̂ × ω), N̂ = ∇|ω|flou normalisé.
 fn confine_force(p: vec3f) -> vec3f {
   let grad = 0.5 * vec3f(
     omega_len(p + vec3f(1.0, 0.0, 0.0)) - omega_len(p - vec3f(1.0, 0.0, 0.0)),

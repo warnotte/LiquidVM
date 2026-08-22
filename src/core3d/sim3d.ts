@@ -14,6 +14,8 @@ import projectWGSL from './shaders3d/project3d.wgsl?raw';
 import speciesWGSL from './shaders3d/species3d.wgsl?raw';
 import multigridWGSL from './shaders3d/multigrid3d.wgsl?raw';
 import raymarchWGSL from './shaders3d/raymarch.wgsl?raw';
+import glowWGSL from './shaders3d/glow3d.wgsl?raw';
+import postWGSL from './shaders3d/post3d.wgsl?raw';
 import clearWGSL from './shaders3d/clear3d.wgsl?raw';
 import {
   DISPATCH3,
@@ -63,6 +65,9 @@ export interface Frame3DInput {
   feedback: boolean;
   exposure: number;
   raymarchSteps: number;
+  /** Lueur du feu (in-scattering du volume de lueur) et intensité du bloom. */
+  glowStrength: number;
+  bloomStrength: number;
 }
 
 const COMPUTE = GPUShaderStage.COMPUTE;
@@ -143,8 +148,8 @@ export class FluidSim3D {
   private needSpeciesInit = true;
 
   private readonly simData = new Float32Array(60);
-  private readonly renderData = new Float32Array(32);
-  private lastRender = new Float32Array(32).fill(Number.NaN);
+  private readonly renderData = new Float32Array(36);
+  private lastRender = new Float32Array(36).fill(Number.NaN);
 
   /** Émetteurs (positions en voxels) — le premier est l'émetteur historique. */
   private readonly emitters: { pos: [number, number, number]; ink: number }[] = [
@@ -175,6 +180,7 @@ export class FluidSim3D {
       velCorrect: GPUComputePipeline;
       forces: GPUComputePipeline;
       curl: GPUComputePipeline;
+      blurCurl: GPUComputePipeline;
       confine: GPUComputePipeline;
       denPredict: GPUComputePipeline;
       denCorrect: GPUComputePipeline;
@@ -190,13 +196,20 @@ export class FluidSim3D {
       clearRgba: GPUComputePipeline;
       clearScalar: GPUComputePipeline;
       render: GPURenderPipeline;
+      glowInject: GPUComputePipeline;
+      glowBlur: GPUComputePipeline;
+      bloomDown: GPUComputePipeline;
+      bloomH: GPUComputePipeline;
+      bloomV: GPUComputePipeline;
+      present: GPURenderPipeline;
     },
     private readonly binds: {
       velPredict: Pair<GPUBindGroup>; // [vel] → scratch
       velCorrect: Pair<GPUBindGroup>; // [vel] (+scratch) → flip(vel)
       forces: Pair<Pair<GPUBindGroup>>; // [vel][den]
       curl: Pair<GPUBindGroup>; // [vel] → curl
-      confine: Pair<GPUBindGroup>; // [vel] (+curl) → flip(vel)
+      blurCurl: GPUBindGroup; // curl → velScratch (|ω| flouté, ω passthrough)
+      confine: Pair<GPUBindGroup>; // [vel] (+scratch flouté) → flip(vel)
       denPredict: Pair<Pair<GPUBindGroup>>; // [den][vel] → scratch
       denCorrect: Pair<Pair<Pair<GPUBindGroup>>>; // [den][vel][oxy] (+scratch) → flip(den)
       divergence: Pair<Pair<Pair<GPUBindGroup>>>; // [vel][den][oxy] (expansion)
@@ -204,18 +217,42 @@ export class FluidSim3D {
       clearsOne: readonly GPUBindGroup[]; // espèces → O₂ = 1
       jacobi: Pair<GPUBindGroup>; // [press]
       gradient: Pair<Pair<GPUBindGroup>>; // [press][vel]
-      render: Pair<GPUBindGroup>; // [den]
+      render: Pair<GPUBindGroup>; // [den] (+glow[1])
+      glowInject: Pair<GPUBindGroup>; // [den] → glow[0]
+      glowBlurAB: GPUBindGroup; // glow[0] → glow[1]
+      glowBlurBA: GPUBindGroup; // glow[1] → glow[0]
+      bloomH: GPUBindGroup; // bloomA → bloomB
+      bloomV: GPUBindGroup; // bloomB → bloomA
       clearsRgba: readonly GPUBindGroup[];
       clearsScalar: readonly GPUBindGroup[];
     },
     private readonly mgLevels: readonly MGLevel3[],
     private readonly denTextures: Pair<GPUTexture>,
+    private readonly post: {
+      readonly post2dLayout: GPUBindGroupLayout;
+      readonly presentLayout: GPUBindGroupLayout;
+      readonly sampler: GPUSampler;
+      readonly bloomA: GPUTextureView;
+      readonly bloomW: number;
+      readonly bloomH: number;
+      readonly glowDispatch: number;
+    },
   ) {
     this.mgIdx = new Array<number>(mgLevels.length).fill(0);
   }
 
   /** Index de pression courant par niveau multigrid (tableau réutilisé, zéro alloc). */
   private readonly mgIdx: number[];
+
+  /** Cible HDR (raymarch → bloom → présentation) et bind groups qui la
+   *  référencent — recréés UNIQUEMENT quand la taille du canvas change
+   *  (événementiel : la doctrine zéro-alloc-par-frame reste tenue). */
+  private hdrTexture: GPUTexture | null = null;
+  private hdrView: GPUTextureView | null = null;
+  private hdrW = 0;
+  private hdrH = 0;
+  private bloomDownBind: GPUBindGroup | null = null;
+  private presentBind: GPUBindGroup | null = null;
 
   static async create(device: GPUDevice, targetFormat: GPUTextureFormat): Promise<FluidSim3D> {
     // Les grosses grilles échouent en OUT-OF-MEMORY, pas en validation — sans ce
@@ -245,6 +282,26 @@ export class FluidSim3D {
       const curlTex = tex3d(device, 'curl3d', 'rgba16float');
       // Espèces transportées : x = oxygène (init 1), yzw réservés.
       const species = pair((i) => tex3d(device, `species3d-${i}`, 'rgba16float'));
+      // Volume de LUEUR (grille grossière) : inject → [0], blurs ping-pong,
+      // le rendu lit [1] (3 blurs : 0→1→0→1). Coût mémoire négligeable.
+      const GLOW3 = Math.max(GRID3 / 8, 16);
+      const glowDispatch = Math.ceil(GLOW3 / WG3);
+      const glow = pair((i) => tex3d(device, `glow3d-${i}`, 'rgba16float', GLOW3));
+      // Chaîne bloom : taille FIXE (la lueur est basse fréquence), 16:9 approx —
+      // l'étirement du noyau sur d'autres aspects est invisible sur un halo.
+      const BLOOM_W = 384;
+      const BLOOM_H = 216;
+      const tex2d = (label: string): GPUTextureView =>
+        device
+          .createTexture({
+            label,
+            size: { width: BLOOM_W, height: BLOOM_H },
+            format: 'rgba16float',
+            usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.STORAGE_BINDING,
+          })
+          .createView({ label: `${label}-view` });
+      const bloomA = tex2d('bloom3d-a');
+      const bloomB = tex2d('bloom3d-b');
 
       const sampler = device.createSampler({
         label: 'lin3d',
@@ -345,11 +402,34 @@ export class FluidSim3D {
             { binding: 0, visibility: FRAGMENT, buffer: { type: 'uniform' } },
             { binding: 1, visibility: FRAGMENT, sampler: { type: 'filtering' } },
             sampled3d(2, FRAGMENT),
+            sampled3d(3, FRAGMENT),
+          ],
+        }),
+        // Chaîne bloom (compute 2D) : source échantillonnée + sortie storage.
+        post2d: device.createBindGroupLayout({
+          label: 'post2d-3d',
+          entries: [
+            { binding: 0, visibility: COMPUTE, texture: { sampleType: 'float' } },
+            {
+              binding: 1,
+              visibility: COMPUTE,
+              storageTexture: { access: 'write-only', format: 'rgba16float' },
+            },
+          ],
+        }),
+        // Présentation : scène HDR + bloom → canvas (tone-mapping).
+        present: device.createBindGroupLayout({
+          label: 'present-3d',
+          entries: [
+            { binding: 0, visibility: FRAGMENT, buffer: { type: 'uniform' } },
+            { binding: 1, visibility: FRAGMENT, sampler: { type: 'filtering' } },
+            { binding: 2, visibility: FRAGMENT, texture: { sampleType: 'float' } },
+            { binding: 3, visibility: FRAGMENT, texture: { sampleType: 'float' } },
           ],
         }),
       };
 
-      const [advectVelM, advectDenM, forcesM, vorticityM, projectM, raymarchM, clearM] =
+      const [advectVelM, advectDenM, forcesM, vorticityM, projectM, raymarchM, glowM, postM, clearM] =
         await Promise.all([
           createShaderModule(device, 'advect_velocity3d.wgsl', advectVelWGSL),
           createShaderModule(device, 'advect_density3d.wgsl', advectDenWGSL),
@@ -357,6 +437,8 @@ export class FluidSim3D {
           createShaderModule(device, 'vorticity3d.wgsl', vorticityWGSL),
           createShaderModule(device, 'project3d.wgsl', projectWGSL),
           createShaderModule(device, 'raymarch.wgsl', raymarchWGSL),
+          createShaderModule(device, 'glow3d.wgsl', glowWGSL),
+          createShaderModule(device, 'post3d.wgsl', postWGSL),
           createShaderModule(device, 'clear3d.wgsl', clearWGSL),
         ]);
       const multigridM = await createShaderModule(device, 'multigrid3d.wgsl', multigridWGSL);
@@ -377,12 +459,13 @@ export class FluidSim3D {
           compute: { module, entryPoint },
         });
 
-      const [velPredict, velCorrect, forces, curlPipe, confine, denPredict, denCorrect, divergencePipe, jacobi, gradient, mgSmooth, mgResidual, mgRestrictPipe, mgProlongPipe, speciesPipe, clearOne, clearRgba, clearScalar, render] =
+      const [velPredict, velCorrect, forces, curlPipe, blurCurlPipe, confine, denPredict, denCorrect, divergencePipe, jacobi, gradient, mgSmooth, mgResidual, mgRestrictPipe, mgProlongPipe, speciesPipe, clearOne, clearRgba, clearScalar, render, glowInjectPipe, glowBlurPipe, bloomDownPipe, bloomHPipe, bloomVPipe, presentPipe] =
         await Promise.all([
           compute('vel-predict-3d', L.velPredict, advectVelM, 'predict'),
           compute('vel-correct-3d', L.velCorrect, advectVelM, 'correct'),
           compute('forces-3d', L.forces, forcesM, 'main'),
           compute('curl-3d', L.curl, vorticityM, 'curl'),
+          compute('blur-curl-3d', L.curl, vorticityM, 'blur_curl'),
           compute('confine-3d', L.confine, vorticityM, 'confine'),
           compute('den-predict-3d', L.denPredict, advectDenM, 'predict'),
           compute('den-correct-3d', L.denCorrect, advectDenM, 'correct'),
@@ -412,11 +495,24 @@ export class FluidSim3D {
             layout: device.createPipelineLayout({ label: 'clear-scalar-3d-pl', bindGroupLayouts: [L.clearScalar] }),
             compute: { module: clearM, entryPoint: 'clear_scalar' },
           }),
+          // Le raymarch écrit la scène HDR LINÉAIRE (rgba16float), plus le canvas.
           device.createRenderPipelineAsync({
             label: 'raymarch-3d',
             layout: device.createPipelineLayout({ label: 'raymarch-3d-pl', bindGroupLayouts: [L.render] }),
             vertex: { module: raymarchM, entryPoint: 'vs_main' },
-            fragment: { module: raymarchM, entryPoint: 'fs_main', targets: [{ format: targetFormat }] },
+            fragment: { module: raymarchM, entryPoint: 'fs_main', targets: [{ format: 'rgba16float' }] },
+            primitive: { topology: 'triangle-list' },
+          }),
+          compute('glow-inject-3d', L.curl, glowM, 'inject'),
+          compute('glow-blur-3d', L.curl, glowM, 'blur'),
+          compute('bloom-down-3d', L.post2d, postM, 'bloom_down'),
+          compute('bloom-h-3d', L.post2d, postM, 'bloom_h'),
+          compute('bloom-v-3d', L.post2d, postM, 'bloom_v'),
+          device.createRenderPipelineAsync({
+            label: 'present-3d',
+            layout: device.createPipelineLayout({ label: 'present-3d-pl', bindGroupLayouts: [L.present] }),
+            vertex: { module: postM, entryPoint: 'vs_present' },
+            fragment: { module: postM, entryPoint: 'fs_present', targets: [{ format: targetFormat }] },
             primitive: { topology: 'triangle-list' },
           }),
         ]);
@@ -475,13 +571,22 @@ export class FluidSim3D {
             ],
           }),
         ),
+        // velScratch est libre ici (le correcteur MacCormack l'a consommé).
+        blurCurl: device.createBindGroup({
+          label: 'blur-curl-3d',
+          layout: L.curl,
+          entries: [
+            { binding: 0, resource: curlTex },
+            { binding: 1, resource: velScratch },
+          ],
+        }),
         confine: pair((v) =>
           device.createBindGroup({
             label: `confine-3d-${v}`,
             layout: L.confine,
             entries: [
               { binding: 0, resource: velocity[v] },
-              { binding: 2, resource: curlTex },
+              { binding: 2, resource: velScratch },
               { binding: 3, resource: velocity[flip(v)] },
             ],
           }),
@@ -587,9 +692,52 @@ export class FluidSim3D {
               { binding: 0, resource: { buffer: renderUniforms } },
               { binding: 1, resource: sampler },
               { binding: 2, resource: density[d] },
+              { binding: 3, resource: glow[1] },
             ],
           }),
         ),
+        glowInject: pair((d) =>
+          device.createBindGroup({
+            label: `glow-inject-3d-${d}`,
+            layout: L.curl,
+            entries: [
+              { binding: 0, resource: density[d] },
+              { binding: 1, resource: glow[0] },
+            ],
+          }),
+        ),
+        glowBlurAB: device.createBindGroup({
+          label: 'glow-blur-ab',
+          layout: L.curl,
+          entries: [
+            { binding: 0, resource: glow[0] },
+            { binding: 1, resource: glow[1] },
+          ],
+        }),
+        glowBlurBA: device.createBindGroup({
+          label: 'glow-blur-ba',
+          layout: L.curl,
+          entries: [
+            { binding: 0, resource: glow[1] },
+            { binding: 1, resource: glow[0] },
+          ],
+        }),
+        bloomH: device.createBindGroup({
+          label: 'bloom-h-3d',
+          layout: L.post2d,
+          entries: [
+            { binding: 0, resource: bloomA },
+            { binding: 1, resource: bloomB },
+          ],
+        }),
+        bloomV: device.createBindGroup({
+          label: 'bloom-v-3d',
+          layout: L.post2d,
+          entries: [
+            { binding: 0, resource: bloomB },
+            { binding: 1, resource: bloomA },
+          ],
+        }),
         clearsRgba: [velocity[0], velocity[1], density[0], density[1]].map((view, i) =>
           device.createBindGroup({
             label: `clear-rgba-3d-${i}`,
@@ -710,6 +858,7 @@ export class FluidSim3D {
           velCorrect,
           forces,
           curl: curlPipe,
+          blurCurl: blurCurlPipe,
           confine,
           denPredict,
           denCorrect,
@@ -725,10 +874,25 @@ export class FluidSim3D {
           clearRgba,
           clearScalar,
           render,
+          glowInject: glowInjectPipe,
+          glowBlur: glowBlurPipe,
+          bloomDown: bloomDownPipe,
+          bloomH: bloomHPipe,
+          bloomV: bloomVPipe,
+          present: presentPipe,
         },
         binds,
         mgLevels,
         denTextures,
+        {
+          post2dLayout: L.post2d,
+          presentLayout: L.present,
+          sampler,
+          bloomA,
+          bloomW: BLOOM_W,
+          bloomH: BLOOM_H,
+          glowDispatch,
+        },
       );
     });
     const oom = await device.popErrorScope();
@@ -740,8 +904,45 @@ export class FluidSim3D {
     return sim;
   }
 
+  /** Recrée la cible HDR et ses bind groups quand la taille du canvas change. */
+  private ensureTargets(width: number, height: number): void {
+    if (this.hdrView !== null && width === this.hdrW && height === this.hdrH) {
+      return;
+    }
+    this.hdrTexture?.destroy();
+    this.hdrW = width;
+    this.hdrH = height;
+    this.hdrTexture = this.device.createTexture({
+      label: 'hdr3d',
+      size: { width, height },
+      format: 'rgba16float',
+      usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+    });
+    this.hdrView = this.hdrTexture.createView({ label: 'hdr3d-view' });
+    this.bloomDownBind = this.device.createBindGroup({
+      label: 'bloom-down-3d',
+      layout: this.post.post2dLayout,
+      entries: [
+        { binding: 0, resource: this.hdrView },
+        { binding: 1, resource: this.post.bloomA },
+      ],
+    });
+    this.presentBind = this.device.createBindGroup({
+      label: 'present-3d',
+      layout: this.post.presentLayout,
+      entries: [
+        { binding: 0, resource: { buffer: this.renderUniforms } },
+        { binding: 1, resource: this.post.sampler },
+        { binding: 2, resource: this.hdrView },
+        { binding: 3, resource: this.post.bloomA },
+      ],
+    });
+  }
+
   /** Encode et soumet une frame complète : simulation (sauf pause) + rendu. */
-  frame(input: Frame3DInput, target: GPUTextureView, aspect: number): void {
+  frame(input: Frame3DInput, target: GPUTextureView, width: number, height: number): void {
+    const aspect = width / Math.max(height, 1);
+    this.ensureTargets(width, height);
     const dt = Math.min(Math.max(input.dt, 0), 1 / 30) * input.params.timeScale;
     const running = !input.paused && dt > 0;
     // Le rendu d'abord : la saisie et le souffle lisent la base caméra depuis
@@ -794,11 +995,14 @@ export class FluidSim3D {
         cp.dispatchWorkgroups(n, n, n);
         this.velIdx = flip(this.velIdx);
 
-        // Vorticity confinement : rotationnel vectoriel puis force de renforcement.
-        // Passes sautées à ε = 0 (défaut — voir config3d.ts sur le grain de grille).
+        // Vorticity confinement : rotationnel, |ω| flouté (le fix anti-grain),
+        // puis force de renforcement. Passes sautées à ε = 0.
         if (input.params.vorticityStrength > 0) {
           cp.setPipeline(this.pipelines.curl);
           cp.setBindGroup(1, this.binds.curl[this.velIdx]);
+          cp.dispatchWorkgroups(n, n, n);
+          cp.setPipeline(this.pipelines.blurCurl);
+          cp.setBindGroup(1, this.binds.blurCurl);
           cp.dispatchWorkgroups(n, n, n);
           cp.setPipeline(this.pipelines.confine);
           cp.setBindGroup(1, this.binds.confine[this.velIdx]);
@@ -849,14 +1053,64 @@ export class FluidSim3D {
       cp.end();
     }
 
+    // Volume de LUEUR : injection (corps noir des densités fraîches) puis
+    // 3 diffusions ping-pong — tourne aussi en pause (le rendu le lit toujours).
+    {
+      const gd = this.post.glowDispatch;
+      const gp = encoder.beginComputePass({ label: 'glow3d' });
+      gp.setBindGroup(0, this.group0);
+      gp.setPipeline(this.pipelines.glowInject);
+      gp.setBindGroup(1, this.binds.glowInject[this.denIdx]);
+      gp.dispatchWorkgroups(gd, gd, gd);
+      gp.setPipeline(this.pipelines.glowBlur);
+      gp.setBindGroup(1, this.binds.glowBlurAB);
+      gp.dispatchWorkgroups(gd, gd, gd);
+      gp.setBindGroup(1, this.binds.glowBlurBA);
+      gp.dispatchWorkgroups(gd, gd, gd);
+      gp.setBindGroup(1, this.binds.glowBlurAB);
+      gp.dispatchWorkgroups(gd, gd, gd);
+      gp.end();
+    }
+
+    // Raymarch → scène HDR linéaire.
     const rp = encoder.beginRenderPass({
       label: 'raymarch',
-      colorAttachments: [{ view: target, loadOp: 'clear', storeOp: 'store', clearValue: { r: 0, g: 0, b: 0, a: 1 } }],
+      colorAttachments: [
+        { view: this.hdrView!, loadOp: 'clear', storeOp: 'store', clearValue: { r: 0, g: 0, b: 0, a: 1 } },
+      ],
     });
     rp.setPipeline(this.pipelines.render);
     rp.setBindGroup(0, this.binds.render[this.denIdx]);
     rp.draw(3);
     rp.end();
+
+    // Bloom : seuil+réduction, gaussienne séparable (H puis V), taille fixe.
+    {
+      const bw = Math.ceil(this.post.bloomW / 8);
+      const bh = Math.ceil(this.post.bloomH / 8);
+      const bp = encoder.beginComputePass({ label: 'bloom3d' });
+      bp.setBindGroup(0, this.group0);
+      bp.setPipeline(this.pipelines.bloomDown);
+      bp.setBindGroup(1, this.bloomDownBind!);
+      bp.dispatchWorkgroups(bw, bh);
+      bp.setPipeline(this.pipelines.bloomH);
+      bp.setBindGroup(1, this.binds.bloomH);
+      bp.dispatchWorkgroups(bw, bh);
+      bp.setPipeline(this.pipelines.bloomV);
+      bp.setBindGroup(1, this.binds.bloomV);
+      bp.dispatchWorkgroups(bw, bh);
+      bp.end();
+    }
+
+    // Présentation : HDR + bloom → canvas (tone-mapping, gamma).
+    const pp = encoder.beginRenderPass({
+      label: 'present',
+      colorAttachments: [{ view: target, loadOp: 'clear', storeOp: 'store', clearValue: { r: 0, g: 0, b: 0, a: 1 } }],
+    });
+    pp.setPipeline(this.pipelines.present);
+    pp.setBindGroup(0, this.presentBind!);
+    pp.draw(3);
+    pp.end();
 
     this.submitList[0] = encoder.finish();
     this.device.queue.submit(this.submitList);
@@ -1276,6 +1530,9 @@ export class FluidSim3D {
     } else {
       d[31] = 0;
     }
+    // Style : lueur du feu (raymarch) et intensité du bloom (présentation).
+    d[32] = input.glowStrength;
+    d[33] = input.bloomStrength;
     let dirty = false;
     for (let i = 0; i < d.length; i++) {
       if (d[i] !== this.lastRender[i]) {

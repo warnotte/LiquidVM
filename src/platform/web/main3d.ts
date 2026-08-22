@@ -194,6 +194,8 @@ async function boot(): Promise<void> {
     feedback: true,
     exposure: SIM3_DEFAULTS.exposure,
     raymarchSteps: SIM3_DEFAULTS.raymarchSteps,
+    glowStrength: SIM3_DEFAULTS.glowStrength,
+    bloomStrength: SIM3_DEFAULTS.bloomStrength,
   };
   if (selftest) {
     (window as unknown as Record<string, unknown>)['__frame3d'] = input;
@@ -443,6 +445,8 @@ async function boot(): Promise<void> {
       sliders: [
         { label: 'force du souffle', min: 0, max: 800, step: 10, get: () => p.blowForce, set: (x) => (p.blowForce = x), format: (x) => x.toFixed(0) },
         { label: 'exposition', min: 0.4, max: 3, step: 0.05, get: () => input.exposure, set: (x) => (input.exposure = x) },
+        { label: 'lueur du feu', min: 0, max: 3, step: 0.05, get: () => input.glowStrength, set: (x) => (input.glowStrength = x) },
+        { label: 'bloom', min: 0, max: 1, step: 0.05, get: () => input.bloomStrength, set: (x) => (input.bloomStrength = x) },
         { label: 'pas de marche', min: 64, max: 256, step: 16, get: () => input.raymarchSteps, set: (x) => (input.raymarchSteps = x), format: (x) => x.toFixed(0) },
       ],
       checks: [
@@ -505,7 +509,7 @@ async function boot(): Promise<void> {
       demoDriver.tick(dt);
     }
     input.dt = dt;
-    sim.frame(input, context.getCurrentTexture().createView(), canvas.width / canvas.height);
+    sim.frame(input, context.getCurrentTexture().createView(), canvas.width, canvas.height);
     input.reset = false;
     input.blow.moveX = 0;
     input.blow.moveY = 0;

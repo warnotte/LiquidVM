@@ -209,12 +209,33 @@ Config actuelle : sim 1024², dye/scène 2048².
 - **MacCormack 3D** : prédicteur/correcteur clampé par composante MAC (stencil du
   point rétro-advecté) — LE raffineur : le panache laminaire devient turbulent et
   structuré à lui seul.
-- **Confinement de vorticité 3D** : implémenté (ω vectoriel aux centres, F = ε N̂×ω
-  par face) mais DÉFAUT ε = 0 — à 128³, le gradient de |ω| à ±1 voxel injecte du
-  grain à l'échelle de la grille dès ε≈3 et détruit le panache vers ε≈10 (calibré
-  par captures EPS-0/3/6/10). Réglable à chaud : `__frame3d.vorticityStrength`.
-  Avant de le réactiver : lisser |ω| (flou 3D) avant d'en prendre le gradient.
-- **Souffle au pointeur** : clic droit + glisser = force gaussienne dans un TUBE le
+- **Confinement de vorticité 3D — RÉACTIVÉ (défaut ε = 12)** : ω vectoriel aux
+  centres, F = ε N̂×ω par face — et |ω| est FLOUTÉ (passe blur_curl, boîte 3³
+  écrite dans velScratch libre à ce point, ω passe en xyz, |ω|flou en w) avant
+  le gradient. C'était le fix pressenti : le gradient de la magnitude brute à
+  ±1 voxel injectait du grain de grille dès ε≈3 (ancienne calibration EPS-*,
+  défaut 0). Recalibré (EPS2-0/8/16/24 à 256³) : 8 subtil, 16 riche encore
+  cohérent, 24 déchiqueté mais JAMAIS granuleux — l'échec a changé de nature.
+  Slider « vorticité » (0–30).
+- **Éclairage volumétrique (2026-08-22)** : la flamme éclaire sa propre fumée.
+  (1) VOLUME DE LUEUR (glow3d.wgsl, grille GRID3/8, paire ping-pong) : inject =
+  émission corps noir moyennée par pavé (8 prises trilinéaires), 3 blurs boîte
+  3³ = diffusion ≈ scattering multiple ; le raymarch l'échantillonne en
+  in-scattering (∝ densité locale), le SOL reçoit une flaque de lumière chaude,
+  la SPHÈRE est éclairée par la lueur. Slider « lueur du feu » (0–3, défaut
+  1.8, input.glowStrength). Tourne aussi en pause (passe compute dédiée).
+  (2) OMBRE À DEUX OCTAVES (« powder ») : 0.62·exp(-τ·0.9) + 0.38·exp(-τ·0.22)
+  — la lumière pénètre les cœurs épais. (3) PHASE Henyey-Greenstein g=0.45 sur
+  la lumière directionnelle (constante par rayon) : liseré argenté à
+  contre-jour. (4) CHAÎNE HDR + BLOOM (post3d.wgsl) : le raymarch écrit du
+  rgba16float LINÉAIRE (tone-mapping déplacé en présentation), texture HDR
+  taille canvas recréée au resize SEULEMENT (bind groups bloomDown/present
+  avec elle — doctrine zéro-alloc tenue), bloom en taille FIXE 384×216 (seuil
+  doux 0.9–1.9, gaussienne séparable espacement 1.5 texel), présentation =
+  HDR + bloom·strength → tone-map expo + gamma. Slider « bloom » (0–1, défaut
+  0.35). Coût mesuré : 60 FPS à 256³, ~26 FPS à 384³ (le rendu ajouté est payé
+  par pixel, pas par voxel). frame() prend désormais (input, target, width,
+  height) — la taille pilote la cible HDR.
   long du rayon caméra→scène, dirigée selon le geste (base caméra lue depuis
   renderData — écrite AVANT les uniforms sim). Réglages : blowRadius/blowForce.
 - **Export OpenVDB (touche E)** : readback ponctuel hors boucle (seule lecture
