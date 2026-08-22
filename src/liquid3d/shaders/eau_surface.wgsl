@@ -18,7 +18,7 @@ struct UEau {
   cam_right: vec4f, // xyz, w: aspect
   cam_up: vec4f,    // xyz, w: exposition
   cam_fwd: vec4f,   // xyz
-  render: vec4f,    // x: 0 surface / 1 points (boîte seule) / 2 coupe / 3 densité max, y: absorption, z: seuil iso
+  render: vec4f,    // x: 0 surface / 1 points (boîte seule) / 2 coupe / 3 densité max, y: absorption, z: seuil iso, w: mousse
   sphere: vec4f,    // xyz: centre (voxels), w: rayon (voxels, ≤ 0 = absente)
   sphere_vel: vec4f,
 }
@@ -347,6 +347,21 @@ fn fs_surface(frag: VSOut) -> @location(0) vec4f {
           vec3f(0.9, 0.85, 0.7) * pow(max(dot(r, ldir), 0.0), 8.0) * 0.35;
         let spec = pow(max(dot(r, ldir), 0.0), 200.0) * 3.0;
         col = mix(through, sky, f) + spec * (0.1 + 0.9 * f);
+        // MOUSSE : l'eau AÉRÉE (gouttes, crêtes, nappe qui déferle) diffuse au
+        // lieu de réfracter — c'est ce qui fait lire une éclaboussure comme de
+        // l'eau et pas comme une bulle de verre. Deux indices, tous deux déjà
+        // calculés : densité locale faible (le liquide y est mêlé d'air) et
+        // faible épaisseur traversée (une nappe fine est de l'écume).
+        // PIÈGE payé : sonder la densité SUR l'iso-surface ne dit rien — elle y
+        // vaut le seuil par construction, tout le bassin devenait blanc. Il faut
+        // regarder 2 voxels SOUS la surface (n_hit pointe vers l'air) : l'eau en
+        // masse y est dense, une gouttelette ou une crête déferlante non.
+        let below = density_at(p_hit - n_hit * (2.0 / U.sim.x));
+        let aerated = smoothstep(1.05, 0.60, below);
+        let thin = smoothstep(0.06, 0.008, water_len);
+        let foam = clamp(max(aerated, thin) * U.render.w, 0.0, 1.0);
+        let lit = 0.55 + 0.45 * max(dot(n_hit, ldir), 0.0);
+        col = mix(col, vec3f(0.80, 0.88, 0.95) * lit, foam);
       }
       col += glass;
     }

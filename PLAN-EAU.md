@@ -257,6 +257,22 @@ NOTES-DEV mis à jour à chaque jalon, pièges payés documentés immédiatement
   informatif). À vérifier sur les autres pages si un jour on y ajoute de la
   manipulation directe près du HUD.
 
+- **MOUSSE (acompte sur J5, 2026-08-23).** L'eau aérée — embruns, crêtes
+  déferlantes, nappes fines — diffuse au lieu de réfracter : sans elle une
+  éclaboussure se rend comme une bille de verre. Deux indices déjà disponibles,
+  combinés en `max()` puis pondérés par le slider « mousse » (défaut 0,7) :
+  densité mesurée **2 voxels SOUS la surface** (l'eau en masse y est dense, une
+  gouttelette non) et épaisseur d'eau traversée par le rayon réfracté.
+  **Piège payé** : la première version sondait la densité SUR l'iso-surface —
+  elle y vaut le seuil PAR CONSTRUCTION, donc « aéré » partout et le bassin
+  entier devenait blanc laiteux. Sonder un champ à l'endroit exact où on l'a
+  seuillé ne dit jamais rien.
+  Coût mesuré nul (A/B mousse 0 ↔ 0,7 à état de sim égal : 45 FPS dans les deux
+  cas au premier run, 60 dans les deux cas au second). **Leçon de banc rappelée**
+  : le niveau absolu du premier run après un démarrage de Chrome n'est pas
+  comparable au suivant (45 vs 60 ici, à code identique) — seul l'A/B dans la
+  MÊME session compte.
+
 ## Conventions du chantier
 
 - Branche `eau` (depuis `main`). Merge dans `main` par JALON VERT uniquement —

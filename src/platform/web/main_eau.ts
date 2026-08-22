@@ -90,6 +90,7 @@ async function boot(): Promise<void> {
     renderPoints: params.has('points') || EAU_DEFAULTS.renderPoints,
     absorption: EAU_DEFAULTS.absorption,
     surfaceIso: EAU_DEFAULTS.surfaceIso,
+    foam: EAU_DEFAULTS.foam,
     debugView: EAU_DEFAULTS.debugView,
     sphereActive: true,
     grab: { active: false, ndcX: 0, ndcY: 0 },
@@ -214,6 +215,7 @@ async function boot(): Promise<void> {
       sliders: [
         { label: 'absorption', min: 0, max: 3, step: 0.05, get: () => input.absorption, set: (x) => (input.absorption = x) },
         { label: 'seuil de surface', min: 0.1, max: 0.9, step: 0.05, get: () => input.surfaceIso, set: (x) => (input.surfaceIso = x) },
+        { label: 'mousse', min: 0, max: 1, step: 0.05, get: () => input.foam, set: (x) => (input.foam = x) },
         { label: 'exposition', min: 0.2, max: 3, step: 0.05, get: () => input.exposure, set: (x) => (input.exposure = x) },
         { label: 'taille des points', min: 0.001, max: 0.01, step: 0.0005, get: () => input.pointSize, set: (x) => (input.pointSize = x), format: (x) => x.toFixed(4) },
         { label: 'vue debug', min: 0, max: 3, step: 1, get: () => input.debugView, set: (x) => (input.debugView = x), format: (x) => ['surface', '—', 'coupe z=0', 'densité max'][Math.round(x)] ?? '' },

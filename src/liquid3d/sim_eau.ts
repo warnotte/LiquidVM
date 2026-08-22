@@ -42,6 +42,8 @@ export interface FrameEauInput {
   absorption: number;
   /** Seuil d'iso-surface sur la densité floutée (1 = densité de repos). */
   surfaceIso: number;
+  /** Mousse : blanchiment de l'eau aérée (gouttes, crêtes, nappes fines). */
+  foam: number;
   /** Vue debug du rendu : 0 surface, 2 coupe z=0 de la densité, 3 densité max par rayon. */
   debugView: number;
   /** Boule-obstacle présente (J3). */
@@ -800,6 +802,7 @@ export class FluidEau {
     d[24] = input.renderPoints ? 1 : input.debugView;
     d[25] = input.absorption;
     d[26] = input.surfaceIso;
+    d[27] = input.foam;
     d[28] = this.spherePos[0];
     d[29] = this.spherePos[1];
     d[30] = this.spherePos[2];

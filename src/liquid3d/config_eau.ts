@@ -69,6 +69,8 @@ export const EAU_DEFAULTS = {
   absorption: 1.0,
   /** Seuil d'iso-surface (densité floutée, 1 = repos). */
   surfaceIso: 0.4,
+  /** Mousse (eau aérée blanchie) : 0 = eau parfaitement claire. */
+  foam: 0.7,
   /** Vue debug du rendu (0 = aucune). */
   debugView: 0,
   pointSize: 0.0035,
