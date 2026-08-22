@@ -1,15 +1,21 @@
-// J1 — transferts particules → grille de la SIMULATION (le banc J0 vit dans
-// p2g_bench.wgsl). init_dam : colonne d'eau 64×64×64 cellules contre une paroi,
-// 8 particules/cellule, TRIÉE par construction (l'état que le tri périodique
+// J1/J2 — transferts particules → grille de la SIMULATION (le banc J0 vit dans
+// p2g_bench.wgsl). init_dam : colonne d'eau contre une paroi, 8
+// particules/cellule, TRIÉE par construction (l'état que le tri périodique
 // entretient). scatter : dispersion trilinéaire MAC + comptage de cellule
-// (marqueur eau/air ET histogramme du tri). resolve : vitesses de grille
-// (velOld — la référence du delta FLIP) depuis les accumulateurs atomiques.
+// (marqueur eau/air ET histogramme du tri) ; en APIC (J2) chaque nœud reçoit
+// v + C·(x_nœud − x_p) — la matrice affine C (gradient de vitesse porté par la
+// particule) transporte la rotation/cisaillement sous-cellule que le PIC
+// perdait et que le FLIP ne gardait qu'avec du bruit. resolve : vitesses de
+// grille (velOld — la référence du delta FLIP) depuis les accumulateurs.
 // Le rayon de dispersion (±1 face) EST l'extrapolation de vélocité dans l'air
 // au voisinage de la surface : le G2P trilinéaire retombe toujours dessus.
+// Layout particule (4 vec4, voir config_eau.ts PARTICLE_STRIDE) :
+//   [0] pos.xyz, w = c_w.x · [1] vel.xyz, w = c_w.y · [2] c_u.xyz, w = c_w.z ·
+//   [3] c_v.xyz.
 
 struct UEau {
   sim: vec4f,      // x: N, y: nb particules, z: dt sous-pas, w: gravité
-  sim2: vec4f,     // x: mélange FLIP, y-w: libres
+  sim2: vec4f,     // x: mélange FLIP, y: largeur colonne, z: 1 = APIC
   cam_pos: vec4f,
   cam_right: vec4f,
   cam_up: vec4f,
@@ -60,8 +66,10 @@ fn init_dam(@builtin(global_invocation_id) gid: vec3u) {
   let cz = f32(cell / 2048u);
   let pos = vec3f(cx, cy, cz) +
     vec3f(rand01(s), rand01(s ^ 0x9e3779b9u), rand01(s ^ 0x85ebca6bu));
-  particles[2u * i] = vec4f(pos, 0.0);
-  particles[2u * i + 1u] = vec4f(0.0);
+  particles[4u * i] = vec4f(pos, 0.0);
+  particles[4u * i + 1u] = vec4f(0.0);
+  particles[4u * i + 2u] = vec4f(0.0);
+  particles[4u * i + 3u] = vec4f(0.0);
 }
 
 fn cell_index(c: vec3i, n: i32) -> u32 {
@@ -69,45 +77,54 @@ fn cell_index(c: vec3i, n: i32) -> u32 {
   return u32(q.x + n * (q.y + n * q.z));
 }
 
-fn scatter_u(fp: vec3f, value: f32, n: i32) {
+// fp = position dans le repère des faces de la composante ; c = ligne de la
+// matrice affine pour cette composante (nulle en FLIP/PIC) : la valeur déposée
+// sur le nœud est v + c · (x_nœud − x_p), x_nœud − x_p = (base + d) − fp.
+fn scatter_u(fp: vec3f, value: f32, c: vec3f, n: i32) {
   let base = vec3i(floor(fp));
   let t = fp - floor(fp);
   for (var dz = 0; dz <= 1; dz++) {
     for (var dy = 0; dy <= 1; dy++) {
       for (var dx = 0; dx <= 1; dx++) {
+        let d = vec3i(dx, dy, dz);
         let w = mix(1.0 - t.x, t.x, f32(dx)) * mix(1.0 - t.y, t.y, f32(dy)) * mix(1.0 - t.z, t.z, f32(dz));
-        let idx = cell_index(base + vec3i(dx, dy, dz), n);
-        atomicAdd(&acc_u[idx], i32(round(value * w * SCALE)));
+        let idx = cell_index(base + d, n);
+        let v = value + dot(c, vec3f(base + d) - fp);
+        atomicAdd(&acc_u[idx], i32(round(v * w * SCALE)));
         atomicAdd(&wgt_u[idx], i32(round(w * SCALE)));
       }
     }
   }
 }
 
-fn scatter_v(fp: vec3f, value: f32, n: i32) {
+fn scatter_v(fp: vec3f, value: f32, c: vec3f, n: i32) {
   let base = vec3i(floor(fp));
   let t = fp - floor(fp);
   for (var dz = 0; dz <= 1; dz++) {
     for (var dy = 0; dy <= 1; dy++) {
       for (var dx = 0; dx <= 1; dx++) {
+        let d = vec3i(dx, dy, dz);
         let w = mix(1.0 - t.x, t.x, f32(dx)) * mix(1.0 - t.y, t.y, f32(dy)) * mix(1.0 - t.z, t.z, f32(dz));
-        let idx = cell_index(base + vec3i(dx, dy, dz), n);
-        atomicAdd(&acc_v[idx], i32(round(value * w * SCALE)));
+        let idx = cell_index(base + d, n);
+        let v = value + dot(c, vec3f(base + d) - fp);
+        atomicAdd(&acc_v[idx], i32(round(v * w * SCALE)));
         atomicAdd(&wgt_v[idx], i32(round(w * SCALE)));
       }
     }
   }
 }
 
-fn scatter_w(fp: vec3f, value: f32, n: i32) {
+fn scatter_w(fp: vec3f, value: f32, c: vec3f, n: i32) {
   let base = vec3i(floor(fp));
   let t = fp - floor(fp);
   for (var dz = 0; dz <= 1; dz++) {
     for (var dy = 0; dy <= 1; dy++) {
       for (var dx = 0; dx <= 1; dx++) {
+        let d = vec3i(dx, dy, dz);
         let w = mix(1.0 - t.x, t.x, f32(dx)) * mix(1.0 - t.y, t.y, f32(dy)) * mix(1.0 - t.z, t.z, f32(dz));
-        let idx = cell_index(base + vec3i(dx, dy, dz), n);
-        atomicAdd(&acc_w[idx], i32(round(value * w * SCALE)));
+        let idx = cell_index(base + d, n);
+        let v = value + dot(c, vec3f(base + d) - fp);
+        atomicAdd(&acc_w[idx], i32(round(v * w * SCALE)));
         atomicAdd(&wgt_w[idx], i32(round(w * SCALE)));
       }
     }
@@ -121,14 +138,21 @@ fn scatter(@builtin(global_invocation_id) gid: vec3u) {
     return;
   }
   let n = i32(U.sim.x);
-  let pos = particles[2u * i].xyz;
-  let vel = particles[2u * i + 1u].xyz;
+  let p0 = particles[4u * i];
+  let p1 = particles[4u * i + 1u];
+  let p2 = particles[4u * i + 2u];
+  let p3 = particles[4u * i + 3u];
+  let pos = p0.xyz;
+  let vel = p1.xyz;
+  let c_u = p2.xyz;
+  let c_v = p3.xyz;
+  let c_w = vec3f(p0.w, p1.w, p2.w);
   // Marqueur eau/air : la cellule qui CONTIENT la particule.
   atomicAdd(&cell_count[cell_index(vec3i(floor(pos)), n)], 1u);
   // Convention MAC du moteur : u en (i, j+½, k+½), v en (i+½, j, k+½), w en (i+½, j+½, k).
-  scatter_u(pos - vec3f(0.0, 0.5, 0.5), vel.x, n);
-  scatter_v(pos - vec3f(0.5, 0.0, 0.5), vel.y, n);
-  scatter_w(pos - vec3f(0.5, 0.5, 0.0), vel.z, n);
+  scatter_u(pos - vec3f(0.0, 0.5, 0.5), vel.x, c_u, n);
+  scatter_v(pos - vec3f(0.5, 0.0, 0.5), vel.y, c_v, n);
+  scatter_w(pos - vec3f(0.5, 0.5, 0.0), vel.z, c_w, n);
 }
 
 @compute @workgroup_size(4, 4, 4)

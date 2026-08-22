@@ -33,8 +33,8 @@ fn vs_points(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -
   out.color = vec3f(0.0);
   out.pos = vec4f(0.0, 0.0, 0.0, 1.0);
 
-  let world = particles[2u * ii].xyz / U.sim.x - vec3f(0.5);
-  let speed = length(particles[2u * ii + 1u].xyz);
+  let world = particles[4u * ii].xyz / U.sim.x - vec3f(0.5);
+  let speed = length(particles[4u * ii + 1u].xyz);
   // Rampe : eau profonde (bleu) → agitée (cyan) → écumante (blanc cassé).
   let t = clamp(speed / 320.0, 0.0, 1.0);
   let deep = vec3f(0.05, 0.16, 0.42);

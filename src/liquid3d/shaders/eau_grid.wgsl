@@ -7,7 +7,7 @@
 
 struct UEau {
   sim: vec4f,  // x: N, y: nb particules, z: dt sous-pas, w: gravité (voxels/s²)
-  sim2: vec4f, // x: mélange FLIP
+  sim2: vec4f, // x: mélange FLIP, y: largeur colonne, z: APIC, w: taux densité (1/s)
   cam_pos: vec4f,
   cam_right: vec4f,
   cam_up: vec4f,
@@ -86,11 +86,13 @@ fn face_w(c: vec3i, n: i32) -> f32 {
 //    éclaboussure et ne se recompacte jamais (mesuré : nappe calme à ~4
 //    particules/cellule, volume ×2). Jamais de compression en surface : elle
 //    aspirerait la surface libre.
-// Taux en 1/s (indépendant du sous-pas) : à rel = 1, la cellule demande 10 %
-// de volume par 10 ms. L'ancien 0.3/dt (= 3600 %/s) sur-réagissait au bruit
-// de Poisson du comptage et POMPAIT de l'énergie dans le bassin calme (surface
-// qui « bout », grumeaux à 24+ particules/cellule).
-const DENSITY_RATE = 10.0;
+// Taux en 1/s (uniform sim2.w, indépendant du sous-pas) : à rel = 1 et 10/s,
+// la cellule demande 10 % de volume par 10 ms. L'ancien 0.3/dt (= 3600 %/s)
+// sur-réagissait au bruit de Poisson du comptage et POMPAIT de l'énergie dans
+// le bassin calme (surface qui « bout », grumeaux à 24+ particules/cellule).
+fn density_rate() -> f32 {
+  return U.sim2.w;
+}
 // Pas de pression : écrit 0 (purge du warm start au reset — leçon 2D).
 @compute @workgroup_size(4, 4, 4)
 fn clear_pressure(@builtin(global_invocation_id) gid: vec3u) {
@@ -135,7 +137,7 @@ fn divergence(@builtin(global_invocation_id) gid: vec3u) {
   if (rel < 0.0 && air_adjacent(c, n)) {
     rel = 0.0;
   }
-  let d_target = DENSITY_RATE * rel;
+  let d_target = density_rate() * rel;
   textureStore(div_dst, gid, vec4f(d - d_target, 0.0, 0.0, 0.0));
 }
 

@@ -8,8 +8,13 @@
 export const GRID_EAU = 128;
 
 /** Nombre de particules : 8 par cellule d'eau initiale, ~1/8 de boîte
- *  (64³ cellules × 8 = exactement 2 M). Buffer fixe 32 o/particule = 64 Mo. */
+ *  (64³ cellules × 8 = exactement 2 M). Buffer fixe 64 o/particule = 128 Mo. */
 export const PARTICLES_EAU = 2_097_152;
+
+/** vec4 par particule (J2 APIC) : [0] pos.xyz + c_w.x · [1] vel.xyz + c_w.y ·
+ *  [2] c_u.xyz + c_w.z · [3] c_v.xyz — c_u/c_v/c_w = gradient de chaque
+ *  composante MAC de la vitesse au point de la particule (matrice affine C). */
+export const PARTICLE_STRIDE = 4;
 
 /** Échelle de virgule fixe des accumulations atomiques P2G (i32) :
  *  vitesses ≤ ~500 voxels/s × poids ≤ 1 × 256 → marge i32 très confortable
@@ -31,10 +36,17 @@ export const SORT_INTERVAL = 12;
 export const EAU_DEFAULTS = {
   /** Gravité (voxels/s²) : ~9,81 m/s² pour une boîte de ~1,5 m. */
   gravity: 840,
+  /** Transfert APIC (J2, Jiang 2015 : vitesse + matrice affine C par
+   *  particule — le bruit FLIP en moins, la dissipation PIC en moins) ;
+   *  false = FLIP/PIC avec le mélange ci-dessous. */
+  apic: true,
   /** Mélange FLIP/PIC : 1 = FLIP pur (vif, bruité), 0 = PIC pur (amorti). */
   flipBlend: 0.92,
   /** Colonne initiale : 64 = basse (64×32×128), 32 = haute (32×64×128). */
   damWidth: 64,
+  /** Contrôle de densité (1/s) : expansion des cellules tassées, compression
+   *  des cellules intérieures sous-denses (voir eau_grid.wgsl). */
+  densityRate: 10,
   /** Balayages Jacobi par sous-pas. LEÇON J1 : Jacobi propage ~1 cellule par
    *  balayage — il ne tient l'hydrostatique que jusqu'à ~32 cellules de
    *  profondeur d'eau (100 it.). Au-delà : explosion d'énergie (le fond se

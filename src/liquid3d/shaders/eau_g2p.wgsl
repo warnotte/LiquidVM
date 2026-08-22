@@ -1,12 +1,17 @@
-// J1 — transfert grille → particules (G2P) + advection.
+// J1/J2 — transfert grille → particules (G2P) + advection.
 // FLIP/PIC : v = mix(v_grille, v_particule + Δv_grille, α) où Δv = velNew −
 // velOld (la grille avant forces/projection). α = 1 → FLIP pur (vif, bruité),
-// α = 0 → PIC pur (amorti). Advection RK2 point-milieu sur velNew, déplacement
-// borné (garde CFL), clamp aux parois avec annulation de la composante normale.
+// α = 0 → PIC pur (amorti).
+// APIC (J2, sim2.z = 1) : v = v_grille (PIC) ET C = ∇v_grille au point de la
+// particule (différences centrées à ½ voxel sur l'interpolant trilinéaire MAC),
+// rendue à la grille par le scatter (v + C·dx) : l'information sous-cellule
+// survit sans le bruit du FLIP. Layout particule : voir sim_p2g.wgsl.
+// Advection RK2 point-milieu sur velNew, déplacement borné (garde CFL), clamp
+// aux parois avec annulation de la composante normale.
 
 struct UEau {
   sim: vec4f,  // x: N, y: nb particules, z: dt sous-pas, w: gravité
-  sim2: vec4f, // x: mélange FLIP
+  sim2: vec4f, // x: mélange FLIP, y: largeur colonne, z: 1 = APIC
   cam_pos: vec4f,
   cam_right: vec4f,
   cam_up: vec4f,
@@ -67,19 +72,35 @@ fn g2p(@builtin(global_invocation_id) gid: vec3u) {
   }
   let n = U.sim.x;
   let dt = U.sim.z;
-  let pos = particles[2u * i].xyz;
-  let vel_p = particles[2u * i + 1u].xyz;
+  let pos = particles[4u * i].xyz;
+  let vel_p = particles[4u * i + 1u].xyz;
 
-  // Mise à jour de vitesse FLIP/PIC.
   let g_new = sample_new(pos);
-  let g_old = sample_old(pos);
-  let v_pic = g_new;
-  let v_flip = vel_p + (g_new - g_old);
+  var v: vec3f;
+  var c_u = vec3f(0.0);
+  var c_v = vec3f(0.0);
+  var c_w = vec3f(0.0);
   // Filet float16 : les textures de vitesse sont en rgba16float — au-delà de
   // ~65k tout devient inf puis NaN (leçon durement payée du 2D). Une vitesse
   // physique ne dépasse jamais ~600 voxels/s ici : tout excès est une erreur
   // numérique qu'on écrase avant qu'elle ne contamine.
-  var v = clamp(mix(v_pic, v_flip, U.sim2.x), vec3f(-600.0), vec3f(600.0));
+  if (U.sim2.z > 0.5) {
+    // APIC : vitesse PIC + gradient de vitesse (colonnes = ∂/∂x, ∂/∂y, ∂/∂z).
+    let h = 0.5;
+    let gx = (sample_new(pos + vec3f(h, 0.0, 0.0)) - sample_new(pos - vec3f(h, 0.0, 0.0))) / (2.0 * h);
+    let gy = (sample_new(pos + vec3f(0.0, h, 0.0)) - sample_new(pos - vec3f(0.0, h, 0.0))) / (2.0 * h);
+    let gz = (sample_new(pos + vec3f(0.0, 0.0, h)) - sample_new(pos - vec3f(0.0, 0.0, h))) / (2.0 * h);
+    let lim = vec3f(2000.0);
+    c_u = clamp(vec3f(gx.x, gy.x, gz.x), -lim, lim);
+    c_v = clamp(vec3f(gx.y, gy.y, gz.y), -lim, lim);
+    c_w = clamp(vec3f(gx.z, gy.z, gz.z), -lim, lim);
+    v = clamp(g_new, vec3f(-600.0), vec3f(600.0));
+  } else {
+    // FLIP/PIC.
+    let g_old = sample_old(pos);
+    let v_flip = vel_p + (g_new - g_old);
+    v = clamp(mix(g_new, v_flip, U.sim2.x), vec3f(-600.0), vec3f(600.0));
+  }
 
   // Advection RK2 (point milieu) sur le champ projeté, déplacement borné.
   // NB : « move » est un mot réservé WGSL (comme « from » et « target »).
@@ -105,8 +126,10 @@ fn g2p(@builtin(global_invocation_id) gid: vec3u) {
   }
   p_new = clamp(p_new, lo, hi);
 
-  particles[2u * i] = vec4f(p_new, 0.0);
-  particles[2u * i + 1u] = vec4f(v, 0.0);
+  particles[4u * i] = vec4f(p_new, c_w.x);
+  particles[4u * i + 1u] = vec4f(v, c_w.y);
+  particles[4u * i + 2u] = vec4f(c_u, c_w.z);
+  particles[4u * i + 3u] = vec4f(c_v, 0.0);
 }
 
 // RECENSEMENT (l'instrument du jalon J1 : « compteur de particules au HUD ») :
@@ -118,8 +141,8 @@ fn census_pass(@builtin(global_invocation_id) gid: vec3u) {
   if (f32(i) >= U.sim.y) {
     return;
   }
-  let pos = particles[2u * i].xyz;
-  let vel = particles[2u * i + 1u].xyz;
+  let pos = particles[4u * i].xyz;
+  let vel = particles[4u * i + 1u].xyz;
   let pos_ok = pos.x == pos.x && pos.y == pos.y && pos.z == pos.z &&
     all(pos >= vec3f(0.0)) && all(pos <= vec3f(U.sim.x));
   let vel_ok = vel.x == vel.x && vel.y == vel.y && vel.z == vel.z;

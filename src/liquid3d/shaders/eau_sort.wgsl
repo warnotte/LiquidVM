@@ -34,7 +34,7 @@ fn histogram(@builtin(global_invocation_id) gid: vec3u) {
   if (f32(i) >= U.sim.y) {
     return;
   }
-  atomicAdd(&block_count[block_of(src[2u * i].xyz)], 1u);
+  atomicAdd(&block_count[block_of(src[4u * i].xyz)], 1u);
 }
 
 // Scan exclusif sériel : block_cursor[b] = départ du bloc b dans le buffer trié.
@@ -56,7 +56,9 @@ fn reorder(@builtin(global_invocation_id) gid: vec3u) {
   if (f32(i) >= U.sim.y) {
     return;
   }
-  let d = atomicAdd(&block_cursor[block_of(src[2u * i].xyz)], 1u);
-  dst[2u * d] = src[2u * i];
-  dst[2u * d + 1u] = src[2u * i + 1u];
+  let d = atomicAdd(&block_cursor[block_of(src[4u * i].xyz)], 1u);
+  dst[4u * d] = src[4u * i];
+  dst[4u * d + 1u] = src[4u * i + 1u];
+  dst[4u * d + 2u] = src[4u * i + 2u];
+  dst[4u * d + 3u] = src[4u * i + 3u];
 }

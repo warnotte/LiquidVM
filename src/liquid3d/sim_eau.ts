@@ -16,7 +16,7 @@ import g2pWGSL from './shaders/eau_g2p.wgsl?raw';
 import sortWGSL from './shaders/eau_sort.wgsl?raw';
 import pointsWGSL from './shaders/eau_points.wgsl?raw';
 import surfaceWGSL from './shaders/eau_surface.wgsl?raw';
-import { GRID_EAU, PARTICLES_EAU, SORT_BLOCKS, SORT_INTERVAL, WG_GRID, WG_PARTICLES } from './config_eau';
+import { GRID_EAU, PARTICLES_EAU, PARTICLE_STRIDE, SORT_BLOCKS, SORT_INTERVAL, WG_GRID, WG_PARTICLES } from './config_eau';
 import { createShaderModule, withValidation } from '../core/pipelines';
 import { flip, type Pair, type PingIndex } from '../core/types';
 
@@ -25,7 +25,11 @@ export interface FrameEauInput {
   paused: boolean;
   reset: boolean;
   gravity: number;
+  /** true = transfert APIC (J2) ; false = FLIP/PIC (flipBlend). */
+  apic: boolean;
   flipBlend: number;
+  /** Taux du contrôle de densité (1/s) — 0 = coupé. */
+  densityRate: number;
   /** Largeur de la colonne initiale (64 = basse 64×32, 32 = haute 32×64). */
   damWidth: number;
   jacobiIterations: number;
@@ -113,7 +117,7 @@ export class FluidEau {
       const particles = pair((i) =>
         device.createBuffer({
           label: `eau-particles-${i}`,
-          size: PARTICLES_EAU * 32,
+          size: PARTICLES_EAU * 16 * PARTICLE_STRIDE,
           usage: GPUBufferUsage.STORAGE,
         }),
       );
@@ -641,6 +645,8 @@ export class FluidEau {
     d[3] = input.gravity;
     d[4] = input.flipBlend;
     d[5] = input.damWidth;
+    d[6] = input.apic ? 1 : 0;
+    d[7] = input.densityRate;
     // Caméra orbitale (même construction que le feu).
     const { azimuth, elevation, radius } = input.cam;
     const cy = Math.cos(elevation);

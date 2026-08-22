@@ -78,8 +78,10 @@ async function boot(): Promise<void> {
     paused: false,
     reset: false,
     gravity: EAU_DEFAULTS.gravity,
+    apic: params.has('flip') ? false : EAU_DEFAULTS.apic,
     flipBlend: EAU_DEFAULTS.flipBlend,
     damWidth: params.has('tall') ? 32 : EAU_DEFAULTS.damWidth,
+    densityRate: EAU_DEFAULTS.densityRate,
     jacobiIterations: EAU_DEFAULTS.jacobiIterations,
     substeps: EAU_DEFAULTS.substeps,
     timeScale: EAU_DEFAULTS.timeScale,
@@ -158,11 +160,13 @@ async function boot(): Promise<void> {
       sliders: [
         { label: 'gravité', min: 0, max: 2000, step: 20, get: () => input.gravity, set: (x) => (input.gravity = x), format: (x) => x.toFixed(0) },
         { label: 'mélange FLIP', min: 0, max: 1, step: 0.01, get: () => input.flipBlend, set: (x) => (input.flipBlend = x) },
+        { label: 'contrôle densité (/s)', min: 0, max: 60, step: 1, get: () => input.densityRate, set: (x) => (input.densityRate = x), format: (x) => x.toFixed(0) },
         { label: 'itérations Jacobi', min: 10, max: 120, step: 2, get: () => input.jacobiIterations, set: (x) => (input.jacobiIterations = x), format: (x) => x.toFixed(0) },
         { label: 'sous-pas', min: 1, max: 4, step: 1, get: () => input.substeps, set: (x) => (input.substeps = x), format: (x) => x.toFixed(0) },
         { label: 'vitesse du temps', min: 0, max: 1.5, step: 0.05, get: () => input.timeScale, set: (x) => (input.timeScale = x), format: (x) => `×${x.toFixed(2)}` },
       ],
       checks: [
+        { label: 'APIC (J2) — décoché : FLIP/PIC', get: () => input.apic, set: (v) => (input.apic = v) },
         {
           label: 'colonne haute 32×64 (reset)',
           get: () => input.damWidth === 32,
