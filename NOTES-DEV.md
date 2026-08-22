@@ -104,25 +104,34 @@ Config actuelle : sim 1024², dye/scène 2048².
   (`platform/web/preview.ts` + son câblage main.ts/styles) — il sert TOUS les
   outils, pas que la marbrure.
 
+## Chantier suivant : EAU liquide (branche `eau`)
+
+Conception complète dans [PLAN-EAU.md](PLAN-EAU.md) — méthode (FLIP/PIC),
+architecture (`eau.html` + `src/liquid3d/`, pont atomics→textures), jalons
+J0–J5 avec critères de sortie mesurables, risques/mitigations, conventions
+(merge dans main par jalon vert uniquement). À lire AVANT d'écrire du code eau.
+
 ## Chantier 3D (branche `3d`)
 
 - **Page séparée `3d.html`** (`src/platform/web/main3d.ts`) — l'appli 2D n'est pas
   touchée. `src/core3d/` : même doctrine que core/ (zéro DOM, zéro alloc/frame, un
   encoder, bind groups pré-créés), `config3d.ts` (GRID3 = 128) + `sim3d.ts` (tout
   l'orchestrateur) + `shaders3d/`.
-- **État** : 256³ (GRID3, forces remises à l'échelle par SCALE3 = GRID3/128 pour
-  garder le comportement physique), MAC 3D MacCormack, TROIS ENCRES COLORÉES
-  (canaux xyz de la densité, palette INK_COLORS bleu/magenta/ambre dupliquée dans
-  raymarch.wgsl, touches 1/2/3 = encre de l'émetteur via blow_force.w, albédo
-  mélangé par voxel au rendu), poussée thermique, projection MULTIGRID 3D
-  (V-cycle GRID3→8³, 2 cycles/frame — pin p(0,0,0)=0 au 8³ appliqué d'office,
-  le clamp des voisins EST l'opérateur Neumann exact, adjoint du couple
-  divergence/gradient compact ; repli Jacobi comparatif via
+- **État** : résolution 128³–512³ (GRID3 via setGrid3, défaut 256³ ; forces
+  remises à l'échelle par SCALE3 = GRID3/128 pour garder le comportement
+  physique), MAC 3D MacCormack RK2, TROIS ENCRES COLORÉES (canaux xyz de la
+  densité, palette INK_COLORS bleu/magenta/ambre dupliquée dans raymarch.wgsl,
+  touches 1/2/3 = encre de l'émetteur via blow_force.w, albédo mélangé par voxel
+  au rendu), poussée thermique, projection MULTIGRID 3D (V-cycle GRID3→coarsest
+  < 16, 1 cycle/frame warm-starté — pin p(0,0,0)=0 au niveau grossier appliqué
+  d'office, le clamp des voisins EST l'opérateur Neumann exact, adjoint du
+  couple divergence/gradient compact ; repli Jacobi comparatif via
   `__frame3d.multigrid=false`), émetteur de panache balancé, ray-marching
-  (Beer-Lambert + corps noir + ombre interne 6 pas + liseré de boîte), souffle au
-  clic droit, caméra orbitale, E = export VDB (encodeur généralisé multi-nœuds 16³,
-  jusqu'à 4096³ ; density = somme des encres). 60 FPS à 256³ desktop, VDB 256³
-  re-validé dans Blender.
+  (Beer-Lambert + corps noir + éclairage volumétrique, voir plus bas), souffle
+  au clic droit, caméra orbitale, E = export VDB (encodeur généralisé
+  multi-nœuds 16³ ; density = somme des encres, ≤ 512³ depuis le fix
+  maxBufferSize). 60 FPS à 256³, ~26 à 384³, ~20 à 512³ (machine de référence),
+  VDB re-validé dans Blender.
 - **Interactions saisies** : clic gauche sur la flamme ou la boule = déplacer
   (hitTest par rayon décide saisie vs orbite ; déplacement sur le plan face
   caméra passant par l'objet), A = + émetteur sous le pointeur (max 4, chacun

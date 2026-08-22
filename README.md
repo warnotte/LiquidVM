@@ -17,16 +17,40 @@ chaque push sur `main` redéploie automatiquement (GitHub Pages).
 ## Simulation 3D volumétrique (`3d.html`)
 
 Deuxième page de l'appli (bouton « 🧊 3D » de la barre d'outils, ou
-[/3d.html](https://warnotte.github.io/LiquidVM/3d.html)) : solveur MAC 3D 256³
-(128³–320³ via `?grid=`), advection MacCormack à traces RK2, projection multigrid
-V-cycle, combustion à trois réactifs (carburant / chaleur / oxygène) avec expansion
-volumique au front de flamme et refroidissement radiatif T⁴, trois encres colorées,
-sphère-obstacle déplaçable à condition de bord mobile (elle brasse le fluide),
-multi-émetteurs, souffle au pointeur, rendu ray-marching (Beer-Lambert, corps noir,
-ombres volumétriques, sol), export OpenVDB (touche `E`, validé dans Blender), mode
-démo chorégraphié (`D`), panneau de réglages déclaratif (`Tab`, toute la physique à
-chaud). Même contrat que le 2D : état 100 % GPU, zéro readback en boucle de frame,
-`src/core3d/` portable sans DOM.
+[/3d.html](https://warnotte.github.io/LiquidVM/3d.html)).
+
+**Simulation** : solveur MAC 3D, résolution choisissable 128³ à 512³ (`?grid=` ou
+sélecteur du panneau, estimation VRAM affichée — 512³ ≈ 11,3 Go, mesuré 20 FPS sur
+RTX 5070 Ti 16 Go ; 256³ par défaut à 60 FPS), advection MacCormack à traces RK2,
+projection multigrid V-cycle, vorticity confinement à magnitude floutée (défaut
+ε = 12), combustion à trois réactifs (carburant / chaleur / **oxygène** — une flamme
+s'étouffe en vase clos, le souffle la ravive) avec expansion volumique au front de
+flamme et refroidissement radiatif T⁴, trois encres colorées, sphère-obstacle
+déplaçable à condition de bord mobile (elle brasse le fluide), multi-émetteurs,
+souffle au pointeur.
+
+**Rendu** : ray-marching HDR (Beer-Lambert, corps noir), **éclairage volumétrique**
+— la flamme éclaire sa propre fumée via un volume de lueur diffusé, flaque de
+lumière au sol, phase Henyey-Greenstein, ombre interne à deux octaves (« powder »),
+chaîne bloom, résolution de rendu adaptative pilotée par le FPS. **Braises** en
+option (`B`) : étincelles nées des zones chaudes, portées par le fluide, occluses
+par la fumée. Coût mesuré nul quand coupées.
+
+**Autour** : presets un-clic (bougie / fournaise / fumée épaisse), mode démo
+chorégraphié en quatre actes (`D` — restaure vos réglages en sortie), export
+OpenVDB (`E`, validé dans Blender, jusqu'à 512³), panneau de réglages déclaratif
+(`Tab`, toute la physique à chaud). Même contrat que le 2D : état 100 % GPU, zéro
+readback en boucle de frame, `src/core3d/` portable sans DOM.
+
+| Entrée (3D) | Effet |
+| ----------- | ----- |
+| glisser | orbiter la caméra — ou déplacer la flamme/boule si le clic les attrape |
+| clic droit + glisser | souffler (fuseau lumineux le long du rayon) |
+| molette | zoom |
+| `1`/`2`/`3` | encre de l'émetteur : fumée / encre / carburant |
+| `A` / `X` | ajouter un émetteur sous le pointeur (max 4) / retirer le dernier |
+| `O` / `B` / `F` | boule-obstacle / braises / retours visuels |
+| `D` / `E` / `R` / `Espace` | démo / export .vdb / reset / pause |
 
 ## Commandes
 
@@ -126,7 +150,7 @@ boucle de frame) ; workgroups 16×16 (= 256, la limite d'invocations par défaut
 
 ```
 src/
-├─ core/                 # portable : ne touche ni DOM, ni window, ni events
+├─ core/                 # 2D portable : ne touche ni DOM, ni window, ni events
 │  ├─ config.ts          # GRID_SIZE, formats (choix justifiés), propriétés des fluides
 │  ├─ types.ts           # FrameInput abstrait (pointeur normalisé, fluide, actions)
 │  ├─ uniforms.ts        # remplissage CPU de l'uniform buffer (seul trafic par frame)
@@ -137,11 +161,19 @@ src/
 │  ├─ render.ts          # scène HDR + chaîne de bloom + présentation
 │  ├─ simulation.ts      # FluidSim : orchestration d'une frame
 │  └─ shaders/*.wgsl     # features de base uniquement, portables Dawn/wgpu tels quels
+├─ core3d/               # 3D portable (même doctrine) — page 3d.html
+│  ├─ config3d.ts        # GRID3 (128–512 via setGrid3), presets physiques, défauts
+│  ├─ sim3d.ts           # FluidSim3D : ressources, pipelines, orchestration
+│  ├─ vdb.ts             # encodeur OpenVDB pur TS (readback ponctuel hors frame)
+│  └─ shaders3d/*.wgsl   # advection, forces, vorticité, projection+MG, espèces,
+│                        #   raymarch, lueur, post (bloom), braises
 └─ platform/web/         # jetable/remplaçable : adapter/device, canvas, rAF, souris,
    ├─ gpu.ts             #   clavier, overlay, resize, gestion device.lost
-   ├─ input.ts
+   ├─ input.ts           #   (+ requiredLimits maxBufferSize pour les grilles ≥ 384³)
    ├─ overlay.ts
-   └─ main.ts            # + mode ?selftest (input synthétique, rapport dans le DOM)
+   ├─ panel.ts, toolbar.ts, panel3d.ts   # panneaux/barres déclaratifs 2D et 3D
+   ├─ main.ts            # entrée 2D + mode ?selftest (rapport dans le DOM)
+   └─ main3d.ts          # entrée 3D : caméra, interactions, DemoDriver, ?selftest
 ```
 
 ## Portage natif (Dawn / wgpu-native)
