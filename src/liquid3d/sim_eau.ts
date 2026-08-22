@@ -26,6 +26,8 @@ export interface FrameEauInput {
   reset: boolean;
   gravity: number;
   flipBlend: number;
+  /** Largeur de la colonne initiale (64 = basse 64×32, 32 = haute 32×64). */
+  damWidth: number;
   jacobiIterations: number;
   substeps: number;
   timeScale: number;
@@ -638,6 +640,7 @@ export class FluidEau {
     d[2] = dtSub;
     d[3] = input.gravity;
     d[4] = input.flipBlend;
+    d[5] = input.damWidth;
     // Caméra orbitale (même construction que le feu).
     const { azimuth, elevation, radius } = input.cam;
     const cy = Math.cos(elevation);

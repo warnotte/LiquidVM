@@ -190,9 +190,16 @@ NOTES-DEV mis à jour à chaque jalon, pièges payés documentés immédiatement
   surface, selftest OK, build prod OK. Reste : bruit FLIP en régime calme
   (intérieur grumeleux, fringe de 2-3 voxels de particules éparses en surface —
   le sujet d'APIC en J2), dérive lente de l'histogramme sur 2 minutes (8-10 k
-  cellules à 24+). La colonne PROFONDE (64) est à re-tester maintenant que le
-  sol existe : le multigrid masqué reste prévu, mais n'est peut-être plus
-  l'épreuve d'entrée.
+  cellules à 24+).
+  **Colonne PROFONDE re-testée dans la foulée** (case « colonne haute 32×64 »
+  / `?tall`) : elle s'effondre, déferle et se calme en ~17 voxels SANS
+  explosion avec Jacobi 100 (0 perdue ; 230 « rapides » pendant l'impact puis
+  ~10) — c'est le sol qui manquait, pas le solveur. **J1 est VERT** sur ses
+  critères. Le multigrid masqué (J4) redevient une optimisation, plus l'épreuve
+  d'entrée. À surveiller : légère pente résiduelle de la surface en coupe à
+  110 s sur la colonne haute (seiche lente ou asymétrie parois basses/hautes
+  — la paroi haute a le fondu `wall_fade`, la paroi basse absorbe dans la
+  face 0), à mesurer avant de conclure.
 
 ## Conventions du chantier
 

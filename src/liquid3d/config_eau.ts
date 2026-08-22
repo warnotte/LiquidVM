@@ -33,6 +33,8 @@ export const EAU_DEFAULTS = {
   gravity: 840,
   /** Mélange FLIP/PIC : 1 = FLIP pur (vif, bruité), 0 = PIC pur (amorti). */
   flipBlend: 0.92,
+  /** Colonne initiale : 64 = basse (64×32×128), 32 = haute (32×64×128). */
+  damWidth: 64,
   /** Balayages Jacobi par sous-pas. LEÇON J1 : Jacobi propage ~1 cellule par
    *  balayage — il ne tient l'hydrostatique que jusqu'à ~32 cellules de
    *  profondeur d'eau (100 it.). Au-delà : explosion d'énergie (le fond se

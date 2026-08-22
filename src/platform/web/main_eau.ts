@@ -79,6 +79,7 @@ async function boot(): Promise<void> {
     reset: false,
     gravity: EAU_DEFAULTS.gravity,
     flipBlend: EAU_DEFAULTS.flipBlend,
+    damWidth: params.has('tall') ? 32 : EAU_DEFAULTS.damWidth,
     jacobiIterations: EAU_DEFAULTS.jacobiIterations,
     substeps: EAU_DEFAULTS.substeps,
     timeScale: EAU_DEFAULTS.timeScale,
@@ -160,6 +161,16 @@ async function boot(): Promise<void> {
         { label: 'itérations Jacobi', min: 10, max: 120, step: 2, get: () => input.jacobiIterations, set: (x) => (input.jacobiIterations = x), format: (x) => x.toFixed(0) },
         { label: 'sous-pas', min: 1, max: 4, step: 1, get: () => input.substeps, set: (x) => (input.substeps = x), format: (x) => x.toFixed(0) },
         { label: 'vitesse du temps', min: 0, max: 1.5, step: 0.05, get: () => input.timeScale, set: (x) => (input.timeScale = x), format: (x) => `×${x.toFixed(2)}` },
+      ],
+      checks: [
+        {
+          label: 'colonne haute 32×64 (reset)',
+          get: () => input.damWidth === 32,
+          set: (v) => {
+            input.damWidth = v ? 32 : 64;
+            input.reset = true;
+          },
+        },
       ],
       buttons: [
         { label: '⏯ pause (espace)', action: () => (input.paused = !input.paused) },

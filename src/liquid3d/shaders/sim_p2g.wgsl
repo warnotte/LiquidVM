@@ -51,8 +51,12 @@ fn init_dam(@builtin(global_invocation_id) gid: vec3u) {
   }
   let s = i * 1664525u + 77u;
   let cell = i / 8u;
-  let cx = f32(cell % 64u);
-  let cy = f32((cell / 64u) % 32u);
+  // Largeur de la colonne (uniform sim2.y : 64 = basse, 32 = haute) ; la
+  // section largeur×hauteur vaut toujours 2048 cellules × 128 de profondeur.
+  let w = max(u32(U.sim2.y), 1u);
+  let h = 2048u / w;
+  let cx = f32(cell % w);
+  let cy = f32((cell / w) % h);
   let cz = f32(cell / 2048u);
   let pos = vec3f(cx, cy, cz) +
     vec3f(rand01(s), rand01(s ^ 0x9e3779b9u), rand01(s ^ 0x85ebca6bu));
