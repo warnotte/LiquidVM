@@ -76,20 +76,22 @@ fn face_w(c: vec3i, n: i32) -> f32 {
 }
 
 // Divergence compacte, cellules d'EAU seulement (l'air n'est pas résolu) —
-// avec CONTRÔLE DE DENSITÉ (Bridson) DANS LES DEUX SENS, sur la densité
-// FLOUTÉE (boîte 3³, 1 = repos, calculée par sous-pas dans eau_surface.wgsl) :
-//  - surpeuplée → divergence cible positive (expansion) : contre les trous en
-//    « fromage » et la fonte du volume ;
-//  - SOUS-peuplée ET sans voisin d'air → cible négative (compression) : sans
-//    elle, le volume n'a qu'un cliquet — toute cellule touchée par une
-//    particule devient « eau » incompressible, le volume gonfle à chaque
-//    éclaboussure et ne se recompacte jamais (mesuré : nappe calme à ~4
-//    particules/cellule, volume ×2). Jamais de compression en surface : elle
-//    aspirerait la surface libre.
+// avec CONTRÔLE DE DENSITÉ (Bridson, EXPANSION SEULE) sur la densité FLOUTÉE
+// (boîte 3³, 1 = repos, calculée par sous-pas dans eau_surface.wgsl) : les
+// cellules tassées au-delà d'une ZONE MORTE de 25 % reçoivent une divergence
+// cible positive. Mesures (histogramme d'occupation, 2026-08-23) qui fixent
+// cette forme :
+//  - sans contrôle, l'eau se COMPACTE de ~25 % (82 k cellules à 12-23
+//    particules, nappe de 12,5 voxels au lieu de 16) — d'où l'expansion ;
+//  - une compression des cellules sous-denses (essayée) FABRIQUE des grumeaux
+//    (15 k cellules à 24+) et raréfie la surface (48 k cellules à 1-3) ;
+//  - sans zone morte, le bruit de Poisson du comptage (σ ≈ 35 % par cellule,
+//    ~7 % flouté) déclenche des expansions parasites qui soufflent la surface.
 // Taux en 1/s (uniform sim2.w, indépendant du sous-pas) : à rel = 1 et 10/s,
 // la cellule demande 10 % de volume par 10 ms. L'ancien 0.3/dt (= 3600 %/s)
-// sur-réagissait au bruit de Poisson du comptage et POMPAIT de l'énergie dans
-// le bassin calme (surface qui « bout », grumeaux à 24+ particules/cellule).
+// POMPAIT de l'énergie dans le bassin calme (surface qui « bout »).
+const DENSITY_DEADBAND = 0.25;
+
 fn density_rate() -> f32 {
   return U.sim2.w;
 }
@@ -101,19 +103,6 @@ fn clear_pressure(@builtin(global_invocation_id) gid: vec3u) {
     return;
   }
   textureStore(p_dst, gid, vec4f(0.0));
-}
-
-fn air_adjacent(c: vec3i, n: i32) -> bool {
-  let dirs = array<vec3i, 6>(
-    vec3i(1, 0, 0), vec3i(-1, 0, 0), vec3i(0, 1, 0), vec3i(0, -1, 0), vec3i(0, 0, 1), vec3i(0, 0, -1),
-  );
-  for (var k = 0; k < 6; k++) {
-    let q = c + dirs[k];
-    if (!solid(q, n) && !fluid(q, n)) {
-      return true;
-    }
-  }
-  return false;
 }
 
 @compute @workgroup_size(4, 4, 4)
@@ -130,13 +119,11 @@ fn divergence(@builtin(global_invocation_id) gid: vec3u) {
   let d = face_u(c + vec3i(1, 0, 0), n) - textureLoad(vel_src, c, 0).x +
     face_v(c + vec3i(0, 1, 0), n) - textureLoad(vel_src, c, 0).y +
     face_w(c + vec3i(0, 0, 1), n) - textureLoad(vel_src, c, 0).z;
-  // Bornée à [−0.5, 1] : sans le clamp, une cellule très tassée (30+
-  // particules) demandait ~180 s⁻¹ d'expansion → pressions explosives →
-  // vitesses au-delà du max float16 → NaN (la saga float16 du 2D).
-  var rel = clamp(textureLoad(dens_src, c, 0).x - 1.0, -0.5, 1.0);
-  if (rel < 0.0 && air_adjacent(c, n)) {
-    rel = 0.0;
-  }
+  // Bornée à 1 : sans le clamp, une cellule très tassée (30+ particules)
+  // demandait ~180 s⁻¹ d'expansion → pressions explosives → vitesses au-delà
+  // du max float16 → NaN (la saga float16 du 2D).
+  let over = textureLoad(dens_src, c, 0).x - 1.0 - DENSITY_DEADBAND;
+  let rel = clamp(over / (1.0 - DENSITY_DEADBAND), 0.0, 1.0);
   let d_target = density_rate() * rel;
   textureStore(div_dst, gid, vec4f(d - d_target, 0.0, 0.0, 0.0));
 }

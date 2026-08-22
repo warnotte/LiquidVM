@@ -201,6 +201,31 @@ NOTES-DEV mis à jour à chaque jalon, pièges payés documentés immédiatement
   — la paroi haute a le fondu `wall_fade`, la paroi basse absorbe dans la
   face 0), à mesurer avant de conclure.
 
+- **J2 — APIC : VERT sur le critère de coût, MODESTE sur le visuel, et la vraie
+  trouvaille est ailleurs (2026-08-23).** Transfert APIC implémenté (layout
+  particule 64 o : vitesse + matrice affine C = ∇v_grille par différences
+  centrées ½ voxel ; scatter v + C·dx ; case au panneau, `?flip` pour l'ancien
+  mode). A/B FLIP↔APIC sur la même chronologie : 60 FPS dans les deux cas
+  (coût ≤ +20 % tenu, vsync), 0 perdue, selftest OK ; histogramme à 60 s
+  légèrement meilleur en APIC (40,7 k cellules à 8-11 contre 30,7 k) mais la
+  différence visuelle est faible : l'artefact dominant du bassin calme n'était
+  PAS le bruit FLIP mais le **contrôle de densité lui-même**. Expériences
+  (histogramme à 60 s, Jacobi 100 sauf mention) :
+  | contrôle | 1-3 | 4-7 | 8-11 | 12-23 | 24+ | lecture |
+  | - | - | - | - | - | - | - |
+  | deux sens 10/s | 48 k | 66 k | 41 k | 44 k | 15 k | surface raréfiée + grumeaux |
+  | deux sens 40/s | 50 k | 71 k | 45 k | 46 k | 13 k | idem |
+  | deux sens 10/s, Jacobi 30 | 48 k | 71 k | 44 k | 45 k | 13 k | Jacobi hors de cause |
+  | aucun (0) | 5 k | 24 k | 70 k | 83 k | 1,5 k | propre mais COMPACTÉ ~25 % (nappe 12,5 au lieu de 16) |
+  | **expansion seule + zone morte 25 %, 10/s** | **12 k** | **75 k** | **105 k** | **47 k** | **0,2 k** | **volume tenu, surface propre, stable à 120 s** |
+  Leçons : la compression des cellules sous-denses FABRIQUE les grumeaux et
+  raréfie la surface (la règle « jamais en surface » pompe vers le haut) ; sans
+  zone morte le bruit de Poisson du comptage déclenche des expansions
+  parasites ; sans contrôle du tout, l'eau se compacte lentement. Forme
+  retenue dans eau_grid.wgsl, taux réglable au panneau (« contrôle densité
+  (/s) »). Le « tourbillon d'essai » du critère J2 n'a pas été testé (pas de
+  scène dédiée) — à faire avec la boule (J3), qui le fournira naturellement.
+
 ## Conventions du chantier
 
 - Branche `eau` (depuis `main`). Merge dans `main` par JALON VERT uniquement —

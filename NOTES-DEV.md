@@ -123,7 +123,12 @@ rendu (« coupe z=0 » du quart inférieur ×4, « densité max »). Une image d
 points additifs ne dit RIEN de l'épaisseur ni de la densité : mesurer.
 Rendu : `eau_surface.wgsl` = boîte (sol/parois/grille/arêtes) + iso-surface de
 la densité floutée 3³ (calculée par sous-pas, lue aussi par le contrôle de
-densité deux sens à 10/s) marchée par rayon avec réfraction ; points = touche P.
+densité) marchée par rayon avec réfraction ; points = touche P.
+Contrôle de densité (eau_grid.wgsl) : EXPANSION SEULE au-delà d'une zone morte
+de 25 %, taux 10/s — la compression des cellules sous-denses fabrique des
+grumeaux, l'absence totale de contrôle compacte l'eau de ~25 % (tableau des
+mesures dans le journal J2 de PLAN-EAU). Transfert APIC par défaut (J2), FLIP
+conservé (case / `?flip`) ; `?tall` = colonne haute 32×64.
 
 ## Chantier 3D (branche `3d`)
 
