@@ -19,21 +19,40 @@ doctrine que le reste du moteur.
 - PAS de haute résolution : 128³ tant que J1–J3 ne sont pas verts.
 - PAS de rendu réaliste avant que la physique tienne (J1 se regarde en points).
 
-## Méthode : FLIP/PIC hybride — et pourquoi
+## Méthode : particules + grille (PIC/FLIP → **APIC**)
 
-**FLIP/PIC** : les particules portent la masse et la vitesse ; la grille MAC ne
-sert qu'à imposer l'incompressibilité (projection) ; transferts
+Famille retenue : les particules portent la masse et la vitesse ; la grille
+MAC ne sert qu'à imposer l'incompressibilité (projection) ; transferts
 particules→grille (P2G) et grille→particules (G2P) à chaque pas.
 
 - Conservation de masse **triviale** (les particules ne disparaissent pas) —
   là où un level-set pur fond ou gonfle.
 - La projection réutilise NOTRE machinerie éprouvée : grille MAC compacte,
   divergence/gradient adjoints, multigrid, sphère analytique, bord mobile.
-- Standard de l'industrie (Zhu & Bridson 2005) : comportement connu, pièges
-  documentés, extensions balisées (APIC si le bruit FLIP gêne).
-- SPH rejeté : voisinages dynamiques coûteux, incompressibilité molle, rendu
-  difficile. Level-set eulérien pur rejeté : perte de masse, réinitialisation
-  de SDF délicate — exactement ce que FLIP évite.
+
+**État de l'art assumé** : la cible est **APIC** (Jiang et al. 2016) — chaque
+particule porte en plus une matrice affine C (3 vec3) ; les transferts affines
+suppriment À LA FOIS le bruit de FLIP et la dissipation de PIC, et conservent
+le moment angulaire. C'est le défaut moderne (Houdini, Bifrost). Mais APIC
+partage EXACTEMENT l'architecture de FLIP/PIC (mêmes grilles, mêmes atomics,
+même solveur) et FLIP/PIC en est un sous-ensemble : on construit donc le
+squelette avec le transfert simple (moins de pièces mobiles pendant qu'on
+déboguera atomics + surface libre), puis APIC est un JALON ferme avec A/B
+mesuré — pas une option vague.
+
+Écartés, avec raisons :
+- **SPH** : voisinages dynamiques coûteux, incompressibilité molle, rendu
+  difficile.
+- **Level-set eulérien pur** : perte de masse, réinitialisation de SDF
+  délicate — exactement ce que les particules évitent.
+- **PBF** (Position-Based Fluids) : qualité jeu vidéo, compressibilité
+  visible, ne réutilise pas notre solveur de pression.
+- **MLS-MPM** : magnifique pour le multi-matériaux (sable, neige) mais
+  remplace la projection incompressible — notre plus grande force — par un
+  modèle faiblement compressible plus coûteux par particule. Horizon lointain
+  si un jour on veut du sable, pas la v1 de l'eau.
+- **Narrow-band FLIP** : optimisation d'échelle (particules seulement près de
+  la surface) — pertinente APRÈS les jalons, pas avant.
 
 ## Architecture
 
@@ -69,15 +88,17 @@ particules→grille (P2G) et grille→particules (G2P) à chaque pas.
 
 | # | Livrable | Critère de sortie |
 | - | -------- | ----------------- |
-| J0 | Micro-banc P2G seul (scatter atomique 2 M particules) | < 2 ms/frame mesuré — sinon on revoit la méthode AVANT de construire |
-| J1 | **Dam break** : gravité, P2G/G2P, Jacobi surface libre, rendu points | La colonne s'effondre, la vague traverse, clapote et SE CALME (ni explosion ni fonte) ; 60 FPS à 128³/2 M ; `?selftest` 240 frames + compteur de particules affiché au HUD |
-| J2 | La **boule** dans l'eau (sphère analytique + saisie + bord mobile) | Vagues au passage de la boule, aucune particule dans la sphère, 60 FPS |
-| J3 | **Multigrid masqué** (pyramide air/eau/solide par niveau) | A/B Jacobi↔MG visuellement identiques, gain FPS mesuré, 2000+ frames stables ; Jacobi RESTE le repli au panneau |
-| J4 | **Surface** : splat densité → raymarch (absorption bleu-vert, Fresnel) | Des captures qui ressemblent à de l'eau ; 60 FPS tenus |
-| J5 | **Interactions** : verser au pointeur, souffle, presets (bassin calme / tempête), démo courte | Jouable au même niveau de finition que le feu |
+| J0 | Micro-banc P2G seul (scatter atomique 2 M particules, distribution GROUPÉE — la contention réaliste) | < 2 ms/frame mesuré — sinon on revoit la méthode AVANT de construire |
+| J1 | **Dam break** : gravité, P2G/G2P (PIC/FLIP), Jacobi surface libre, rendu points | La colonne s'effondre, la vague traverse, clapote et SE CALME (ni explosion ni fonte) ; 60 FPS à 128³/2 M ; `?selftest` 240 frames + compteur de particules affiché au HUD |
+| J2 | **APIC** : matrice affine C par particule, transferts APIC | A/B FLIP↔APIC par captures : surface plus lisse SANS amortissement visible ; tourbillon d'essai qui survit ; coût ≤ +20 % |
+| J3 | La **boule** dans l'eau (sphère analytique + saisie + bord mobile) | Vagues au passage de la boule, aucune particule dans la sphère, 60 FPS |
+| J4 | **Multigrid masqué** (pyramide air/eau/solide par niveau) | A/B Jacobi↔MG visuellement identiques, gain FPS mesuré, 2000+ frames stables ; Jacobi RESTE le repli au panneau |
+| J5 | **Surface** : splat densité → raymarch (absorption bleu-vert, Fresnel) | Des captures qui ressemblent à de l'eau ; 60 FPS tenus |
+| J6 | **Interactions** : verser au pointeur, souffle, presets (bassin calme / tempête), démo courte | Jouable au même niveau de finition que le feu |
 
-Horizon non engagé (après J5, sur décision explicite) : eau + feu = vapeur via
-le système d'espèces ; APIC ; 192³/4 M.
+Horizon non engagé (après J6, sur décision explicite) : eau + feu = vapeur via
+le système d'espèces ; narrow-band FLIP puis 192³/4 M ; MLS-MPM si un jour le
+sable/la neige tentent.
 
 ## Risques identifiés et mitigations
 
@@ -85,7 +106,7 @@ le système d'espèces ; APIC ; 192³/4 M.
 | ------ | ---------- |
 | Scatter atomique trop lent | J0 le mesure AVANT tout le reste ; si échec : tri par cellule (complexe) ou réduction du nombre de particules |
 | MG masqué instable (masques grossiers) | Jacobi d'abord (J1), MG seulement en J3, toggle de repli permanent — trajectoire déjà éprouvée en 2D et au feu |
-| Bruit FLIP (surface qui grésille) | Blend PIC réglable à chaud ; APIC en piste documentée |
+| Bruit FLIP (surface qui grésille) | Blend PIC réglable à chaud dès J1 ; APIC = jalon J2 ferme (le vrai fix) |
 | Dérive de volume | Compteur de particules + hauteur d'eau au HUD dès J1 ; correction de dérive SEULEMENT si mesurée |
 | CFL violé (particules qui traversent les murs) | Clamp de déplacement + sous-pas ; test « aucune particule hors boîte » dans le selftest |
 
@@ -96,6 +117,18 @@ frame, bind groups pré-créés, WGSL features de base. `?selftest` dès J1.
 Vérification par captures CDP (Chrome hors écran — voir NOTES-DEV), mesures de
 FPS en A-B-A-B alterné (jamais avant/après : l'état de la sim évolue).
 NOTES-DEV mis à jour à chaque jalon, pièges payés documentés immédiatement.
+
+## Journal des jalons
+
+- **J0 — VERT (2026-08-22, machine de référence RTX 5070 Ti).** Banc
+  `eau.html?selftest` : 2 097 152 particules groupées (bloc 64³, 8/cellule),
+  scatter 48 atomicAdd/particule (≈ 100 M/itération) + clear ×6 + resolve →
+  texture MAC. Mesuré par onSubmittedWorkDone, 5 soumissions × 32 itérations :
+  **ordre aléatoire 2,57 ms** (pire cas), **ordre trié par cellule 1,83 ms**
+  — sous le budget de 2 ms. Conséquence ferme : J1 embarque un TRI périodique
+  des particules par cellule (comptage/préfixes, toutes les ~8-16 frames) pour
+  maintenir l'état trié en régime. Verdict : la voie particules+grille est
+  praticable à 60 FPS, on construit.
 
 ## Conventions du chantier
 

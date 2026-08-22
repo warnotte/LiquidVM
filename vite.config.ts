@@ -13,6 +13,7 @@ export default defineConfig({
       input: {
         main: 'index.html',
         volume: '3d.html',
+        eau: 'eau.html',
       },
     },
   },
