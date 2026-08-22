@@ -29,6 +29,14 @@ export async function acquireDevice(): Promise<GpuInit> {
     );
   }
   // Features de base uniquement — aucune feature optionnelle demandée, par portabilité.
-  const device = await adapter.requestDevice({ label: 'liquidvm-device' });
+  // maxBufferSize : le défaut (256 Mio) plafonne les staging buffers INTERNES de
+  // Dawn (zéro-init des textures 3D : une rgba16float 384³ = 432 Mo → chaque
+  // submit échouait en silence, écran noir) et le readback de l'export VDB. On
+  // demande le maximum de l'adapter — toujours valide par construction, et
+  // relever une limite n'alloue rien par soi-même.
+  const device = await adapter.requestDevice({
+    label: 'liquidvm-device',
+    requiredLimits: { maxBufferSize: adapter.limits.maxBufferSize },
+  });
   return { device, format: navigator.gpu.getPreferredCanvasFormat() };
 }

@@ -7,7 +7,9 @@
 
 import {
   defaultTuning3,
+  estimateVram3,
   GRID3,
+  GRID3_CHOICES,
   INK_COLORS,
   INK_NAMES,
   setGrid3,
@@ -131,6 +133,19 @@ async function boot(): Promise<void> {
   };
 
   const { device, format } = await acquireDevice();
+  // Garde-fou hautes résolutions : Dawn valide ses staging internes (zéro-init
+  // des textures 3D) contre maxBufferSize — s'il est trop bas pour la plus
+  // grosse texture (rgba16float pleine grille), chaque submit échouerait EN
+  // SILENCE (écran noir, HUD vivant). Erreur claire plutôt que mystère.
+  const biggestTexture = GRID3 * GRID3 * GRID3 * 8;
+  if (device.limits.maxBufferSize < biggestTexture) {
+    throw new Error(
+      `La résolution ${GRID3}³ dépasse les capacités de ce GPU ` +
+        `(maxBufferSize ${Math.round(device.limits.maxBufferSize / 2 ** 20)} Mio < ` +
+        `${Math.round(biggestTexture / 2 ** 20)} Mio requis). Choisir une grille plus petite : ` +
+        `?grid=${GRID3_CHOICES.filter((n) => n * n * n * 8 <= device.limits.maxBufferSize).join('|')}`,
+    );
+  }
   device.lost.then((info) => {
     if (info.reason !== 'destroyed') {
       showFatalError(`Le device GPU a été perdu : ${info.message}`);
@@ -267,7 +282,8 @@ async function boot(): Promise<void> {
     }
     exporting = true;
     try {
-      // Au-delà de 256³, le readback dépasse maxBufferSize (256 Mo) par défaut.
+      // Readback plafonné par maxBufferSize (demandé au max de l'adapter dans
+      // gpu.ts — 2 Gio sur la machine de référence : 512³ passe tout juste).
       const { density, heat } = await sim.exportVolume();
       const data = encodeVdb(
         [
@@ -284,7 +300,7 @@ async function boot(): Promise<void> {
       a.click();
       setTimeout(() => URL.revokeObjectURL(url), 10000);
     } catch (err) {
-      toast(`export impossible à ${GRID3}³ (limite mémoire GPU) — utiliser 256³`);
+      toast(`export impossible à ${GRID3}³ (limite mémoire GPU) — réduire la résolution`);
       console.warn('export VDB:', err);
     } finally {
       exporting = false;
@@ -442,8 +458,10 @@ async function boot(): Promise<void> {
     },
     {
       title: 'résolution (recharge la page)',
-      buttons: [128, 256, 320].map((n) => ({
-        label: `${n}³${n === GRID3 ? ' ✓' : ''}`,
+      buttons: GRID3_CHOICES.map((n) => ({
+        // Estimation VRAM affichée : au-delà du budget du GPU, l'échec est un
+        // écran noir silencieux — le chiffre permet de choisir en connaissance.
+        label: `${n}³ · ${(estimateVram3(n) / 2 ** 30).toFixed(1)} Go${n === GRID3 ? ' ✓' : ''}`,
         action: (): void => {
           const url = new URL(location.href);
           url.searchParams.set('grid', String(n));

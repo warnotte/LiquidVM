@@ -5,15 +5,26 @@
  */
 
 /** Côté de la grille cubique (voxels). 256³ ≈ 16,8 M de cellules par défaut ;
- *  choisissable à l'init via setGrid3 (la plateforme lit ?grid=128|256|320).
- *  Mesuré sur la machine de référence : 256³ ET 320³ (~2,8 Go, 32,8 M voxels)
- *  tiennent 60 FPS ; 384³+ (≥ 4,7 Go) échoue en écran noir SILENCIEUX — Dawn
- *  n'émet ni erreur out-of-memory ni device-lost à l'allocation, d'où la liste
- *  blanche stricte. L'export VDB n'est disponible qu'aux multiples de 128. */
+ *  choisissable à l'init via setGrid3 (la plateforme lit ?grid=…).
+ *  Mesuré sur la machine de référence (RTX 5070 Ti 16 Go) : 256³ et 320³ à
+ *  60 FPS. 384³/512³ exigent maxBufferSize relevé au max de l'adapter (gpu.ts) :
+ *  les staging buffers internes de Dawn (zéro-init des textures 3D) sont validés
+ *  contre cette limite, dont le défaut (256 Mio) faisait échouer chaque submit
+ *  EN SILENCE (écran noir, HUD vivant — 320³ passait à 2 % près). En cas d'échec
+ *  d'allocation réel, toujours juger l'IMAGE, pas le HUD.
+ *  L'export VDB n'est disponible qu'aux multiples de 128 (128/256/384/512). */
 export let GRID3 = 256;
 export let SCALE3 = GRID3 / 128;
 
-const GRID3_CHOICES = [128, 256, 320] as const;
+export const GRID3_CHOICES = [128, 256, 320, 384, 512] as const;
+
+/** Estimation VRAM du volume (octets) : ~88 o/voxel plein format (2× vélocité
+ *  + 2× densités + 2× espèces + scratchs + rotationnel en rgba16float, pression
+ *  ×2 + divergence + résidu en r32float) + pyramide multigrid (~16 o/voxel
+ *  répartis sur les niveaux ≥ 1, somme des 1/8^k ≈ ×0,143). */
+export function estimateVram3(n: number): number {
+  return n * n * n * (88 + 16 * 0.143);
+}
 
 /** À appeler AVANT la création de la simulation. Valide et propage les dérivés. */
 export function setGrid3(n: number): void {

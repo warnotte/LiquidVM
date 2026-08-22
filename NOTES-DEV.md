@@ -173,6 +173,23 @@ Config actuelle : sim 1024², dye/scène 2048².
   (warm start — 2 coûtaient ~6 balayages de plus sans gain visible). Si ça
   ralentit à nouveau : le budget sim est plein, chercher là (le rendu s'adapte
   seul).
+- **Résolutions ?grid=128|256|320|384|512** — et le mystère de l'écran noir
+  RÉSOLU : ce n'était PAS la VRAM. Dawn valide ses staging buffers INTERNES
+  (zéro-init des textures 3D, `Dawn_DynamicUploaderStaging`) contre
+  `maxBufferSize`, défaut 256 Mio : une rgba16float 384³ = 432 Mo → chaque
+  submit échouait en silence (warning console UNIQUEMENT — écouter
+  `Log.entryAdded` en CDP, c'est comme ça qu'on l'a trouvé). 320³ = 262 Mo
+  passait à 2 % près, d'où l'ancien « plafond ». Fix : gpu.ts demande
+  `requiredLimits: { maxBufferSize: adapter.limits.maxBufferSize }` (2 Gio sur
+  la RTX 5070 Ti). Garde-fou dans main3d : si l'adapter ne suffit pas pour la
+  plus grosse texture, erreur fatale claire au lieu du noir. Mesures machine de
+  référence (16 Go) : 384³ (~4,8 Go) ≈ 30 FPS, 512³ (~11,3 Go) ≈ 20-22 FPS,
+  rendu adaptatif à 60 % dans les deux cas (budget sim plein, normal). Les
+  boutons du panneau affichent l'estimation VRAM (estimateVram3, ~90 o/voxel).
+  Piège de banc : après un run 512³, le processus GPU garde de la mémoire
+  résidente — un test suivant peut tomber à 20 FPS à 256³ ; redémarrer le
+  Chrome de test avant de mesurer. L'export VDB suit maxBufferSize : 384³ et
+  512³ exportables désormais (multiples de 128 ; fichiers ~450 Mo / ~1,1 Go).
 - **Interface (panel3d.ts)** : panneau à sections (Tab) + barre d'outils,
   ENTIÈREMENT déclaratifs — ajouter un réglage = une entrée de spec dans main3d.
   Toute la physique est réglable à chaud via Sim3Tuning (Frame3DInput.params,
