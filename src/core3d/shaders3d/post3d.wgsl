@@ -43,20 +43,20 @@ fn bloom_down(@builtin(global_invocation_id) gid: vec3u) {
 }
 
 const W0 = 0.227027;
-const W = array<f32, 4>(0.1945946, 0.1216216, 0.0540541, 0.0162162);
 
 fn blur_axis(gid: vec3u, axis: vec2f) {
   let m = textureDimensions(dst);
   if (gid.x >= m.x || gid.y >= m.y) {
     return;
   }
+  var weights = array<f32, 4>(0.1945946, 0.1216216, 0.0540541, 0.0162162);
   let inv = vec2f(1.0) / vec2f(m);
   let uv = (vec2f(gid.xy) + vec2f(0.5)) * inv;
   var acc = textureSampleLevel(src, lin, uv, 0.0).rgb * W0;
   for (var i = 0; i < 4; i++) {
     let o = axis * (1.5 * f32(i + 1)) * inv;
-    acc += textureSampleLevel(src, lin, uv + o, 0.0).rgb * W[i];
-    acc += textureSampleLevel(src, lin, uv - o, 0.0).rgb * W[i];
+    acc += textureSampleLevel(src, lin, uv + o, 0.0).rgb * weights[i];
+    acc += textureSampleLevel(src, lin, uv - o, 0.0).rgb * weights[i];
   }
   textureStore(dst, gid.xy, vec4f(acc, 0.0));
 }

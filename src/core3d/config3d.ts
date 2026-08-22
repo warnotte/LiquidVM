@@ -35,6 +35,10 @@ export function setGrid3(n: number): void {
   }
 }
 
+/** Braises : nombre de particules (buffer fixe 32 o/particule ≈ 1 Mo).
+ *  L'autorégulation par rejet fait que seule une fraction vit à la fois. */
+export const EMBERS3 = 32768;
+
 /** Workgroups 4×4×4 = 64 threads ; dispatch cubique. */
 export const WG3 = 4;
 export let DISPATCH3 = Math.ceil(GRID3 / WG3);
@@ -149,6 +153,8 @@ export const SIM3_DEFAULTS = {
   exposure: 1.25,
   glowStrength: 1.8,
   bloomStrength: 0.35,
+  /** Débit des braises (0 = coupées : passes entièrement sautées). */
+  emberStrength: 0.7,
   /** Caméra orbitale initiale. */
   camAzimuth: 0.6,
   camElevation: 0.25,

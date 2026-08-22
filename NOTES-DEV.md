@@ -217,6 +217,22 @@ Config actuelle : sim 1024², dye/scène 2048².
   défaut 0). Recalibré (EPS2-0/8/16/24 à 256³) : 8 subtil, 16 riche encore
   cohérent, 24 déchiqueté mais JAMAIS granuleux — l'échec a changé de nature.
   Slider « vorticité » (0–30).
+- **Braises (2026-08-22)** : 32 768 particules-étincelles (embers3d.wgsl update,
+  embers_draw.wgsl tracé ; buffer STORAGE fixe 1 Mo zéro-initialisé = toutes
+  mortes). NAISSANCES AUTORÉGULÉES par rejet : chaque morte tire UNE position
+  aléatoire par frame et ne naît que si chaleur > 0.55 (plus de feu = plus de
+  braises, zéro chaud = zéro braise). Portées par le fluide (velocity_at MAC,
+  relaxation exp(-6·dt)) + scintillement sinusoïdal propre + kick de naissance ;
+  meurent hors boîte / dans la boule / à bout de vie (0.9–2.7 s). TRACÉ :
+  billboards ADDITIFS dans la passe HDR (avant bloom — halo hérité), projection
+  = INVERSE de la construction des rayons du raymarch (pas de matrice : clip =
+  [d·right/(tanf·aspect), d·up/tanf, ·, d·fwd]) ; occlusion PAR PARTICULE au
+  vertex (4 échantillons d'extinction vers la caméra + segment contre la
+  boule) ; braise morte = quad dégénéré (zéro pixel). Corps noir 1.05–1.45
+  refroidissant (doré→orange, jamais blanc). Slider « braises » (0–1, défaut
+  0.7 ; 0 = passes entièrement sautées). R.style.z = débit (lu par le compute
+  via renderUniforms bindé en groupe 1), R.style.w = N. 60 FPS à 256³.
+  PIÈGE WGSL : « target » est un mot réservé (comme « from »).
 - **Éclairage volumétrique (2026-08-22)** : la flamme éclaire sa propre fumée.
   (1) VOLUME DE LUEUR (glow3d.wgsl, grille GRID3/8, paire ping-pong) : inject =
   émission corps noir moyennée par pavé (8 prises trilinéaires), 3 blurs boîte

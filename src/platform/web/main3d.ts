@@ -196,6 +196,7 @@ async function boot(): Promise<void> {
     raymarchSteps: SIM3_DEFAULTS.raymarchSteps,
     glowStrength: SIM3_DEFAULTS.glowStrength,
     bloomStrength: SIM3_DEFAULTS.bloomStrength,
+    emberStrength: SIM3_DEFAULTS.emberStrength,
   };
   if (selftest) {
     (window as unknown as Record<string, unknown>)['__frame3d'] = input;
@@ -447,6 +448,7 @@ async function boot(): Promise<void> {
         { label: 'exposition', min: 0.4, max: 3, step: 0.05, get: () => input.exposure, set: (x) => (input.exposure = x) },
         { label: 'lueur du feu', min: 0, max: 3, step: 0.05, get: () => input.glowStrength, set: (x) => (input.glowStrength = x) },
         { label: 'bloom', min: 0, max: 1, step: 0.05, get: () => input.bloomStrength, set: (x) => (input.bloomStrength = x) },
+        { label: 'braises', min: 0, max: 1, step: 0.05, get: () => input.emberStrength, set: (x) => (input.emberStrength = x) },
         { label: 'pas de marche', min: 64, max: 256, step: 16, get: () => input.raymarchSteps, set: (x) => (input.raymarchSteps = x), format: (x) => x.toFixed(0) },
       ],
       checks: [

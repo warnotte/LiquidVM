@@ -16,9 +16,12 @@ import multigridWGSL from './shaders3d/multigrid3d.wgsl?raw';
 import raymarchWGSL from './shaders3d/raymarch.wgsl?raw';
 import glowWGSL from './shaders3d/glow3d.wgsl?raw';
 import postWGSL from './shaders3d/post3d.wgsl?raw';
+import embersWGSL from './shaders3d/embers3d.wgsl?raw';
+import embersDrawWGSL from './shaders3d/embers_draw.wgsl?raw';
 import clearWGSL from './shaders3d/clear3d.wgsl?raw';
 import {
   DISPATCH3,
+  EMBERS3,
   GRID3,
   MG3_COARSE_SMOOTH,
   MG3_COARSEST_SIZE,
@@ -68,10 +71,13 @@ export interface Frame3DInput {
   /** Lueur du feu (in-scattering du volume de lueur) et intensité du bloom. */
   glowStrength: number;
   bloomStrength: number;
+  /** Débit des braises (0 = passes sautées). */
+  emberStrength: number;
 }
 
 const COMPUTE = GPUShaderStage.COMPUTE;
 const FRAGMENT = GPUShaderStage.FRAGMENT;
+const VERTEX = GPUShaderStage.VERTEX;
 
 function tex3d(
   device: GPUDevice,
@@ -202,6 +208,8 @@ export class FluidSim3D {
       bloomH: GPUComputePipeline;
       bloomV: GPUComputePipeline;
       present: GPURenderPipeline;
+      embersUpdate: GPUComputePipeline;
+      embersDraw: GPURenderPipeline;
     },
     private readonly binds: {
       velPredict: Pair<GPUBindGroup>; // [vel] → scratch
@@ -223,6 +231,8 @@ export class FluidSim3D {
       glowBlurBA: GPUBindGroup; // glow[1] → glow[0]
       bloomH: GPUBindGroup; // bloomA → bloomB
       bloomV: GPUBindGroup; // bloomB → bloomA
+      embersSim: Pair<Pair<GPUBindGroup>>; // [vel][den] + particules + R
+      embersDraw: Pair<GPUBindGroup>; // [den] (occlusion) + particules
       clearsRgba: readonly GPUBindGroup[];
       clearsScalar: readonly GPUBindGroup[];
     },
@@ -302,6 +312,12 @@ export class FluidSim3D {
           .createView({ label: `${label}-view` });
       const bloomA = tex2d('bloom3d-a');
       const bloomB = tex2d('bloom3d-b');
+      // Braises : buffer fixe, zéro-initialisé = toutes mortes (life 0).
+      const emberBuffer = device.createBuffer({
+        label: 'embers3d',
+        size: EMBERS3 * 32,
+        usage: GPUBufferUsage.STORAGE,
+      });
 
       const sampler = device.createSampler({
         label: 'lin3d',
@@ -427,6 +443,26 @@ export class FluidSim3D {
             { binding: 3, visibility: FRAGMENT, texture: { sampleType: 'float' } },
           ],
         }),
+        // Braises : mise à jour (compute — vel + den + particules + R pour le
+        // débit) et tracé (billboards au vertex : R + sampler + den + particules).
+        embersSim: device.createBindGroupLayout({
+          label: 'embers-sim-3d',
+          entries: [
+            sampled3d(0),
+            sampled3d(1),
+            { binding: 2, visibility: COMPUTE, buffer: { type: 'storage' } },
+            { binding: 3, visibility: COMPUTE, buffer: { type: 'uniform' } },
+          ],
+        }),
+        embersDraw: device.createBindGroupLayout({
+          label: 'embers-draw-3d',
+          entries: [
+            { binding: 0, visibility: VERTEX, buffer: { type: 'uniform' } },
+            { binding: 1, visibility: VERTEX, sampler: { type: 'filtering' } },
+            sampled3d(2, VERTEX),
+            { binding: 3, visibility: VERTEX, buffer: { type: 'read-only-storage' } },
+          ],
+        }),
       };
 
       const [advectVelM, advectDenM, forcesM, vorticityM, projectM, raymarchM, glowM, postM, clearM] =
@@ -441,6 +477,10 @@ export class FluidSim3D {
           createShaderModule(device, 'post3d.wgsl', postWGSL),
           createShaderModule(device, 'clear3d.wgsl', clearWGSL),
         ]);
+      const [embersM, embersDrawM] = await Promise.all([
+        createShaderModule(device, 'embers3d.wgsl', embersWGSL),
+        createShaderModule(device, 'embers_draw.wgsl', embersDrawWGSL),
+      ]);
       const multigridM = await createShaderModule(device, 'multigrid3d.wgsl', multigridWGSL);
       const speciesM = await createShaderModule(device, 'species3d.wgsl', speciesWGSL);
 
@@ -459,7 +499,7 @@ export class FluidSim3D {
           compute: { module, entryPoint },
         });
 
-      const [velPredict, velCorrect, forces, curlPipe, blurCurlPipe, confine, denPredict, denCorrect, divergencePipe, jacobi, gradient, mgSmooth, mgResidual, mgRestrictPipe, mgProlongPipe, speciesPipe, clearOne, clearRgba, clearScalar, render, glowInjectPipe, glowBlurPipe, bloomDownPipe, bloomHPipe, bloomVPipe, presentPipe] =
+      const [velPredict, velCorrect, forces, curlPipe, blurCurlPipe, confine, denPredict, denCorrect, divergencePipe, jacobi, gradient, mgSmooth, mgResidual, mgRestrictPipe, mgProlongPipe, speciesPipe, clearOne, clearRgba, clearScalar, render, glowInjectPipe, glowBlurPipe, bloomDownPipe, bloomHPipe, bloomVPipe, presentPipe, embersUpdatePipe, embersDrawPipe] =
         await Promise.all([
           compute('vel-predict-3d', L.velPredict, advectVelM, 'predict'),
           compute('vel-correct-3d', L.velCorrect, advectVelM, 'correct'),
@@ -513,6 +553,30 @@ export class FluidSim3D {
             layout: device.createPipelineLayout({ label: 'present-3d-pl', bindGroupLayouts: [L.present] }),
             vertex: { module: postM, entryPoint: 'vs_present' },
             fragment: { module: postM, entryPoint: 'fs_present', targets: [{ format: targetFormat }] },
+            primitive: { topology: 'triangle-list' },
+          }),
+          compute('embers-update-3d', L.embersSim, embersM, 'update'),
+          // Braises : billboards ADDITIFS dans la passe HDR (avant le bloom).
+          device.createRenderPipelineAsync({
+            label: 'embers-draw-3d',
+            layout: device.createPipelineLayout({
+              label: 'embers-draw-3d-pl',
+              bindGroupLayouts: [L.embersDraw],
+            }),
+            vertex: { module: embersDrawM, entryPoint: 'vs_embers' },
+            fragment: {
+              module: embersDrawM,
+              entryPoint: 'fs_embers',
+              targets: [
+                {
+                  format: 'rgba16float',
+                  blend: {
+                    color: { srcFactor: 'one', dstFactor: 'one', operation: 'add' },
+                    alpha: { srcFactor: 'one', dstFactor: 'one', operation: 'add' },
+                  },
+                },
+              ],
+            },
             primitive: { topology: 'triangle-list' },
           }),
         ]);
@@ -738,6 +802,32 @@ export class FluidSim3D {
             { binding: 1, resource: bloomA },
           ],
         }),
+        embersSim: pair((v) =>
+          pair((d) =>
+            device.createBindGroup({
+              label: `embers-sim-3d-v${v}-d${d}`,
+              layout: L.embersSim,
+              entries: [
+                { binding: 0, resource: velocity[v] },
+                { binding: 1, resource: density[d] },
+                { binding: 2, resource: { buffer: emberBuffer } },
+                { binding: 3, resource: { buffer: renderUniforms } },
+              ],
+            }),
+          ),
+        ),
+        embersDraw: pair((d) =>
+          device.createBindGroup({
+            label: `embers-draw-3d-${d}`,
+            layout: L.embersDraw,
+            entries: [
+              { binding: 0, resource: { buffer: renderUniforms } },
+              { binding: 1, resource: sampler },
+              { binding: 2, resource: density[d] },
+              { binding: 3, resource: { buffer: emberBuffer } },
+            ],
+          }),
+        ),
         clearsRgba: [velocity[0], velocity[1], density[0], density[1]].map((view, i) =>
           device.createBindGroup({
             label: `clear-rgba-3d-${i}`,
@@ -880,6 +970,8 @@ export class FluidSim3D {
           bloomH: bloomHPipe,
           bloomV: bloomVPipe,
           present: presentPipe,
+          embersUpdate: embersUpdatePipe,
+          embersDraw: embersDrawPipe,
         },
         binds,
         mgLevels,
@@ -1069,6 +1161,13 @@ export class FluidSim3D {
       gp.dispatchWorkgroups(gd, gd, gd);
       gp.setBindGroup(1, this.binds.glowBlurAB);
       gp.dispatchWorkgroups(gd, gd, gd);
+      // Braises : mise à jour des particules (naissances autorégulées dans le
+      // chaud, portage par le fluide) — sautée en pause ou à débit nul.
+      if (running && input.emberStrength > 0) {
+        gp.setPipeline(this.pipelines.embersUpdate);
+        gp.setBindGroup(1, this.binds.embersSim[this.velIdx][this.denIdx]);
+        gp.dispatchWorkgroups(EMBERS3 / 64);
+      }
       gp.end();
     }
 
@@ -1082,6 +1181,13 @@ export class FluidSim3D {
     rp.setPipeline(this.pipelines.render);
     rp.setBindGroup(0, this.binds.render[this.denIdx]);
     rp.draw(3);
+    // Braises : billboards additifs par-dessus le volume (occlusion par
+    // particule au vertex) — elles hériteront du bloom.
+    if (input.emberStrength > 0) {
+      rp.setPipeline(this.pipelines.embersDraw);
+      rp.setBindGroup(0, this.binds.embersDraw[this.denIdx]);
+      rp.draw(6, EMBERS3);
+    }
     rp.end();
 
     // Bloom : seuil+réduction, gaussienne séparable (H puis V), taille fixe.
@@ -1530,9 +1636,12 @@ export class FluidSim3D {
     } else {
       d[31] = 0;
     }
-    // Style : lueur du feu (raymarch) et intensité du bloom (présentation).
+    // Style : lueur du feu (raymarch), bloom (présentation), braises (débit),
+    // N (conversion voxels → monde du tracé des braises).
     d[32] = input.glowStrength;
     d[33] = input.bloomStrength;
+    d[34] = input.emberStrength;
+    d[35] = GRID3;
     let dirty = false;
     for (let i = 0; i < d.length; i++) {
       if (d[i] !== this.lastRender[i]) {
