@@ -84,6 +84,10 @@ async function boot(): Promise<void> {
     timeScale: EAU_DEFAULTS.timeScale,
     pointSize: EAU_DEFAULTS.pointSize,
     exposure: EAU_DEFAULTS.exposure,
+    renderPoints: params.has('points') || EAU_DEFAULTS.renderPoints,
+    absorption: EAU_DEFAULTS.absorption,
+    surfaceIso: EAU_DEFAULTS.surfaceIso,
+    debugView: EAU_DEFAULTS.debugView,
     cam: {
       azimuth: EAU_DEFAULTS.camAzimuth,
       elevation: EAU_DEFAULTS.camElevation,
@@ -141,6 +145,9 @@ async function boot(): Promise<void> {
       input.paused = !input.paused;
     } else if (e.code === 'KeyR') {
       input.reset = true;
+    } else if (e.code === 'KeyP') {
+      input.renderPoints = !input.renderPoints;
+      panel.refresh();
     }
   });
 
@@ -153,12 +160,23 @@ async function boot(): Promise<void> {
         { label: 'itérations Jacobi', min: 10, max: 120, step: 2, get: () => input.jacobiIterations, set: (x) => (input.jacobiIterations = x), format: (x) => x.toFixed(0) },
         { label: 'sous-pas', min: 1, max: 4, step: 1, get: () => input.substeps, set: (x) => (input.substeps = x), format: (x) => x.toFixed(0) },
         { label: 'vitesse du temps', min: 0, max: 1.5, step: 0.05, get: () => input.timeScale, set: (x) => (input.timeScale = x), format: (x) => `×${x.toFixed(2)}` },
-        { label: 'taille des points', min: 0.001, max: 0.01, step: 0.0005, get: () => input.pointSize, set: (x) => (input.pointSize = x), format: (x) => x.toFixed(4) },
-        { label: 'exposition', min: 0.2, max: 3, step: 0.05, get: () => input.exposure, set: (x) => (input.exposure = x) },
       ],
       buttons: [
         { label: '⏯ pause (espace)', action: () => (input.paused = !input.paused) },
         { label: '↺ reset (R)', action: () => (input.reset = true) },
+      ],
+    },
+    {
+      title: 'rendu',
+      sliders: [
+        { label: 'absorption', min: 0, max: 3, step: 0.05, get: () => input.absorption, set: (x) => (input.absorption = x) },
+        { label: 'seuil de surface', min: 0.1, max: 0.9, step: 0.05, get: () => input.surfaceIso, set: (x) => (input.surfaceIso = x) },
+        { label: 'exposition', min: 0.2, max: 3, step: 0.05, get: () => input.exposure, set: (x) => (input.exposure = x) },
+        { label: 'taille des points', min: 0.001, max: 0.01, step: 0.0005, get: () => input.pointSize, set: (x) => (input.pointSize = x), format: (x) => x.toFixed(4) },
+        { label: 'vue debug', min: 0, max: 3, step: 1, get: () => input.debugView, set: (x) => (input.debugView = x), format: (x) => ['surface', '—', 'coupe z=0', 'densité max'][Math.round(x)] ?? '' },
+      ],
+      checks: [
+        { label: 'points bruts (P — instrument physique)', get: () => input.renderPoints, set: (v) => (input.renderPoints = v) },
       ],
     },
   ]);
@@ -182,12 +200,14 @@ async function boot(): Promise<void> {
       hudTimer = 0;
       panel.refresh();
       const [valid, lost, fast] = sim.lastCensus;
+      const hist = Array.from(sim.lastCensus.subarray(66, 72), (x) => (x / 1000).toFixed(1) + 'k');
       hud.innerHTML =
         `<b>LiquidVM eau — J1 : dam break</b> · ${GRID_EAU}³ · ` +
         `${PARTICLES_EAU.toLocaleString('fr')} particules · ${input.substeps} sous-pas · ` +
         `Jacobi ${input.jacobiIterations} · ${Math.round(fps)} FPS${input.paused ? ' · ⏸' : ''}<br>` +
         `recensement : <b>${(valid ?? 0).toLocaleString('fr')}</b> valides · ` +
-        `${(lost ?? 0).toLocaleString('fr')} perdues · ${(fast ?? 0).toLocaleString('fr')} rapides<br>` +
+        `${(lost ?? 0).toLocaleString('fr')} perdues · ${(fast ?? 0).toLocaleString('fr')} rapides · ` +
+        `cellules 1-3/4-7/<b>8-11</b>/12-23/24+ : ${hist.slice(1).join(' / ')}<br>` +
         'glisser : orbiter · molette : zoom · espace : pause · R : reset · Tab : réglages';
     }
     if (selftest && frames === SELFTEST_FRAMES) {

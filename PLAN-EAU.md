@@ -152,6 +152,48 @@ NOTES-DEV mis à jour à chaque jalon, pièges payés documentés immédiatement
      « target ») ; un layout storageTexture 3D doit déclarer viewDimension
      ('2d' par défaut) ; filet anti-float16 sur les vitesses particules (±600).
 
+- **J1 — reprise (2026-08-23) : LA CAUSE RACINE, et l'eau qui ressemble à de
+  l'eau.** Retour utilisateur : « rendu bizarre, l'eau semble disparaître aux
+  bords, pas de frontière physique ». Deux chantiers menés de front :
+  1. **Rendu de surface grossier remonté de J5** (`eau_surface.wgsl`) : boîte
+     dessinée (sol, parois, grille, arêtes — la frontière qui manquait),
+     densité par cellule floutée 3³ → iso-surface marchée par rayon (pas 1
+     voxel, bissection, normale = −gradient), **réfraction** n = 1,33 (la
+     grille du sol se décale sous la ligne d'eau — le signal qui fait lire un
+     volume d'eau claire), Fresnel ciel / Beer-Lambert, reflet solaire, tone-map
+     + gamma. Le rendu points reste un instrument (case / touche P).
+  2. **Instruments** (c'est eux qui ont trouvé le bug) : vues debug « coupe
+     z = 0 » (quart inférieur ×4, fausses couleurs) et « densité max par
+     rayon » ; **recensement des CELLULES** (histogramme d'occupation 1-3 /
+     4-7 / 8-11 / 12-23 / 24+ au HUD, readback diagnostique existant).
+  3. **CAUSE RACINE de « l'eau peu profonde »** : l'histogramme montrait ~15,8 k
+     cellules occupées pour 2 M de particules = **UNE couche 128×128 à ~128
+     particules/cellule**. `MARGIN = 1.001` dans eau_g2p.wgsl interdisait la
+     rangée 0 (sol) et les colonnes 0 (parois) → cellules vides → classées
+     AIR (p = 0) par le solveur → **le sol était une surface libre** : aucune
+     pression hydrostatique possible, l'eau tombait « à travers » jusqu'au
+     clamp. L'« explosion » de la bataille 2 et la limite ~32 cellules
+     venaient de là, pas de Jacobi seul. Fix : marge 0,01 + fondu de la
+     vitesse vers 0 dans la dernière demi-cellule des parois hautes (la face
+     N n'existe pas, le sampler clampait sur N−1) + colonne initiale à ras.
+  4. Dans la foulée : contrôle de densité **dans les deux sens** sur la
+     densité floutée (compression des cellules intérieures sous-denses, jamais
+     en surface — brise le cliquet « toute cellule touchée = eau
+     incompressible, le volume ne fait que gonfler ») ; **taux en 1/s**
+     (10/s) au lieu de 0,3/dt = 3600 %/s qui pompait de l'énergie (surface qui
+     « bout », grumeaux à 24+) ; **purge de la pression au reset** (le warm
+     start de l'ancien état kickait des particules > 550 voxels/s dès la 1re
+     frame — la leçon 2D, encore).
+  RÉSULTAT : vraie vague de rupture de barrage avec éclaboussures, ballottement,
+  nappe de ~17 voxels qui TIENT hydrostatiquement (histogramme dominé par 8-11
+  pendant la phase dynamique, 0 perdue, 0-3 rapides), 60 FPS avec le rendu de
+  surface, selftest OK, build prod OK. Reste : bruit FLIP en régime calme
+  (intérieur grumeleux, fringe de 2-3 voxels de particules éparses en surface —
+  le sujet d'APIC en J2), dérive lente de l'histogramme sur 2 minutes (8-10 k
+  cellules à 24+). La colonne PROFONDE (64) est à re-tester maintenant que le
+  sol existe : le multigrid masqué reste prévu, mais n'est peut-être plus
+  l'épreuve d'entrée.
+
 ## Conventions du chantier
 
 - Branche `eau` (depuis `main`). Merge dans `main` par JALON VERT uniquement —

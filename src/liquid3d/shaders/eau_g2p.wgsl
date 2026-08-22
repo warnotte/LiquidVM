@@ -24,13 +24,21 @@ fn inv_n() -> vec3f {
   return vec3f(1.0) / vec3f(U.sim.x);
 }
 
+// Les faces N n'existent pas (murs gratuits du schéma compact) : dans la
+// dernière demi-cellule le sampler clampe sur la face N−1 — on fond
+// linéairement vers 0 au mur, sinon la vitesse normale contre la paroi est
+// surestimée et les particules s'y collent.
+fn wall_fade(p: vec3f) -> vec3f {
+  return clamp(vec3f(U.sim.x) - p, vec3f(0.0), vec3f(1.0));
+}
+
 // Convention MAC du moteur (identique à advect_density3d.wgsl du feu).
 fn sample_new(p: vec3f) -> vec3f {
   return vec3f(
     textureSampleLevel(vel_new, lin, (p + vec3f(0.5, 0.0, 0.0)) * inv_n(), 0.0).x,
     textureSampleLevel(vel_new, lin, (p + vec3f(0.0, 0.5, 0.0)) * inv_n(), 0.0).y,
     textureSampleLevel(vel_new, lin, (p + vec3f(0.0, 0.0, 0.5)) * inv_n(), 0.0).z,
-  );
+  ) * wall_fade(p);
 }
 
 fn sample_old(p: vec3f) -> vec3f {
@@ -38,11 +46,18 @@ fn sample_old(p: vec3f) -> vec3f {
     textureSampleLevel(vel_old, lin, (p + vec3f(0.5, 0.0, 0.0)) * inv_n(), 0.0).x,
     textureSampleLevel(vel_old, lin, (p + vec3f(0.0, 0.5, 0.0)) * inv_n(), 0.0).y,
     textureSampleLevel(vel_old, lin, (p + vec3f(0.0, 0.0, 0.5)) * inv_n(), 0.0).z,
-  );
+  ) * wall_fade(p);
 }
 
 const MAX_MOVE = 3.0; // voxels/sous-pas — garde CFL (plan : « clamp + sous-pas »)
-const MARGIN = 1.001;
+// Marge aux parois ≈ 0. LEÇON (2026-08-23, trouvée par le recensement des
+// cellules) : avec une marge de 1 voxel, la rangée 0 (sol) et les colonnes 0
+// restaient VIDES donc classées AIR (p = 0) par le solveur — le sol était une
+// surface libre, aucune pression hydrostatique ne pouvait s'établir et toute
+// l'eau s'écrasait en une galette d'UNE cellule contre le clamp (128
+// particules/cellule). Les particules doivent pouvoir occuper les cellules de
+// bord : ce sont leurs faces 0 / N qui sont les murs.
+const MARGIN = 0.01;
 
 @compute @workgroup_size(64)
 fn g2p(@builtin(global_invocation_id) gid: vec3u) {

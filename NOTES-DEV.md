@@ -109,13 +109,21 @@ Config actuelle : sim 1024², dye/scène 2048².
 Conception complète dans [PLAN-EAU.md](PLAN-EAU.md) — méthode (PIC/FLIP →
 APIC), architecture (`eau.html` + `src/liquid3d/`, pont atomics→textures),
 jalons J0–J6 avec critères de sortie mesurables ET LEUR JOURNAL (résultats,
-batailles gagnées, leçons — dont LA leçon de J1 : Jacobi ne tient pas
-l'hydrostatique au-delà de ~32 cellules de profondeur d'eau, le multigrid
-masqué est l'épreuve d'entrée du jalon). À lire AVANT d'écrire du code eau.
-Instrument clé : le recensement (`census_pass` dans eau_g2p.wgsl — compteurs
-valides/perdues/rapides + 8 particules brutes, readback diagnostique 288 o
-toutes les 30 frames, affiché au HUD) : c'est lui qui a innocenté le tri et
-le FLIP et confondu Jacobi. S'en servir AVANT de spéculer.
+batailles gagnées, leçons). À lire AVANT d'écrire du code eau.
+LA leçon de J1 (2026-08-23) : les cellules de BORD doivent pouvoir contenir
+des particules — une marge de 1 voxel aux parois laissait la rangée 0 vide,
+donc classée AIR (p = 0) : le sol était une surface libre, zéro hydrostatique,
+toute l'eau écrasée en une couche (c'était ça, pas « Jacobi ne tient pas
+l'hydrostatique »). Instruments clés, à utiliser AVANT de spéculer :
+le recensement (`census_pass` dans eau_g2p.wgsl — valides/perdues/rapides +
+8 particules brutes) et le **recensement des cellules** (`cell_census` dans
+eau_surface.wgsl — histogramme d'occupation 1-3/4-7/8-11/12-23/24+ au HUD :
+phase dynamique saine = 8-11 dominant, 24+ < 2 k), plus les vues debug du
+rendu (« coupe z=0 » du quart inférieur ×4, « densité max »). Une image de
+points additifs ne dit RIEN de l'épaisseur ni de la densité : mesurer.
+Rendu : `eau_surface.wgsl` = boîte (sol/parois/grille/arêtes) + iso-surface de
+la densité floutée 3³ (calculée par sous-pas, lue aussi par le contrôle de
+densité deux sens à 10/s) marchée par rayon avec réfraction ; points = touche P.
 
 ## Chantier 3D (branche `3d`)
 

@@ -1,8 +1,9 @@
 /**
  * J1 — simulation d'eau FLIP/PIC (PLAN-EAU.md). Une frame :
- *   [× sous-pas] clear atomics → P2G (scatter + resolve → velOld) → gravité
- *   (velTmp) → divergence (cellules d'eau) → Jacobi surface libre (air p = 0)
- *   → gradient (velNew) → G2P (FLIP/PIC + advection RK2 bornée)
+ *   [× sous-pas] clear atomics → P2G (scatter + resolve → velOld) → densité
+ *   floutée → gravité (velTmp) → divergence (cellules d'eau, contrôle de
+ *   densité) → Jacobi surface libre (air p = 0) → gradient (velNew) → G2P
+ *   (FLIP/PIC + advection RK2 bornée)
  *   [toutes les SORT_INTERVAL frames] tri par blocs 8³ (leçon de J0)
  *   → rendu points (projection inverse-rayons).
  * Doctrine : zéro alloc/frame, un CommandEncoder, zéro readback en boucle,
@@ -14,6 +15,7 @@ import gridWGSL from './shaders/eau_grid.wgsl?raw';
 import g2pWGSL from './shaders/eau_g2p.wgsl?raw';
 import sortWGSL from './shaders/eau_sort.wgsl?raw';
 import pointsWGSL from './shaders/eau_points.wgsl?raw';
+import surfaceWGSL from './shaders/eau_surface.wgsl?raw';
 import { GRID_EAU, PARTICLES_EAU, SORT_BLOCKS, SORT_INTERVAL, WG_GRID, WG_PARTICLES } from './config_eau';
 import { createShaderModule, withValidation } from '../core/pipelines';
 import { flip, type Pair, type PingIndex } from '../core/types';
@@ -29,11 +31,19 @@ export interface FrameEauInput {
   timeScale: number;
   pointSize: number;
   exposure: number;
+  /** true = points bruts (instrument physique) sur la boîte ; false = surface. */
+  renderPoints: boolean;
+  absorption: number;
+  /** Seuil d'iso-surface sur la densité floutée (1 = densité de repos). */
+  surfaceIso: number;
+  /** Vue debug du rendu : 0 surface, 2 coupe z=0 de la densité, 3 densité max par rayon. */
+  debugView: number;
   cam: { azimuth: number; elevation: number; radius: number };
 }
 
 const COMPUTE = GPUShaderStage.COMPUTE;
 const VERTEX = GPUShaderStage.VERTEX;
+const FRAGMENT = GPUShaderStage.FRAGMENT;
 
 function pair<T>(f: (i: PingIndex) => T): Pair<T> {
   return [f(0), f(1)];
@@ -44,10 +54,12 @@ export class FluidEau {
   private pressureIdx: PingIndex = 0;
   private frameIdx = 0;
   private needsInit = true;
-  /** Dernier recensement lu : [valides, perdues (NaN/hors monde), rapides]. */
+  /** Dernier recensement lu : [valides, perdues (NaN/hors monde), rapides],
+   *  [4..67] 8 particules brutes (pos+vel en bits float), [66..71] histogramme
+   *  des cellules par occupation (0, 1-3, 4-7, 8-11, 12-23, 24+). */
   readonly lastCensus = new Uint32Array(72);
   private censusInFlight = false;
-  private readonly uniformData = new Float32Array(24);
+  private readonly uniformData = new Float32Array(28);
   private readonly submitList: GPUCommandBuffer[] = [];
 
   private constructor(
@@ -65,12 +77,16 @@ export class FluidEau {
       divergence: GPUComputePipeline;
       jacobi: GPUComputePipeline;
       gradient: GPUComputePipeline;
+      clearPressure: GPUComputePipeline;
       g2p: GPUComputePipeline;
       census: GPUComputePipeline;
       histogram: GPUComputePipeline;
       scan: GPUComputePipeline;
       reorder: GPUComputePipeline;
+      densityBlur: GPUComputePipeline;
+      cellCensus: GPUComputePipeline;
       points: GPURenderPipeline;
+      surface: GPURenderPipeline;
     },
     private readonly binds: {
       gridG0: GPUBindGroup; // uniform seul (module grille)
@@ -83,6 +99,9 @@ export class FluidEau {
       g2p: Pair<GPUBindGroup>; // [particules]
       sort: Pair<GPUBindGroup>; // [source] → destination = flip
       points: Pair<GPUBindGroup>; // [particules]
+      densityBlur: GPUBindGroup;
+      cellCensus: GPUBindGroup;
+      surface: GPUBindGroup;
     },
   ) {}
 
@@ -145,6 +164,9 @@ export class FluidEau {
       const velNew = tex3d('eau-vel-new', 'rgba16float');
       const pressure = pair((i) => tex3d(`eau-press-${i}`, 'r32float'));
       const divergence = tex3d('eau-div', 'r32float');
+      // Densité floutée pour le rendu de surface (rgba16float : filtrable,
+      // format storage de base — r16float n'est ni l'un ni l'autre).
+      const density = tex3d('eau-density', 'rgba16float');
       const uniforms = device.createBuffer({
         label: 'eau-uniforms',
         size: 256,
@@ -203,7 +225,7 @@ export class FluidEau {
         }),
         divergence: device.createBindGroupLayout({
           label: 'eau-div',
-          entries: [sampled(0), storageBuf(2, true), storageTex(3, 'r32float')],
+          entries: [sampled(0), storageBuf(2, true), storageTex(3, 'r32float'), sampled(7)],
         }),
         jacobi: device.createBindGroupLayout({
           label: 'eau-jacobi',
@@ -235,14 +257,31 @@ export class FluidEau {
             { binding: 1, visibility: VERTEX, buffer: { type: 'read-only-storage' } },
           ],
         }),
+        densityBlur: device.createBindGroupLayout({
+          label: 'eau-density-blur',
+          entries: [uniformEntry(COMPUTE), storageBuf(2, true), storageTex(3, 'rgba16float')],
+        }),
+        cellCensus: device.createBindGroupLayout({
+          label: 'eau-cell-census',
+          entries: [uniformEntry(COMPUTE), storageBuf(2, true), storageBuf(5)],
+        }),
+        surface: device.createBindGroupLayout({
+          label: 'eau-surface',
+          entries: [
+            uniformEntry(FRAGMENT),
+            { binding: 1, visibility: FRAGMENT, sampler: { type: 'filtering' } },
+            { binding: 4, visibility: FRAGMENT, texture: { sampleType: 'float', viewDimension: '3d' } },
+          ],
+        }),
       };
 
-      const [p2gM, gridM, g2pM, sortM, pointsM] = await Promise.all([
+      const [p2gM, gridM, g2pM, sortM, pointsM, surfaceM] = await Promise.all([
         createShaderModule(device, 'sim_p2g.wgsl', simP2gWGSL),
         createShaderModule(device, 'eau_grid.wgsl', gridWGSL),
         createShaderModule(device, 'eau_g2p.wgsl', g2pWGSL),
         createShaderModule(device, 'eau_sort.wgsl', sortWGSL),
         createShaderModule(device, 'eau_points.wgsl', pointsWGSL),
+        createShaderModule(device, 'eau_surface.wgsl', surfaceWGSL),
       ]);
 
       const compute = (
@@ -257,7 +296,7 @@ export class FluidEau {
           compute: { module, entryPoint },
         });
 
-      const [initDam, scatter, resolve, forces, divergencePipe, jacobi, gradient, g2p, censusPipe, histogram, scan, reorder, points] =
+      const [initDam, scatter, resolve, forces, divergencePipe, jacobi, gradient, clearPressure, g2p, censusPipe, histogram, scan, reorder, densityBlur, cellCensus, points, surface] =
         await Promise.all([
           compute('eau-init-dam', [L.p2g], p2gM, 'init_dam'),
           compute('eau-scatter', [L.p2g], p2gM, 'scatter'),
@@ -266,11 +305,14 @@ export class FluidEau {
           compute('eau-divergence', [L.gridG0, L.divergence], gridM, 'divergence'),
           compute('eau-jacobi', [L.gridG0, L.jacobi], gridM, 'jacobi'),
           compute('eau-gradient', [L.gridG0, L.gradient], gridM, 'gradient'),
+          compute('eau-clear-pressure', [L.gridG0, L.jacobi], gridM, 'clear_pressure'),
           compute('eau-g2p', [L.g2pG0, L.g2p], g2pM, 'g2p'),
           compute('eau-census', [L.g2pG0, L.g2p], g2pM, 'census_pass'),
           compute('eau-histogram', [L.gridG0, L.sort], sortM, 'histogram'),
           compute('eau-scan', [L.gridG0, L.sort], sortM, 'scan'),
           compute('eau-reorder', [L.gridG0, L.sort], sortM, 'reorder'),
+          compute('eau-density-blur', [L.densityBlur], surfaceM, 'density_blur'),
+          compute('eau-cell-census', [L.cellCensus], surfaceM, 'cell_census'),
           device.createRenderPipelineAsync({
             label: 'eau-points',
             layout: device.createPipelineLayout({ label: 'eau-points-pl', bindGroupLayouts: [L.points] }),
@@ -288,6 +330,13 @@ export class FluidEau {
                 },
               ],
             },
+            primitive: { topology: 'triangle-list' },
+          }),
+          device.createRenderPipelineAsync({
+            label: 'eau-surface',
+            layout: device.createPipelineLayout({ label: 'eau-surface-pl', bindGroupLayouts: [L.surface] }),
+            vertex: { module: surfaceM, entryPoint: 'vs_full' },
+            fragment: { module: surfaceM, entryPoint: 'fs_surface', targets: [{ format: targetFormat }] },
             primitive: { topology: 'triangle-list' },
           }),
         ]);
@@ -334,6 +383,7 @@ export class FluidEau {
             { binding: 0, resource: velTmp },
             { binding: 2, resource: { buffer: cellCount } },
             { binding: 3, resource: divergence },
+            { binding: 7, resource: density },
           ],
         }),
         jacobi: pair((p) =>
@@ -394,6 +444,33 @@ export class FluidEau {
             ],
           }),
         ),
+        densityBlur: device.createBindGroup({
+          label: 'eau-density-blur',
+          layout: L.densityBlur,
+          entries: [
+            { binding: 0, resource: { buffer: uniforms } },
+            { binding: 2, resource: { buffer: cellCount } },
+            { binding: 3, resource: density },
+          ],
+        }),
+        cellCensus: device.createBindGroup({
+          label: 'eau-cell-census',
+          layout: L.cellCensus,
+          entries: [
+            { binding: 0, resource: { buffer: uniforms } },
+            { binding: 2, resource: { buffer: cellCount } },
+            { binding: 5, resource: { buffer: censusBuf } },
+          ],
+        }),
+        surface: device.createBindGroup({
+          label: 'eau-surface',
+          layout: L.surface,
+          entries: [
+            { binding: 0, resource: { buffer: uniforms } },
+            { binding: 1, resource: sampler },
+            { binding: 4, resource: density },
+          ],
+        }),
       };
 
       return new FluidEau(
@@ -403,7 +480,7 @@ export class FluidEau {
         blockCount,
         censusBuf,
         censusStaging,
-        { initDam, scatter, resolve, forces, divergence: divergencePipe, jacobi, gradient, g2p, census: censusPipe, histogram, scan, reorder, points },
+        { initDam, scatter, resolve, forces, divergence: divergencePipe, jacobi, gradient, clearPressure, g2p, census: censusPipe, histogram, scan, reorder, densityBlur, cellCensus, points, surface },
         binds,
       );
     });
@@ -426,6 +503,14 @@ export class FluidEau {
       pass.setPipeline(this.pipelines.initDam);
       pass.setBindGroup(0, this.binds.p2g[this.particleIdx]);
       pass.dispatchWorkgroups(particleDispatch);
+      // Purge du warm start de pression : l'ancien champ kickait les
+      // particules (> 550 voxels/s) dès la première frame après un reset.
+      pass.setPipeline(this.pipelines.clearPressure);
+      pass.setBindGroup(0, this.binds.gridG0);
+      for (const p of [0, 1] as const) {
+        pass.setBindGroup(1, this.binds.jacobi[p]);
+        pass.dispatchWorkgroups(gridDispatch, gridDispatch, gridDispatch);
+      }
       pass.end();
     }
 
@@ -440,6 +525,10 @@ export class FluidEau {
         cp.setBindGroup(0, this.binds.p2g[this.particleIdx]);
         cp.dispatchWorkgroups(particleDispatch);
         cp.setPipeline(this.pipelines.resolve);
+        cp.dispatchWorkgroups(gridDispatch, gridDispatch, gridDispatch);
+        // Densité floutée : lue par le contrôle de densité ET par le rendu.
+        cp.setPipeline(this.pipelines.densityBlur);
+        cp.setBindGroup(0, this.binds.densityBlur);
         cp.dispatchWorkgroups(gridDispatch, gridDispatch, gridDispatch);
         // Grille : gravité, divergence, pression, gradient.
         cp.setBindGroup(0, this.binds.gridG0);
@@ -495,20 +584,34 @@ export class FluidEau {
       cpn.setBindGroup(0, this.binds.g2pG0);
       cpn.setBindGroup(1, this.binds.g2p[this.particleIdx]);
       cpn.dispatchWorkgroups(Math.ceil(PARTICLES_EAU / WG_PARTICLES));
+      cpn.setPipeline(this.pipelines.cellCensus);
+      cpn.setBindGroup(0, this.binds.cellCensus);
+      cpn.dispatchWorkgroups(gridDispatch, gridDispatch, gridDispatch);
       cpn.end();
       encoder.copyBufferToBuffer(this.censusBuf, 0, this.censusStaging, 0, 288);
     }
 
-    const rp = encoder.beginRenderPass({
-      label: 'eau-points',
-      colorAttachments: [
-        { view: target, loadOp: 'clear', storeOp: 'store', clearValue: { r: 0.028, g: 0.036, b: 0.052, a: 1 } },
-      ],
+    // Boîte + surface (densité floutée du dernier sous-pas — valable aussi en
+    // pause) ; en mode points, la boîte seule et les points par-dessus.
+    const sp = encoder.beginRenderPass({
+      label: 'eau-surface',
+      colorAttachments: [{ view: target, loadOp: 'clear', storeOp: 'store', clearValue: { r: 0, g: 0, b: 0, a: 1 } }],
     });
-    rp.setPipeline(this.pipelines.points);
-    rp.setBindGroup(0, this.binds.points[this.particleIdx]);
-    rp.draw(6, PARTICLES_EAU);
-    rp.end();
+    sp.setPipeline(this.pipelines.surface);
+    sp.setBindGroup(0, this.binds.surface);
+    sp.draw(3);
+    sp.end();
+
+    if (input.renderPoints) {
+      const rp = encoder.beginRenderPass({
+        label: 'eau-points',
+        colorAttachments: [{ view: target, loadOp: 'load', storeOp: 'store' }],
+      });
+      rp.setPipeline(this.pipelines.points);
+      rp.setBindGroup(0, this.binds.points[this.particleIdx]);
+      rp.draw(6, PARTICLES_EAU);
+      rp.end();
+    }
 
     this.submitList[0] = encoder.finish();
     this.device.queue.submit(this.submitList);
@@ -569,6 +672,9 @@ export class FluidEau {
     d[21] = fy;
     d[22] = fz;
     d[23] = input.pointSize;
+    d[24] = input.renderPoints ? 1 : input.debugView;
+    d[25] = input.absorption;
+    d[26] = input.surfaceIso;
     this.device.queue.writeBuffer(this.uniforms, 0, d);
   }
 }

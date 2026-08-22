@@ -42,11 +42,18 @@ export const EAU_DEFAULTS = {
   /** Sous-pas par frame : CFL ~2-3 voxels/sous-pas aux vitesses de chute. */
   substeps: 2,
   timeScale: 1,
-  /** Rendu points. */
+  /** Rendu : surface (défaut) ou points bruts (instrument physique). */
+  renderPoints: false,
+  /** Absorption de l'eau (×), 1 = bleu-vert d'aquarium. */
+  absorption: 1.0,
+  /** Seuil d'iso-surface (densité floutée, 1 = repos). */
+  surfaceIso: 0.4,
+  /** Vue debug du rendu (0 = aucune). */
+  debugView: 0,
   pointSize: 0.0035,
   exposure: 1.0,
-  /** Caméra orbitale initiale. */
+  /** Caméra orbitale initiale : la boîte entière doit tenir dans le cadre. */
   camAzimuth: 0.55,
-  camElevation: 0.18,
-  camRadius: 2.2,
+  camElevation: 0.32,
+  camRadius: 2.4,
 } as const;

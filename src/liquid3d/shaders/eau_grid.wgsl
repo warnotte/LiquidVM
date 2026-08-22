@@ -22,6 +22,7 @@ struct UEau {
 @group(1) @binding(4) var p_src: texture_3d<f32>;
 @group(1) @binding(5) var p_dst: texture_storage_3d<r32float, write>;
 @group(1) @binding(6) var div_src: texture_3d<f32>;
+@group(1) @binding(7) var dens_src: texture_3d<f32>; // densité floutée (1 = repos)
 
 fn n_size() -> i32 {
   return i32(U.sim.x);
@@ -75,14 +76,43 @@ fn face_w(c: vec3i, n: i32) -> f32 {
 }
 
 // Divergence compacte, cellules d'EAU seulement (l'air n'est pas résolu) —
-// avec CONTRÔLE DE DENSITÉ (Bridson) : la projection rend le champ de vitesse
-// incompressible mais rien n'empêche les particules de s'agglutiner par dérive
-// d'interpolation (fonte du volume, trous en « fromage »). Les cellules
-// SURPEUPLÉES (> 8 particules = densité de repos) reçoivent une divergence
-// cible positive : le solveur les fait s'étendre vers la densité de repos.
-// Jamais de correction en sous-densité (elle combattrait la surface libre).
-const REST_DENSITY = 8.0;
-const DENSITY_RELAX = 0.3;
+// avec CONTRÔLE DE DENSITÉ (Bridson) DANS LES DEUX SENS, sur la densité
+// FLOUTÉE (boîte 3³, 1 = repos, calculée par sous-pas dans eau_surface.wgsl) :
+//  - surpeuplée → divergence cible positive (expansion) : contre les trous en
+//    « fromage » et la fonte du volume ;
+//  - SOUS-peuplée ET sans voisin d'air → cible négative (compression) : sans
+//    elle, le volume n'a qu'un cliquet — toute cellule touchée par une
+//    particule devient « eau » incompressible, le volume gonfle à chaque
+//    éclaboussure et ne se recompacte jamais (mesuré : nappe calme à ~4
+//    particules/cellule, volume ×2). Jamais de compression en surface : elle
+//    aspirerait la surface libre.
+// Taux en 1/s (indépendant du sous-pas) : à rel = 1, la cellule demande 10 %
+// de volume par 10 ms. L'ancien 0.3/dt (= 3600 %/s) sur-réagissait au bruit
+// de Poisson du comptage et POMPAIT de l'énergie dans le bassin calme (surface
+// qui « bout », grumeaux à 24+ particules/cellule).
+const DENSITY_RATE = 10.0;
+// Pas de pression : écrit 0 (purge du warm start au reset — leçon 2D).
+@compute @workgroup_size(4, 4, 4)
+fn clear_pressure(@builtin(global_invocation_id) gid: vec3u) {
+  let n = n_size();
+  if (i32(gid.x) >= n || i32(gid.y) >= n || i32(gid.z) >= n) {
+    return;
+  }
+  textureStore(p_dst, gid, vec4f(0.0));
+}
+
+fn air_adjacent(c: vec3i, n: i32) -> bool {
+  let dirs = array<vec3i, 6>(
+    vec3i(1, 0, 0), vec3i(-1, 0, 0), vec3i(0, 1, 0), vec3i(0, -1, 0), vec3i(0, 0, 1), vec3i(0, 0, -1),
+  );
+  for (var k = 0; k < 6; k++) {
+    let q = c + dirs[k];
+    if (!solid(q, n) && !fluid(q, n)) {
+      return true;
+    }
+  }
+  return false;
+}
 
 @compute @workgroup_size(4, 4, 4)
 fn divergence(@builtin(global_invocation_id) gid: vec3u) {
@@ -98,12 +128,14 @@ fn divergence(@builtin(global_invocation_id) gid: vec3u) {
   let d = face_u(c + vec3i(1, 0, 0), n) - textureLoad(vel_src, c, 0).x +
     face_v(c + vec3i(0, 1, 0), n) - textureLoad(vel_src, c, 0).y +
     face_w(c + vec3i(0, 0, 1), n) - textureLoad(vel_src, c, 0).z;
-  let count = f32(cell_count[u32(c.x + n * (c.y + n * c.z))]);
-  // Bornée à 1 : sans le clamp, une cellule très tassée (30+ particules)
-  // demandait ~180 s⁻¹ d'expansion → pressions explosives → vitesses au-delà
-  // du max float16 → NaN → particules invisibles (la saga float16 du 2D).
-  let overdense = min(max(count - REST_DENSITY, 0.0) / REST_DENSITY, 1.0);
-  let d_target = DENSITY_RELAX * overdense / max(U.sim.z, 1e-4);
+  // Bornée à [−0.5, 1] : sans le clamp, une cellule très tassée (30+
+  // particules) demandait ~180 s⁻¹ d'expansion → pressions explosives →
+  // vitesses au-delà du max float16 → NaN (la saga float16 du 2D).
+  var rel = clamp(textureLoad(dens_src, c, 0).x - 1.0, -0.5, 1.0);
+  if (rel < 0.0 && air_adjacent(c, n)) {
+    rel = 0.0;
+  }
+  let d_target = DENSITY_RATE * rel;
   textureStore(div_dst, gid, vec4f(d - d_target, 0.0, 0.0, 0.0));
 }
 

@@ -40,7 +40,9 @@ fn rand01(seed: u32) -> f32 {
 }
 
 // Colonne d'eau : 64×32×128 cellules (basse et large — la profondeur 32 reste
-// à portée du Jacobi tant que le multigrid masqué n'est pas là), 8/cellule.
+// à portée du Jacobi tant que le multigrid masqué n'est pas là), 8/cellule,
+// à RAS du sol et de la paroi (les cellules de bord sont de l'eau, leurs faces
+// extérieures sont les murs).
 @compute @workgroup_size(64)
 fn init_dam(@builtin(global_invocation_id) gid: vec3u) {
   let i = gid.x;
@@ -52,7 +54,7 @@ fn init_dam(@builtin(global_invocation_id) gid: vec3u) {
   let cx = f32(cell % 64u);
   let cy = f32((cell / 64u) % 32u);
   let cz = f32(cell / 2048u);
-  let pos = vec3f(1.0 + cx, 1.0 + cy, 0.0 + cz) +
+  let pos = vec3f(cx, cy, cz) +
     vec3f(rand01(s), rand01(s ^ 0x9e3779b9u), rand01(s ^ 0x85ebca6bu));
   particles[2u * i] = vec4f(pos, 0.0);
   particles[2u * i + 1u] = vec4f(0.0);
