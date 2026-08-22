@@ -201,11 +201,20 @@ Config actuelle : sim 1024², dye/scène 2048².
   par-dessus defaultTuning3() (déterministe quel que soit l'historique de clics,
   pas de reset : la flamme change de caractère en direct). Ajouter un preset =
   une entrée dans PRESETS (main3d.ts). Exposition/pas de marche non touchés.
-- **Mode DÉMO (showcase)** : touche D ou `?demo` — chorégraphie en boucle ~80 s
-  (pilote → fontaine magenta → fumée → nappe de carburant → souffle scripté →
-  embrasement → boule en lemniscate → grand souffle → accalmie → reset), caméra
-  en orbite avec respiration. DemoDriver dans main3d.ts ; pilotage scripté via
-  sim.driveSphere / sim.addEmitterAt (mêmes chemins que la saisie réelle).
+- **Mode DÉMO (showcase, REMASTER 2026-08-22)** : touche D ou `?demo` — boucle
+  ~88 s en QUATRE ACTES qui traversent les presets : I bougie (caméra proche au
+  ras, lueur intime) → la flamme prend (défaut) + fontaine magenta → II nappe
+  de carburant + souffle scripté → III FOURNAISE (braises ON, lueur 2.3,
+  dissipation remontée à 0.4 pour consumer la brume des actes précédents,
+  caméra ample) + boule en lemniscate + grand souffle → IV fumée épaisse
+  (braises OFF, caméra haute lente) → accalmie → reset. Caméra par CIBLES
+  LISSÉES par acte (camT : vitesse d'orbite/élévation/distance, exp-smoothing
+  + respiration). Les réglages du spectateur sont SNAPSHOTÉS à l'entrée et
+  RESTAURÉS à la sortie (start()/stop() appelés par toggleDemo — la démo mute
+  params/braises/lueur sans laisser de trace). TUNE_CANDLE/FURNACE/SMOKE au
+  niveau module, partagés avec les presets du panneau. Piège de banc : le
+  chronométrage mural d'une capture de démo doit se caler sur les ÉVÉNEMENTS
+  (ex. bascule embersOn), pas sur l'horloge — le boot décale tout de ~10 s.
 - **MacCormack 3D** : prédicteur/correcteur clampé par composante MAC (stencil du
   point rétro-advecté) — LE raffineur : le panache laminaire devient turbulent et
   structuré à lui seul.

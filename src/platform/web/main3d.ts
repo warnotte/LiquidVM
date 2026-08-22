@@ -24,14 +24,48 @@ import { showFatalError } from './overlay';
 
 const SELFTEST_FRAMES = 240;
 
+/** Jeux de réglages nommés — partagés par les presets du panneau ET la démo. */
+const TUNE_CANDLE: Partial<Sim3Tuning> = {
+  buoyancy: 80, velocityDissipation: 0.05, emitHeat: 1.6, emitInkRate: 0.7,
+  heatCooling: 1.5, inkDissipation: 0.3, burnRate: 2, heatYield: 0.5, expansion: 4,
+};
+const TUNE_FURNACE: Partial<Sim3Tuning> = {
+  buoyancy: 280, velocityDissipation: 0.02, emitHeat: 6.5, emitInkRate: 3.5,
+  heatCooling: 0.55, inkDissipation: 0.15, burnRate: 6, heatYield: 1.05,
+  expansion: 24, oxygenRecover: 0.05, blowForce: 320,
+};
+const TUNE_SMOKE: Partial<Sim3Tuning> = {
+  buoyancy: 110, emitHeat: 1.2, emitInkRate: 5.5,
+  heatCooling: 1.2, inkDissipation: 0.04,
+};
+
+// PRESETS du panneau : appliqués À CHAUD par-dessus les défauts (déterministe
+// quel que soit l'historique de clics). Exposition/pas de marche non touchés.
+const PRESETS: readonly { label: string; values: Partial<Sim3Tuning> }[] = [
+  { label: '↺ défaut', values: {} },
+  { label: '🕯 bougie', values: TUNE_CANDLE },
+  { label: '🔥 fournaise', values: TUNE_FURNACE },
+  { label: '🌫 fumée épaisse', values: TUNE_SMOKE },
+];
+
 /**
  * Mode DÉMO (touche D ou ?demo) : chorégraphie scriptée du moteur — le showcase.
- * Caméra en orbite lente, fontaine d'encre, nappe de carburant soufflée dans la
- * flamme (embrasement), boule qui brasse les panaches, accalmie, et boucle.
+ * REMASTER : quatre actes qui traversent les presets (bougie → défaut →
+ * fournaise avec braises et lueur poussée → fumée épaisse), caméra scénarisée
+ * par cibles lissées, boule en lemniscate dans le brasier. Les réglages de
+ * l'utilisateur sont SNAPSHOTÉS au lancement et RESTAURÉS à la sortie (D).
  */
 class DemoDriver {
   private t = 0;
   private readonly fired = new Set<number>();
+  /** Cible caméra de l'acte courant (vitesse d'orbite, élévation, distance). */
+  private camT = { speed: 0.06, elevation: 0.1, radius: 1.55 };
+  private saved: {
+    params: Sim3Tuning;
+    embersOn: boolean;
+    glowStrength: number;
+    exposure: number;
+  } | null = null;
 
   constructor(
     private readonly input: Frame3DInput,
@@ -46,43 +80,97 @@ class DemoDriver {
     }
   }
 
+  /** Réglages d'acte : les écarts par-dessus les défauts (comme les presets). */
+  private apply(values: Partial<Sim3Tuning>): void {
+    Object.assign(this.input.params, defaultTuning3(), values);
+  }
+
+  private act(cam: { speed: number; elevation: number; radius: number }): void {
+    this.camT = cam;
+  }
+
+  /** Lancement : snapshot des réglages du spectateur, scène vierge, acte I. */
+  start(): void {
+    this.saved = {
+      params: { ...this.input.params },
+      embersOn: this.input.embersOn,
+      glowStrength: this.input.glowStrength,
+      exposure: this.input.exposure,
+    };
+    this.t = 0;
+    this.fired.clear();
+    this.input.reset = true;
+  }
+
+  /** Sortie (D) : la main revient au spectateur avec SES réglages. */
+  stop(): void {
+    if (this.saved !== null) {
+      Object.assign(this.input.params, this.saved.params);
+      this.input.embersOn = this.saved.embersOn;
+      this.input.glowStrength = this.saved.glowStrength;
+      this.input.exposure = this.saved.exposure;
+      this.saved = null;
+    }
+    this.input.blow.active = false;
+  }
+
   tick(dt: number): void {
     this.t += dt;
     const input = this.input;
 
-    // Caméra : orbite lente, élévation et distance qui respirent.
-    input.cam.azimuth += dt * 0.1;
-    input.cam.elevation = 0.24 + 0.1 * Math.sin(this.t * 0.11);
-    input.cam.radius = 2.05 + 0.28 * Math.sin(this.t * 0.07);
+    // Caméra : orbite continue, élévation/distance LISSÉES vers la cible de
+    // l'acte + une respiration lente par-dessus.
+    const k = 1 - Math.exp(-1.1 * dt);
+    input.cam.azimuth += dt * this.camT.speed;
+    input.cam.elevation +=
+      (this.camT.elevation + 0.05 * Math.sin(this.t * 0.13) - input.cam.elevation) * k;
+    input.cam.radius +=
+      (this.camT.radius + 0.13 * Math.sin(this.t * 0.09) - input.cam.radius) * k;
 
-    // Acte I : la flamme pilote seule (0–6 s), puis les matières entrent.
-    this.at(0.5, () => this.toast('Acte I — la flamme pilote'));
-    this.at(6, () => {
+    // ACTE I — une bougie dans le noir (caméra proche, flamme intime).
+    this.at(0.02, () => {
+      this.apply(TUNE_CANDLE);
+      input.embersOn = false;
+      input.glowStrength = 1.8;
+      this.act({ speed: 0.06, elevation: 0.1, radius: 1.55 });
+      this.toast('Acte I — une bougie dans le noir');
+    });
+    // La flamme prend ses aises, la caméra recule.
+    this.at(8, () => {
+      this.apply({});
+      this.act({ speed: 0.09, elevation: 0.22, radius: 1.95 });
+      this.toast('la flamme prend ses aises');
+    });
+    this.at(14, () => {
       this.sim.addEmitterAt(0.27, 0.08, 0.5, 1);
-      this.toast("fontaine d'encre magenta — elle retombe en refroidissant");
+      this.toast("fontaine d'encre magenta — lourde, elle retombe en refroidissant");
     });
-    this.at(13, () => {
-      this.sim.addEmitterAt(0.73, 0.08, 0.6, 0);
-      this.toast('colonne de fumée');
+    // ACTE II — la nappe de carburant rampe au sol (caméra au ras).
+    this.at(21, () => {
+      this.sim.addEmitterAt(0.62, 0.08, 0.35, 2);
+      this.act({ speed: 0.08, elevation: 0.13, radius: 1.85 });
+      this.toast('Acte II — la vapeur de carburant coule et nappe le sol');
     });
-    // Acte II : la nappe de carburant se répand (20 s)…
-    this.at(20, () => {
-      this.sim.addEmitterAt(0.6, 0.08, 0.33, 2);
-      this.toast('Acte II — vapeur de carburant : elle coule et nappe le sol');
-    });
-    this.at(30, () => this.toast('un souffle pousse la nappe dans la flamme…'));
-    // …et un souffle la pousse dans la flamme pilote : embrasement (30–34 s).
-    if (this.t > 30 && this.t < 34) {
+    this.at(28, () => this.toast('un souffle la pousse vers la flamme…'));
+    if (this.t > 28 && this.t < 32) {
       input.blow.active = true;
       input.blow.ndcX = 0.2;
       input.blow.ndcY = -0.4;
       input.blow.moveX += -dt * 1.4;
     }
-    this.at(34, () => (input.blow.active = false));
-    this.at(36, () => this.toast('embrasement — la déflagration court le long de la nappe'));
-    // Acte III : la boule brasse les panaches en lemniscate (40–58 s).
-    this.at(40, () => this.toast('Acte III — la boule brasse les panaches'));
-    if (this.t > 40 && this.t < 58) {
+    this.at(32, () => (input.blow.active = false));
+    // ACTE III — embrasement : fournaise, braises, lueur poussée, caméra ample.
+    // Dissipation remontée : la brume des actes précédents se consume, le
+    // brasier se détache au lieu de se noyer dans la boîte enfumée.
+    this.at(34, () => {
+      this.apply({ ...TUNE_FURNACE, inkDissipation: 0.4 });
+      input.embersOn = true;
+      input.glowStrength = 2.3;
+      this.act({ speed: 0.12, elevation: 0.3, radius: 2.3 });
+      this.toast('Acte III — FOURNAISE : braises au vent, la fumée boit la lumière');
+    });
+    this.at(40, () => this.toast('la boule plonge dans le brasier'));
+    if (this.t > 40 && this.t < 56) {
       const u = (this.t - 40) * 0.33;
       this.sim.driveSphere(
         0.5 + 0.3 * Math.sin(u),
@@ -91,21 +179,28 @@ class DemoDriver {
         dt,
       );
     }
-    // Acte IV : grand souffle transversal (62–65 s), puis accalmie.
-    this.at(62, () => this.toast('Acte IV — grand souffle'));
-    if (this.t > 62 && this.t < 65) {
+    this.at(57, () => this.act({ speed: 0.1, elevation: 0.2, radius: 2.1 }));
+    if (this.t > 58 && this.t < 61) {
       input.blow.active = true;
       input.blow.ndcX = -0.3;
       input.blow.ndcY = 0.0;
       input.blow.moveX += dt * 1.2;
       input.blow.moveY += dt * 0.3;
     }
-    this.at(65, () => (input.blow.active = false));
-    this.at(69, () => this.toast('accalmie…'));
-    this.at(70, () => (input.removeEmitter = true));
+    this.at(61, () => (input.blow.active = false));
+    // ACTE IV — l'après : la fumée épaisse retombe (caméra haute, lente).
+    this.at(64, () => {
+      this.apply(TUNE_SMOKE);
+      input.embersOn = false;
+      input.glowStrength = 1.5;
+      this.act({ speed: 0.05, elevation: 0.34, radius: 2.45 });
+      this.toast('Acte IV — la fumée épaisse retombe');
+    });
     this.at(72, () => (input.removeEmitter = true));
+    this.at(74, () => (input.removeEmitter = true));
+    this.at(80, () => this.toast('accalmie… (D : reprendre la main)'));
     // Boucle.
-    if (this.t > 82) {
+    if (this.t > 88) {
       input.reset = true;
       this.t = 0;
       this.fired.clear();
@@ -366,41 +461,19 @@ async function boot(): Promise<void> {
   // Ajouter un réglage futur = une entrée ici, rien d'autre.
   const p = input.params;
   const inkCss = INK_COLORS.map((c) => `rgb(${c.map((v) => Math.round(v * 255)).join(',')})`);
+  // Le mode démo scénarise TOUT (presets, braises, lueur, caméra) : snapshot
+  // des réglages au lancement, restauration à la sortie.
   const toggleDemo = (): void => {
     demoOn = !demoOn;
-    if (!demoOn) {
-      input.blow.active = false;
+    if (demoOn) {
+      demoDriver.start();
+    } else {
+      demoDriver.stop();
     }
   };
-  // PRESETS : jeux de réglages physiques nommés, appliqués À CHAUD sur les params
-  // vivants (pas de reset — la flamme change de caractère sous vos yeux). Chaque
-  // preset part des DÉFAUTS puis applique ses écarts : déterministe quel que soit
-  // l'historique de clics. Exposition/pas de marche non touchés.
-  const PRESETS: readonly { label: string; values: Partial<Sim3Tuning> }[] = [
-    { label: '↺ défaut', values: {} },
-    {
-      label: '🕯 bougie',
-      values: {
-        buoyancy: 80, velocityDissipation: 0.05, emitHeat: 1.6, emitInkRate: 0.7,
-        heatCooling: 1.5, inkDissipation: 0.3, burnRate: 2, heatYield: 0.5, expansion: 4,
-      },
-    },
-    {
-      label: '🔥 fournaise',
-      values: {
-        buoyancy: 280, velocityDissipation: 0.02, emitHeat: 6.5, emitInkRate: 3.5,
-        heatCooling: 0.55, inkDissipation: 0.15, burnRate: 6, heatYield: 1.05,
-        expansion: 24, oxygenRecover: 0.05, blowForce: 320,
-      },
-    },
-    {
-      label: '🌫 fumée épaisse',
-      values: {
-        buoyancy: 110, emitHeat: 1.2, emitInkRate: 5.5,
-        heatCooling: 1.2, inkDissipation: 0.04,
-      },
-    },
-  ];
+  if (demoOn) {
+    demoDriver.start();
+  }
   const panel = new Panel3D(document.body, [
     {
       title: 'presets',
