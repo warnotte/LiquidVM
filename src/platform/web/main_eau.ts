@@ -91,6 +91,8 @@ async function boot(): Promise<void> {
     absorption: EAU_DEFAULTS.absorption,
     surfaceIso: EAU_DEFAULTS.surfaceIso,
     debugView: EAU_DEFAULTS.debugView,
+    sphereActive: true,
+    grab: { active: false, ndcX: 0, ndcY: 0 },
     cam: {
       azimuth: EAU_DEFAULTS.camAzimuth,
       elevation: EAU_DEFAULTS.camElevation,
@@ -102,13 +104,28 @@ async function boot(): Promise<void> {
     (window as unknown as Record<string, unknown>)['__simEau'] = sim;
   }
 
-  // Caméra orbitale : glisser = orbiter, molette = zoom (même feeling que 3d.html).
+  // Pointeur : glisser SUR LA BOULE = la déplacer (elle brasse l'eau), glisser
+  // ailleurs = orbiter, molette = zoom (même feeling que 3d.html).
   let dragging = false;
   let lastX = 0;
   let lastY = 0;
+  const ndc = (e: PointerEvent): { x: number; y: number } => {
+    const r = canvas.getBoundingClientRect();
+    return {
+      x: ((e.clientX - r.left) / Math.max(r.width, 1)) * 2 - 1,
+      y: 1 - ((e.clientY - r.top) / Math.max(r.height, 1)) * 2,
+    };
+  };
   canvas.addEventListener('contextmenu', (e) => e.preventDefault());
   canvas.addEventListener('pointerdown', (e) => {
-    dragging = true;
+    const p = ndc(e);
+    if (input.sphereActive && sim.hitTest(p.x, p.y)) {
+      input.grab.active = true;
+      input.grab.ndcX = p.x;
+      input.grab.ndcY = p.y;
+    } else {
+      dragging = true;
+    }
     lastX = e.clientX;
     lastY = e.clientY;
     try {
@@ -118,6 +135,12 @@ async function boot(): Promise<void> {
     }
   });
   canvas.addEventListener('pointermove', (e) => {
+    if (input.grab.active) {
+      const p = ndc(e);
+      input.grab.ndcX = p.x;
+      input.grab.ndcY = p.y;
+      return;
+    }
     if (!dragging) {
       return;
     }
@@ -131,6 +154,7 @@ async function boot(): Promise<void> {
   });
   const endDrag = (): void => {
     dragging = false;
+    input.grab.active = false;
   };
   canvas.addEventListener('pointerup', endDrag);
   canvas.addEventListener('pointercancel', endDrag);
@@ -151,6 +175,9 @@ async function boot(): Promise<void> {
     } else if (e.code === 'KeyP') {
       input.renderPoints = !input.renderPoints;
       panel.refresh();
+    } else if (e.code === 'KeyO') {
+      input.sphereActive = !input.sphereActive;
+      panel.refresh();
     }
   });
 
@@ -166,6 +193,7 @@ async function boot(): Promise<void> {
         { label: 'vitesse du temps', min: 0, max: 1.5, step: 0.05, get: () => input.timeScale, set: (x) => (input.timeScale = x), format: (x) => `×${x.toFixed(2)}` },
       ],
       checks: [
+        { label: 'boule (O) — glisser dessus pour brasser', get: () => input.sphereActive, set: (v) => (input.sphereActive = v) },
         { label: 'APIC (J2) — décoché : FLIP/PIC', get: () => input.apic, set: (v) => (input.apic = v) },
         {
           label: 'colonne haute 32×64 (reset)',
@@ -214,16 +242,18 @@ async function boot(): Promise<void> {
     if (hudTimer > 0.5) {
       hudTimer = 0;
       panel.refresh();
-      const [valid, lost, fast] = sim.lastCensus;
+      const [valid, lost, fast, inBall] = sim.lastCensus;
       const hist = Array.from(sim.lastCensus.subarray(66, 72), (x) => (x / 1000).toFixed(1) + 'k');
       hud.innerHTML =
-        `<b>LiquidVM eau — J1 : dam break</b> · ${GRID_EAU}³ · ` +
+        `<b>LiquidVM eau — J3 : dam break + boule</b> · ${GRID_EAU}³ · ` +
         `${PARTICLES_EAU.toLocaleString('fr')} particules · ${input.substeps} sous-pas · ` +
         `Jacobi ${input.jacobiIterations} · ${Math.round(fps)} FPS${input.paused ? ' · ⏸' : ''}<br>` +
         `recensement : <b>${(valid ?? 0).toLocaleString('fr')}</b> valides · ` +
         `${(lost ?? 0).toLocaleString('fr')} perdues · ${(fast ?? 0).toLocaleString('fr')} rapides · ` +
+        `${(inBall ?? 0).toLocaleString('fr')} dans la boule · ` +
         `cellules 1-3/4-7/<b>8-11</b>/12-23/24+ : ${hist.slice(1).join(' / ')}<br>` +
-        'glisser : orbiter · molette : zoom · espace : pause · R : reset · Tab : réglages';
+        'glisser la boule : brasser · glisser ailleurs : orbiter · molette : zoom · ' +
+          'espace : pause · R : reset · O : boule · P : points · Tab : réglages';
     }
     if (selftest && frames === SELFTEST_FRAMES) {
       const report = document.createElement('div');

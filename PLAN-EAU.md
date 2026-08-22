@@ -88,10 +88,10 @@ mesuré — pas une option vague.
 
 | # | Livrable | Critère de sortie |
 | - | -------- | ----------------- |
-| J0 | Micro-banc P2G seul (scatter atomique 2 M particules, distribution GROUPÉE — la contention réaliste) | < 2 ms/frame mesuré — sinon on revoit la méthode AVANT de construire |
-| J1 | **Dam break** : gravité, P2G/G2P (PIC/FLIP), Jacobi surface libre, rendu points | La colonne s'effondre, la vague traverse, clapote et SE CALME (ni explosion ni fonte) ; 60 FPS à 128³/2 M ; `?selftest` 240 frames + compteur de particules affiché au HUD |
-| J2 | **APIC** : matrice affine C par particule, transferts APIC | A/B FLIP↔APIC par captures : surface plus lisse SANS amortissement visible ; tourbillon d'essai qui survit ; coût ≤ +20 % |
-| J3 | La **boule** dans l'eau (sphère analytique + saisie + bord mobile) | Vagues au passage de la boule, aucune particule dans la sphère, 60 FPS |
+| J0 ✅ | Micro-banc P2G seul (scatter atomique 2 M particules, distribution GROUPÉE — la contention réaliste) | < 2 ms/frame mesuré — sinon on revoit la méthode AVANT de construire |
+| J1 ✅ | **Dam break** : gravité, P2G/G2P (PIC/FLIP), Jacobi surface libre, rendu points | La colonne s'effondre, la vague traverse, clapote et SE CALME (ni explosion ni fonte) ; 60 FPS à 128³/2 M ; `?selftest` 240 frames + compteur de particules affiché au HUD |
+| J2 ✅ | **APIC** : matrice affine C par particule, transferts APIC | A/B FLIP↔APIC par captures : surface plus lisse SANS amortissement visible ; tourbillon d'essai qui survit ; coût ≤ +20 % |
+| J3 ✅ | La **boule** dans l'eau (sphère analytique + saisie + bord mobile) | Vagues au passage de la boule, aucune particule dans la sphère, 60 FPS |
 | J4 | **Multigrid masqué** (pyramide air/eau/solide par niveau) | A/B Jacobi↔MG visuellement identiques, gain FPS mesuré, 2000+ frames stables ; Jacobi RESTE le repli au panneau |
 | J5 | **Surface** : splat densité → raymarch (absorption bleu-vert, Fresnel) | Des captures qui ressemblent à de l'eau ; 60 FPS tenus |
 | J6 | **Interactions** : verser au pointeur, souffle, presets (bassin calme / tempête), démo courte | Jouable au même niveau de finition que le feu |
@@ -225,6 +225,37 @@ NOTES-DEV mis à jour à chaque jalon, pièges payés documentés immédiatement
   retenue dans eau_grid.wgsl, taux réglable au panneau (« contrôle densité
   (/s) »). Le « tourbillon d'essai » du critère J2 n'a pas été testé (pas de
   scène dédiée) — à faire avec la boule (J3), qui le fournira naturellement.
+
+- **J3 — VERT : la boule dans l'eau (2026-08-23).** Sphère ANALYTIQUE (aucune
+  texture d'obstacles, comme le feu) : `in_sphere` = « centre de cellule dans la
+  sphère », testé par chaque passe. Conditions de bord posées d'emblée sous leur
+  forme correcte, d'où zéro NaN du premier coup :
+  - **divergence** : une face touchant la boule est un DÉBIT CONNU = vitesse de
+    la boule (`face_u/v/w` distinguent paroi de boîte → 0, face de boule →
+    `sphere_vel`, sinon vitesse advectée) ;
+  - **Jacobi** : voisin solide → `p_centre` (Neumann, le même clamp-trick que
+    les bords) ; l'air reste Dirichlet p = 0 ;
+  - **gradient** : ces faces sont PRESCRITES à `sphere_vel` et non corrigées —
+    l'adjoint divergence/gradient reste exact, donc le bord MOBILE ne fabrique
+    ni source ni puits ;
+  - **particules** : repoussées sur la surface (rayon + ½ voxel) avec annulation
+    de la composante entrante de la vitesse RELATIVE (une boule immobile ne
+    colle pas les particules, une boule qui avance les pousse).
+  Saisie au pointeur comme le feu : `hitTest` par rayon décide saisie vs orbite,
+  déplacement sur le plan face caméra, vitesse lissée EMA 0.55/0.45 plafonnée à
+  400 voxels/s, amortie ×0,82 au relâcher. Rendu : intersection analytique, la
+  marche d'eau et le rayon RÉFRACTÉ s'arrêtent sur la boule (`behind()` rend la
+  boule ou la paroi) — elle se lit dans l'air comme sous l'eau.
+  VÉRIFIÉ par un vrai glisser CDP (`Input.dispatchMouseEvent`) : la boule pousse
+  une vague devant elle, laisse un sillage, éclabousse ; **0 particule dans la
+  boule** à chaque relevé (nouveau compteur `census[3]`, affiché au HUD), 0
+  perdue, **60 FPS** pendant tout le brassage. Le brassage violent fait monter
+  les « rapides » à ~600 (vitesses > 550 voxels/s) sans aucune divergence : le
+  filet float16 fait son travail.
+  Piège UX payé : le HUD (`.hud`) captait les clics — la boule était
+  insaisissable dans le bas de l'écran. `pointer-events: none` (il est purement
+  informatif). À vérifier sur les autres pages si un jour on y ajoute de la
+  manipulation directe près du HUD.
 
 ## Conventions du chantier
 

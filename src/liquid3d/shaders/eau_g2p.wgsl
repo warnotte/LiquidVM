@@ -16,6 +16,9 @@ struct UEau {
   cam_right: vec4f,
   cam_up: vec4f,
   cam_fwd: vec4f,
+  render: vec4f,
+  sphere: vec4f,     // xyz: centre (voxels), w: rayon (≤ 0 = absente)
+  sphere_vel: vec4f, // xyz: vitesse de la boule (voxels/s)
 }
 
 @group(0) @binding(0) var<uniform> U: UEau;
@@ -126,6 +129,24 @@ fn g2p(@builtin(global_invocation_id) gid: vec3u) {
   }
   p_new = clamp(p_new, lo, hi);
 
+  // BOULE (J3) : aucune particule ne reste dedans — on la repose sur la surface
+  // (marge d'un demi-voxel, le rayon que « voit » la grille) et on annule la
+  // composante entrante de la vitesse RELATIVE : la boule pousse l'eau au lieu
+  // de l'aspirer, et une boule immobile ne colle pas les particules.
+  if (U.sphere.w > 0.0) {
+    let rel_pos = p_new - U.sphere.xyz;
+    let dist = length(rel_pos);
+    let surf = U.sphere.w + 0.5;
+    if (dist < surf) {
+      let nrm = select(vec3f(0.0, 1.0, 0.0), rel_pos / max(dist, 1e-5), dist > 1e-5);
+      p_new = clamp(U.sphere.xyz + nrm * surf, lo, hi);
+      let vn = dot(v - U.sphere_vel.xyz, nrm);
+      if (vn < 0.0) {
+        v -= vn * nrm;
+      }
+    }
+  }
+
   particles[4u * i] = vec4f(p_new, c_w.x);
   particles[4u * i + 1u] = vec4f(v, c_w.y);
   particles[4u * i + 2u] = vec4f(c_u, c_w.z);
@@ -133,7 +154,8 @@ fn g2p(@builtin(global_invocation_id) gid: vec3u) {
 }
 
 // RECENSEMENT (l'instrument du jalon J1 : « compteur de particules au HUD ») :
-// [0] valides, [1] positions NaN/hors monde, [2] vitesses suspectes (> 550).
+// [0] valides, [1] positions NaN/hors monde, [2] vitesses suspectes (> 550),
+// [3] particules DANS la boule (critère de sortie de J3 : doit rester 0).
 // NaN se détecte par x != x (un NaN n'est jamais égal à lui-même).
 @compute @workgroup_size(64)
 fn census_pass(@builtin(global_invocation_id) gid: vec3u) {
@@ -153,6 +175,9 @@ fn census_pass(@builtin(global_invocation_id) gid: vec3u) {
   }
   if (vel_ok && length(vel) > 550.0) {
     atomicAdd(&census[2], 1u);
+  }
+  if (U.sphere.w > 0.0 && pos_ok && distance(pos, U.sphere.xyz) < U.sphere.w) {
+    atomicAdd(&census[3], 1u);
   }
   // Échantillon brut : 8 particules espacées, pos+vel dans census[4..68]
   // (u32 = bits float, décodés côté CPU) — voir les données, pas les deviner.

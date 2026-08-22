@@ -12,6 +12,9 @@ struct UEau {
   cam_right: vec4f,
   cam_up: vec4f,
   cam_fwd: vec4f,
+  render: vec4f,
+  sphere: vec4f,     // xyz: centre (voxels), w: rayon (voxels, ≤ 0 = absente)
+  sphere_vel: vec4f, // xyz: vitesse de la boule (voxels/s) — bord MOBILE
 }
 
 @group(0) @binding(0) var<uniform> U: UEau;
@@ -28,15 +31,29 @@ fn n_size() -> i32 {
   return i32(U.sim.x);
 }
 
+// BOULE-OBSTACLE analytique (J3) : aucune texture d'obstacles — chaque passe
+// teste « centre de cellule dans la sphère », comme le feu. La règle « centre »
+// garde le lisseur adjoint exact du couple divergence/gradient.
+fn in_sphere(c: vec3i) -> bool {
+  if (U.sphere.w <= 0.0) {
+    return false;
+  }
+  return distance(vec3f(c) + vec3f(0.5), U.sphere.xyz) < U.sphere.w;
+}
+
+fn out_of_box(c: vec3i, n: i32) -> bool {
+  return any(c < vec3i(0)) || any(c >= vec3i(n));
+}
+
 fn fluid(c: vec3i, n: i32) -> bool {
-  if (any(c < vec3i(0)) || any(c >= vec3i(n))) {
-    return false; // hors boîte = solide, pas eau
+  if (out_of_box(c, n) || in_sphere(c)) {
+    return false; // hors boîte ou dans la boule = solide, pas eau
   }
   return cell_count[u32(c.x + n * (c.y + n * c.z))] > 0u;
 }
 
 fn solid(c: vec3i, n: i32) -> bool {
-  return any(c < vec3i(0)) || any(c >= vec3i(n));
+  return out_of_box(c, n) || in_sphere(c);
 }
 
 // Gravité sur la grille + parois : les faces 0 sont des murs (vitesse nulle).
@@ -55,24 +72,37 @@ fn forces(@builtin(global_invocation_id) gid: vec3u) {
   textureStore(vel_dst, gid, vec4f(vel, 0.0));
 }
 
-// Face haute inexistante (i = N) = mur : contribution nulle.
-fn face_u(c: vec3i, n: i32) -> f32 {
-  if (c.x >= n) {
+// Vitesse d'une FACE, du point de vue de la divergence. La face d'indice f est
+// celle entre les cellules f−1 et f. Trois cas : paroi de boîte (0, faces 0 et
+// N — le schéma compact rend les faces N inexistantes), face de la BOULE (débit
+// PRESCRIT = vitesse de la boule, le même flux que le gradient y écrira), sinon
+// la vitesse advectée.
+fn face_u(f: vec3i, n: i32) -> f32 {
+  if (f.x <= 0 || f.x >= n) {
     return 0.0;
   }
-  return textureLoad(vel_src, c, 0).x;
+  if (in_sphere(f) || in_sphere(f - vec3i(1, 0, 0))) {
+    return U.sphere_vel.x;
+  }
+  return textureLoad(vel_src, f, 0).x;
 }
-fn face_v(c: vec3i, n: i32) -> f32 {
-  if (c.y >= n) {
+fn face_v(f: vec3i, n: i32) -> f32 {
+  if (f.y <= 0 || f.y >= n) {
     return 0.0;
   }
-  return textureLoad(vel_src, c, 0).y;
+  if (in_sphere(f) || in_sphere(f - vec3i(0, 1, 0))) {
+    return U.sphere_vel.y;
+  }
+  return textureLoad(vel_src, f, 0).y;
 }
-fn face_w(c: vec3i, n: i32) -> f32 {
-  if (c.z >= n) {
+fn face_w(f: vec3i, n: i32) -> f32 {
+  if (f.z <= 0 || f.z >= n) {
     return 0.0;
   }
-  return textureLoad(vel_src, c, 0).z;
+  if (in_sphere(f) || in_sphere(f - vec3i(0, 0, 1))) {
+    return U.sphere_vel.z;
+  }
+  return textureLoad(vel_src, f, 0).z;
 }
 
 // Divergence compacte, cellules d'EAU seulement (l'air n'est pas résolu) —
@@ -116,9 +146,9 @@ fn divergence(@builtin(global_invocation_id) gid: vec3u) {
     textureStore(div_dst, gid, vec4f(0.0));
     return;
   }
-  let d = face_u(c + vec3i(1, 0, 0), n) - textureLoad(vel_src, c, 0).x +
-    face_v(c + vec3i(0, 1, 0), n) - textureLoad(vel_src, c, 0).y +
-    face_w(c + vec3i(0, 0, 1), n) - textureLoad(vel_src, c, 0).z;
+  let d = face_u(c + vec3i(1, 0, 0), n) - face_u(c, n) +
+    face_v(c + vec3i(0, 1, 0), n) - face_v(c, n) +
+    face_w(c + vec3i(0, 0, 1), n) - face_w(c, n);
   // Bornée à 1 : sans le clamp, une cellule très tassée (30+ particules)
   // demandait ~180 s⁻¹ d'expansion → pressions explosives → vitesses au-delà
   // du max float16 → NaN (la saga float16 du 2D).
@@ -181,13 +211,22 @@ fn gradient(@builtin(global_invocation_id) gid: vec3u) {
   var vel = textureLoad(vel_src, c, 0).xyz;
   let pc = textureLoad(p_src, c, 0).x;
   let here_fluid = fluid(c, n);
-  if (here_fluid || fluid(c - vec3i(1, 0, 0), n)) {
+  let here_solid = in_sphere(c);
+  // Face de la boule : vitesse PRESCRITE (bord mobile — le gradient n'y touche
+  // pas, la divergence l'a lue comme un débit connu : l'adjoint reste exact).
+  if (here_solid || in_sphere(c - vec3i(1, 0, 0))) {
+    vel.x = U.sphere_vel.x;
+  } else if (here_fluid || fluid(c - vec3i(1, 0, 0), n)) {
     vel.x -= pc - grad_p(c - vec3i(1, 0, 0), pc, n);
   }
-  if (here_fluid || fluid(c - vec3i(0, 1, 0), n)) {
+  if (here_solid || in_sphere(c - vec3i(0, 1, 0))) {
+    vel.y = U.sphere_vel.y;
+  } else if (here_fluid || fluid(c - vec3i(0, 1, 0), n)) {
     vel.y -= pc - grad_p(c - vec3i(0, 1, 0), pc, n);
   }
-  if (here_fluid || fluid(c - vec3i(0, 0, 1), n)) {
+  if (here_solid || in_sphere(c - vec3i(0, 0, 1))) {
+    vel.z = U.sphere_vel.z;
+  } else if (here_fluid || fluid(c - vec3i(0, 0, 1), n)) {
     vel.z -= pc - grad_p(c - vec3i(0, 0, 1), pc, n);
   }
   vel.x = select(vel.x, 0.0, c.x == 0);

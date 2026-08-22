@@ -56,6 +56,13 @@ export const EAU_DEFAULTS = {
   /** Sous-pas par frame : CFL ~2-3 voxels/sous-pas aux vitesses de chute. */
   substeps: 2,
   timeScale: 1,
+  /** Boule-obstacle (J3) : rayon et position de départ en fraction de grille. */
+  sphereRadius: 0.12,
+  /** À demi immergée dans le bassin au repos, et HORS de la colonne initiale
+   *  (x < 0,5) : la vague de rupture vient la percuter. */
+  sphereStart: [0.76, 0.13, 0.5] as const,
+  /** Plafond CFL de la vitesse de la boule (voxels/s) et lissage EMA. */
+  sphereSpeedCap: 400,
   /** Rendu : surface (défaut) ou points bruts (instrument physique). */
   renderPoints: false,
   /** Absorption de l'eau (×), 1 = bleu-vert d'aquarium. */

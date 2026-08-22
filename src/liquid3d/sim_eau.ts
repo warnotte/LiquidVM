@@ -16,7 +16,7 @@ import g2pWGSL from './shaders/eau_g2p.wgsl?raw';
 import sortWGSL from './shaders/eau_sort.wgsl?raw';
 import pointsWGSL from './shaders/eau_points.wgsl?raw';
 import surfaceWGSL from './shaders/eau_surface.wgsl?raw';
-import { GRID_EAU, PARTICLES_EAU, PARTICLE_STRIDE, SORT_BLOCKS, SORT_INTERVAL, WG_GRID, WG_PARTICLES } from './config_eau';
+import { EAU_DEFAULTS, GRID_EAU, PARTICLES_EAU, PARTICLE_STRIDE, SORT_BLOCKS, SORT_INTERVAL, WG_GRID, WG_PARTICLES } from './config_eau';
 import { createShaderModule, withValidation } from '../core/pipelines';
 import { flip, type Pair, type PingIndex } from '../core/types';
 
@@ -44,6 +44,11 @@ export interface FrameEauInput {
   surfaceIso: number;
   /** Vue debug du rendu : 0 surface, 2 coupe z=0 de la densité, 3 densité max par rayon. */
   debugView: number;
+  /** Boule-obstacle présente (J3). */
+  sphereActive: boolean;
+  /** Saisie de la boule : la plateforme met active à true tant que le pointeur
+   *  reste enfoncé après un hitTest positif (sinon c'est une orbite). */
+  grab: { active: boolean; ndcX: number; ndcY: number };
   cam: { azimuth: number; elevation: number; radius: number };
 }
 
@@ -65,7 +70,20 @@ export class FluidEau {
    *  des cellules par occupation (0, 1-3, 4-7, 8-11, 12-23, 24+). */
   readonly lastCensus = new Uint32Array(72);
   private censusInFlight = false;
-  private readonly uniformData = new Float32Array(28);
+  private readonly uniformData = new Float32Array(36);
+  /** Base caméra du dernier writeUniforms : pos(3), right(3), up(3), fwd(3),
+   *  tan(fov/2), aspect — de quoi refaire le rayon du pointeur côté CPU. */
+  private readonly camRay = new Float32Array(14);
+  private readonly rayO = new Float32Array(3);
+  private readonly rayD = new Float32Array(3);
+  /** Boule-obstacle : position (voxels), vitesse (voxels/s), état de saisie. */
+  private readonly spherePos: [number, number, number] = [
+    GRID_EAU * EAU_DEFAULTS.sphereStart[0],
+    GRID_EAU * EAU_DEFAULTS.sphereStart[1],
+    GRID_EAU * EAU_DEFAULTS.sphereStart[2],
+  ];
+  private readonly sphereVel: [number, number, number] = [0, 0, 0];
+  private grabbed = false;
   private readonly submitList: GPUCommandBuffer[] = [];
 
   private constructor(
@@ -497,6 +515,17 @@ export class FluidEau {
     const dt = Math.min(Math.max(input.dt, 0), 1 / 30) * input.timeScale;
     const substeps = Math.max(1, Math.round(input.substeps));
     const running = !input.paused && dt > 0;
+    if (input.reset || this.needsInit) {
+      this.spherePos[0] = GRID_EAU * EAU_DEFAULTS.sphereStart[0];
+      this.spherePos[1] = GRID_EAU * EAU_DEFAULTS.sphereStart[1];
+      this.spherePos[2] = GRID_EAU * EAU_DEFAULTS.sphereStart[2];
+      this.sphereVel[0] = 0;
+      this.sphereVel[1] = 0;
+      this.sphereVel[2] = 0;
+    }
+    // La boule est déplacée AVANT l'écriture des uniforms : le bord mobile de
+    // cette frame correspond au mouvement de cette frame.
+    this.updateSphere(input, dt);
     this.writeUniforms(input, dt / substeps, aspect);
 
     const encoder = this.device.createCommandEncoder({ label: 'frame-eau' });
@@ -637,6 +666,93 @@ export class FluidEau {
     }
   }
 
+  /** Rayon caméra→scène pour un point NDC : origine en VOXELS, direction unitaire
+   *  (même construction que le raymarch, à partir de la base caméra mémorisée). */
+  private computeRay(ndcX: number, ndcY: number): void {
+    const c = this.camRay;
+    const tanf = c[12]!;
+    const aspect = c[13]!;
+    const dx = c[9]! + c[3]! * ndcX * tanf * aspect + c[6]! * ndcY * tanf;
+    const dy = c[10]! + c[4]! * ndcX * tanf * aspect + c[7]! * ndcY * tanf;
+    const dz = c[11]! + c[5]! * ndcX * tanf * aspect + c[8]! * ndcY * tanf;
+    const dl = Math.hypot(dx, dy, dz) || 1;
+    this.rayD[0] = dx / dl;
+    this.rayD[1] = dy / dl;
+    this.rayD[2] = dz / dl;
+    this.rayO[0] = (c[0]! + 0.5) * GRID_EAU;
+    this.rayO[1] = (c[1]! + 0.5) * GRID_EAU;
+    this.rayO[2] = (c[2]! + 0.5) * GRID_EAU;
+  }
+
+  /** Distance du centre de la boule au rayon courant (+∞ si elle est derrière). */
+  private ballRayDistance(): number {
+    const vx = this.spherePos[0] - this.rayO[0]!;
+    const vy = this.spherePos[1] - this.rayO[1]!;
+    const vz = this.spherePos[2] - this.rayO[2]!;
+    const t = vx * this.rayD[0]! + vy * this.rayD[1]! + vz * this.rayD[2]!;
+    if (t <= 0) {
+      return Number.POSITIVE_INFINITY;
+    }
+    return Math.hypot(vx - t * this.rayD[0]!, vy - t * this.rayD[1]!, vz - t * this.rayD[2]!);
+  }
+
+  /** Le pointeur est-il sur la boule ? (la plateforme décide saisie vs orbite) */
+  hitTest(ndcX: number, ndcY: number): boolean {
+    this.computeRay(ndcX, ndcY);
+    return this.ballRayDistance() < EAU_DEFAULTS.sphereRadius * GRID_EAU * 1.15;
+  }
+
+  /** Saisie : la boule suit le pointeur sur le plan face caméra passant par son
+   *  centre, et communique sa vitesse au fluide (bord mobile) — lissée EMA et
+   *  plafonnée CFL, amortie dès qu'on lâche (comme la boule du feu). */
+  private updateSphere(input: FrameEauInput, dt: number): void {
+    if (input.grab.active) {
+      this.computeRay(input.grab.ndcX, input.grab.ndcY);
+      if (!this.grabbed) {
+        this.grabbed = this.ballRayDistance() < EAU_DEFAULTS.sphereRadius * GRID_EAU * 1.15;
+      }
+    } else {
+      this.grabbed = false;
+    }
+    if (this.grabbed && input.sphereActive) {
+      const c = this.camRay;
+      const before: [number, number, number] = [this.spherePos[0], this.spherePos[1], this.spherePos[2]];
+      const denom = c[9]! * this.rayD[0]! + c[10]! * this.rayD[1]! + c[11]! * this.rayD[2]!;
+      if (Math.abs(denom) > 1e-5) {
+        const t =
+          (c[9]! * (before[0] - this.rayO[0]!) +
+            c[10]! * (before[1] - this.rayO[1]!) +
+            c[11]! * (before[2] - this.rayO[2]!)) /
+          denom;
+        if (t > 0) {
+          // La boule reste entièrement dans la boîte (rayon + un demi-voxel).
+          const m = EAU_DEFAULTS.sphereRadius * GRID_EAU + 0.5;
+          for (let a = 0; a < 3; a++) {
+            const v = this.rayO[a]! + t * this.rayD[a]!;
+            this.spherePos[a] = Math.min(Math.max(v, m), GRID_EAU - m);
+          }
+        }
+      }
+      if (dt > 0) {
+        const cap = EAU_DEFAULTS.sphereSpeedCap;
+        for (let a = 0; a < 3; a++) {
+          this.sphereVel[a] = 0.55 * this.sphereVel[a]! + (0.45 * (this.spherePos[a]! - before[a]!)) / dt;
+        }
+        const mag = Math.hypot(this.sphereVel[0], this.sphereVel[1], this.sphereVel[2]);
+        if (mag > cap) {
+          const k = cap / mag;
+          this.sphereVel[0] *= k;
+          this.sphereVel[1] *= k;
+          this.sphereVel[2] *= k;
+        }
+      }
+    } else {
+      this.sphereVel[0] *= 0.82;
+      this.sphereVel[1] *= 0.82;
+      this.sphereVel[2] *= 0.82;
+    }
+  }
+
   private writeUniforms(input: FrameEauInput, dtSub: number, aspect: number): void {
     const d = this.uniformData;
     d[0] = GRID_EAU;
@@ -684,6 +800,29 @@ export class FluidEau {
     d[24] = input.renderPoints ? 1 : input.debugView;
     d[25] = input.absorption;
     d[26] = input.surfaceIso;
+    d[28] = this.spherePos[0];
+    d[29] = this.spherePos[1];
+    d[30] = this.spherePos[2];
+    d[31] = input.sphereActive ? EAU_DEFAULTS.sphereRadius * GRID_EAU : 0;
+    d[32] = this.sphereVel[0];
+    d[33] = this.sphereVel[1];
+    d[34] = this.sphereVel[2];
+    // Base caméra mémorisée pour le rayon du pointeur (hitTest / saisie).
+    const c = this.camRay;
+    c[0] = d[8]!;
+    c[1] = d[9]!;
+    c[2] = d[10]!;
+    c[3] = d[12]!;
+    c[4] = d[13]!;
+    c[5] = d[14]!;
+    c[6] = d[16]!;
+    c[7] = d[17]!;
+    c[8] = d[18]!;
+    c[9] = d[20]!;
+    c[10] = d[21]!;
+    c[11] = d[22]!;
+    c[12] = d[11]!;
+    c[13] = aspect;
     this.device.queue.writeBuffer(this.uniforms, 0, d);
   }
 }

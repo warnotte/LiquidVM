@@ -129,6 +129,13 @@ de 25 %, taux 10/s — la compression des cellules sous-denses fabrique des
 grumeaux, l'absence totale de contrôle compacte l'eau de ~25 % (tableau des
 mesures dans le journal J2 de PLAN-EAU). Transfert APIC par défaut (J2), FLIP
 conservé (case / `?flip`) ; `?tall` = colonne haute 32×64.
+Boule-obstacle (J3, touche O) : ANALYTIQUE comme celle du feu — face touchant la
+boule = débit prescrit (divergence ET gradient), voisin solide = p_centre,
+particules repoussées avec annulation de la vitesse relative entrante ; saisie
+par `hitTest` au pointeur (glisser dessus = brasser, ailleurs = orbiter). Le
+compteur « dans la boule » du HUD doit rester à 0.
+Jalons J0–J3 verts ; la branche `eau` n'est PAS mergée dans `main` (le site
+public ne montre rien de l'eau — demander avant de merger).
 
 ## Chantier 3D (branche `3d`)
 

@@ -19,6 +19,8 @@ struct UEau {
   cam_up: vec4f,    // xyz, w: exposition
   cam_fwd: vec4f,   // xyz
   render: vec4f,    // x: 0 surface / 1 points (boîte seule) / 2 coupe / 3 densité max, y: absorption, z: seuil iso
+  sphere: vec4f,    // xyz: centre (voxels), w: rayon (voxels, ≤ 0 = absente)
+  sphere_vel: vec4f,
 }
 
 @group(0) @binding(0) var<uniform> U: UEau;
@@ -146,6 +148,42 @@ fn edge_factor(p: vec3f) -> f32 {
   return smoothstep(0.482, 0.497, max(min(e.x, e.y), min(max(e.x, e.y), e.z)));
 }
 
+// BOULE-OBSTACLE (J3), en coordonnées MONDE (la boîte est le cube unité centré).
+fn ball_center() -> vec3f {
+  return U.sphere.xyz / U.sim.x - vec3f(0.5);
+}
+
+fn ball_radius() -> f32 {
+  return U.sphere.w / U.sim.x;
+}
+
+// Intersection rayon / boule : t d'entrée, ou 1e9 si manquée / absente.
+fn ball_hit(ro: vec3f, rd: vec3f) -> f32 {
+  if (U.sphere.w <= 0.0) {
+    return 1e9;
+  }
+  let oc = ro - ball_center();
+  let r = ball_radius();
+  let b = dot(oc, rd);
+  let disc = b * b - (dot(oc, oc) - r * r);
+  if (disc < 0.0) {
+    return 1e9;
+  }
+  let t = -b - sqrt(disc);
+  return select(1e9, t, t > 1e-4);
+}
+
+// Boule laquée sombre : diffus + spéculaire + liseré de bord (elle doit se lire
+// aussi bien dans l'air que sous l'eau, où le contraste chute).
+fn ball_shade(p: vec3f, rd: vec3f, ldir: vec3f) -> vec3f {
+  let nrm = normalize(p - ball_center());
+  let diff = max(dot(nrm, ldir), 0.0);
+  let rim = pow(1.0 - max(dot(nrm, -rd), 0.0), 3.0);
+  let spec = pow(max(dot(reflect(rd, nrm), ldir), 0.0), 48.0);
+  return vec3f(0.16, 0.17, 0.20) * (0.25 + 0.75 * diff) +
+    vec3f(0.30, 0.34, 0.42) * rim * 0.5 + vec3f(1.0) * spec * 0.35;
+}
+
 // Parois INTÉRIEURES de la boîte au point de sortie du rayon : sol ardoise,
 // parois plus sombres et dégradées vers le bas, grille discrète 8×8.
 fn container(p: vec3f) -> vec3f {
@@ -163,6 +201,16 @@ fn container(p: vec3f) -> vec3f {
   let dl = (vec2f(0.5) - abs(fract(uv * 8.0) - vec2f(0.5))) / 8.0;
   let line = 1.0 - smoothstep(0.0015, 0.005, min(dl.x, dl.y));
   return base * (1.0 + 0.45 * line) + vec3f(0.22, 0.24, 0.30) * edge_factor(p);
+}
+
+// Ce que le rayon rencontre DERRIÈRE l'eau : la boule si elle est sur le
+// chemin avant la sortie de boîte, sinon la paroi.
+fn behind(ro: vec3f, rd: vec3f, t_exit: f32, ldir: vec3f) -> vec3f {
+  let tb = ball_hit(ro, rd);
+  if (tb < t_exit) {
+    return ball_shade(ro + rd * tb, rd, ldir);
+  }
+  return container(ro + rd * t_exit);
 }
 
 @fragment
@@ -201,7 +249,9 @@ fn fs_surface(frag: VSOut) -> @location(0) vec4f {
   var col = bg;
   if (hit.y > t0) {
     let entry = ro + rd * hit.x;
-    let back = container(ro + rd * hit.y);
+    let back = behind(ro, rd, hit.y, ldir);
+    // La marche d'eau s'arrête à la boule : pas de surface trouvée derrière elle.
+    let t_stop = min(hit.y, ball_hit(ro, rd));
     let glass = vec3f(0.10, 0.11, 0.14) * edge_factor(entry);
     if (U.render.x > 2.5) {
       // Vue debug 3 : densité MAX le long du rayon (rayon droit).
@@ -236,7 +286,7 @@ fn fs_surface(frag: VSOut) -> @location(0) vec4f {
         var t_prev = t0;
         var t = t0 + step_len * hash12(frag.ndc * 917.0);
         for (var i = 0u; i < 256u; i++) {
-          if (t >= hit.y) {
+          if (t >= t_stop) {
             break;
           }
           if (density_at(ro + rd * t) > iso()) {
@@ -270,7 +320,8 @@ fn fs_surface(frag: VSOut) -> @location(0) vec4f {
         // Le rayon réfracté cumule l'épaisseur d'eau traversée (pas 1,5 voxel)
         // et va chercher la paroi derrière.
         let rd2 = refract(rd, n_hit, 0.752);
-        let exit2 = max(box_hit(p_hit, rd2).y, 0.0);
+        let box_exit2 = max(box_hit(p_hit, rd2).y, 0.0);
+        let exit2 = min(box_exit2, ball_hit(p_hit, rd2));
         let step2 = 1.5 * step_len;
         var water_len = 0.0;
         var t2 = 0.5 * step2;
@@ -283,7 +334,7 @@ fn fs_surface(frag: VSOut) -> @location(0) vec4f {
           }
           t2 += step2;
         }
-        let back2 = container(p_hit + rd2 * exit2);
+        let back2 = behind(p_hit, rd2, box_exit2, ldir);
         let absorb = vec3f(6.0, 2.2, 1.0) * U.render.y;
         let through = back2 * exp(-absorb * water_len) +
           vec3f(0.02, 0.13, 0.20) * (1.0 - exp(-3.0 * water_len));
