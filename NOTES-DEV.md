@@ -134,7 +134,14 @@ boule = débit prescrit (divergence ET gradient), voisin solide = p_centre,
 particules repoussées avec annulation de la vitesse relative entrante ; saisie
 par `hitTest` au pointeur (glisser dessus = brasser, ailleurs = orbiter). Le
 compteur « dans la boule » du HUD doit rester à 0.
-Jalons J0–J3 verts, MERGÉS dans `main` (les trois pages sont cross-linkées).
+Jalons J0–J4 verts, MERGÉS dans `main` (les trois pages sont cross-linkées).
+SOLVEUR DE PRESSION : multigrid masqué par défaut (`eau_mg.wgsl` = celui du feu +
+un masque de type de cellule ; l'opérateur du feu est le cas « aucune cellule
+d'air » de celui de l'eau). MG ×4 mesuré 2,5× plus exact et 48 % plus rapide que
+Jacobi 100 à 192³ ; Jacobi reste le repli (case / `?jacobi`). Instruments au HUD :
+résidu de divergence (moyen/max) et compteur de particules rapides — il FAUT les
+deux, un champ uniforme parasite est à divergence nulle et le résidu ne le voit
+pas. Le réglage « niveaux multigrid » (1 = lisseur seul) sert à bissecter.
 Résolution : `?grid=96|128|160|192` ou boutons du panneau — bindings vivants via
 `setGridEau()` appelé avant toute création, particules = n³, grandeurs en
 voxels/s multipliées par `SCALE_EAU`. Mesuré : 60 FPS jusqu'à 128³, ~50 à 160³,
@@ -353,13 +360,12 @@ opérateur plein de branches, plus lent et plus fragile que les deux séparés. 
 
 **Ordre recommandé (du plus rentable au plus spéculatif) :**
 
-1. **J4 — généraliser le multigrid du feu à l'eau.** C'est LE gain mesuré : le
-   solveur de pression est ce qui plafonne l'eau (60 FPS à 128³, 27 à 192³ avec
-   Jacobi 100). `multigrid3d.wgsl` marche déjà et sa structure (V-cycle,
-   restriction, prolongation, ancrage au niveau grossier) est indépendante du
-   type de cellule. Le travail est d'y injecter un « type de cellule » (fluide /
-   air Dirichlet / solide Neumann) et de construire la pyramide de masques.
-   Écrire un SECOND multigrid serait la faute à ne pas commettre.
+1. ~~**J4 — généraliser le multigrid du feu à l'eau.**~~ **FAIT** (2026-08-23) :
+   `eau_mg.wgsl`, MG ×4 par défaut, 2,5× plus exact et 48 % plus rapide que
+   Jacobi 100 à 192³. La thèse « c'est le même opérateur » s'est vérifiée. Reste
+   une amélioration identifiée : ancrer le mode constant aux niveaux grossiers
+   (comme le feu) pour autoriser une restriction de masques plus permissive que
+   la règle conservatrice actuelle — la correction s'essouffle en eau profonde.
 2. **Extraire une coquille 3D commune** (`platform/web/scene3d.ts`) : caméra
    orbitale + rayon + saisie, boucle de frame, HUD, selftest, sélecteur de
    résolution, navigation. Aucun changement visible, mais J6 (presets, démo,
