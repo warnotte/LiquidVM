@@ -347,8 +347,9 @@ NOTES-DEV mis à jour à chaque jalon, pièges payés documentés immédiatement
      surface. Le critère de MAJORITÉ explose aussi. Seul « air dès qu'un enfant
      est air » est stable — au prix d'un domaine fluide grossier plus petit,
      donc d'une correction qui s'essouffle en profondeur. Pour autoriser une
-     règle plus permissive il faudrait ANCRER le mode constant aux niveaux
-     grossiers, comme le fait le multigrid du feu ; c'est la suite naturelle.
+     règle plus permissive il faudrait peut-être ANCRER le mode constant aux
+     niveaux grossiers — hypothèse testée et RÉFUTÉE le lendemain, voir
+     l'entrée suivante.
   3. *Angle mort de l'instrument.* Pendant l'explosion du point 2, le résidu de
      divergence tombait à 3e-5, « mieux » que Jacobi. **Un champ de vitesse
      uniforme parasite est à divergence nulle** : le résidu ne le voit pas. Il
@@ -359,6 +360,36 @@ NOTES-DEV mis à jour à chaque jalon, pièges payés documentés immédiatement
   innocenté l'opérateur et désigné les transferts. Ce réglage reste au panneau.
   Piège WGSL de plus : **`smooth` est un mot réservé** (famille `from`,
   `target`, `move`) — l'entry point s'appelle `relax`.
+
+- **Ancrage des niveaux grossiers — hypothèse RÉFUTÉE, garde-fou conservé
+  (2026-08-24).** J'avais inscrit dans les notes que l'ancrage du mode constant
+  permettrait une restriction de masques permissive. Implémenté (`relax_anchored`
+  : régularisation A' p = sum_fluid − (6 − solides + ε)·p, appliquée à TOUS les
+  niveaux grossiers, le niveau 0 gardant l'opérateur exact), puis mesuré :
+  | configuration | résidu | particules rapides |
+  | - | - | - |
+  | conservateur (référence) | 0,014–0,021 | 6–30 |
+  | permissif + ε, **2 niveaux** | 0,051 | **0** ✅ |
+  | permissif + ε, pyramide complète (ε = 0,5 · 1 · 2 · 4) | — | **explosion** ❌ |
+  L'ancrage marche donc réellement — il stabilise le cas à deux niveaux qui
+  explosait auparavant — mais il ne sauve pas la pyramide complète. **Le
+  mécanisme dominant n'était pas la singularité.** Avec le fluide dominant, le
+  domaine fluide grossier finit par DÉBORDER le domaine fin : au 4ᵉ niveau,
+  toute cellule contenant la moindre goutte devient « fluide », et le niveau
+  grossier modélise un autre problème que le vrai. Aucune régularisation ne
+  rattrape une inconsistance d'opérateur — le domaine grossier doit RÉTRÉCIR,
+  jamais grandir. La règle conservatrice n'est donc pas un pis-aller : c'est la
+  bonne règle, et on sait maintenant pourquoi.
+  Sur la règle conservatrice, l'ancrage n'a AUCUN effet mesurable (0,34–0,53
+  avec comme sans, même FPS) — logique, son système n'y est jamais singulier.
+  Il est conservé à ε = 0,1 comme assurance pour le seul cas vraiment singulier
+  (poche d'eau entièrement close par du solide, sans cellule d'air pour fixer
+  sa constante). L'option permissive reste accessible par `?permissive` pour
+  re-tester, mais n'est PAS proposée au panneau : ce serait offrir un bouton
+  qui casse la simulation.
+  Ce que cet aller-retour a vraiment donné : une cause racine correcte à la
+  place d'une hypothèse plausible, et un garde-fou gratuit pour un cas qui
+  n'était pas couvert.
 
 ## Conventions du chantier
 

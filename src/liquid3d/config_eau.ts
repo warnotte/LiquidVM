@@ -101,6 +101,17 @@ export const EAU_DEFAULTS = {
   mgCycles: 4,
   /** Niveaux de pyramide (élevé = descend jusqu'au plus grossier disponible). */
   mgLevels: 8,
+  /** Restriction des masques permissive (fluide dominant) : RÉFUTÉE par la
+   *  mesure (voir le journal J4 de PLAN-EAU) — elle explose quel que soit
+   *  l'ancrage. Laissée accessible par `?permissive` pour re-tester, jamais
+   *  proposée au panneau : ce serait offrir un bouton qui casse la simulation. */
+  mgPermissiveMask: false,
+  /** ε de régularisation des niveaux grossiers. Sans effet mesurable sur la
+   *  règle conservatrice (leur système n'y est jamais singulier) : c'est une
+   *  ASSURANCE contre le seul cas qui l'est vraiment — une poche d'eau
+   *  entièrement close par du solide, qui n'a aucune cellule d'air pour fixer
+   *  sa constante. Coût mesuré nul. */
+  mgAnchor: 0.1,
   /** Balayages Jacobi par sous-pas, quand le multigrid est coupé. LEÇON J1 : Jacobi propage ~1 cellule par
    *  balayage — il ne tient l'hydrostatique que jusqu'à ~32 cellules de
    *  profondeur d'eau (100 it.). Au-delà : explosion d'énergie (le fond se

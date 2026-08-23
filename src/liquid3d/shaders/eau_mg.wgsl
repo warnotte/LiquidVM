@@ -29,18 +29,28 @@
 //   particules rapides) et l'image.
 //
 //   « fluide à la MAJORITÉ des enfants » → explose aussi. Le seuil n'est donc
-//   pas le bon levier : ce qui manque est un garde-fou contre la dérive du
-//   mode constant, pas un réglage plus fin.
+//   pas le bon levier.
+//
+//   ANCRAGE DES NIVEAUX GROSSIERS (essayé le 2026-08-24, sur l'hypothèse que la
+//   dérive du mode constant était la cause) : il RÉGLE le cas à deux niveaux —
+//   permissif + ε devient stable là où il explosait — mais NE SAUVE PAS la
+//   pyramide complète, quel que soit ε (0,5 · 1 · 2 · 4 essayés). Le mécanisme
+//   dominant n'est donc pas la singularité : avec le fluide dominant, le
+//   domaine fluide grossier finit par DÉBORDER largement le domaine fin (au 4ᵉ
+//   niveau, toute cellule contenant la moindre goutte est « fluide »), si bien
+//   que le niveau grossier modélise un autre problème que le vrai. Aucune
+//   régularisation ne rattrape une inconsistance d'opérateur. Le domaine
+//   grossier doit RÉTRÉCIR, jamais grandir — c'est la règle conservatrice.
 //
 //   « air dès qu'UN enfant est air » (retenue) → STABLE. Le domaine fluide
 //   grossier est plus petit que le vrai — une nappe de 16 voxels n'a presque
 //   plus rien à corriger au 3ᵉ niveau — donc la correction s'essouffle en
 //   profondeur, mais la condition de Dirichlet ne disparaît jamais.
 //
-// PROCHAINE ÉTAPE si l'on veut une règle plus permissive : ancrer explicitement
-// le mode constant aux niveaux grossiers, comme le fait le multigrid du feu
-// (pin p = 0 au niveau le plus grossier). C'est exactement le garde-fou qui
-// manque ici, et c'est ce qui autoriserait la majorité.
+// L'ancrage est CONSERVÉ malgré tout (ε petit, coût mesuré nul) : il ne sert
+// pas la règle permissive, mais il couvre le seul cas réellement singulier —
+// une poche d'eau entièrement close par du solide, sans aucune cellule d'air
+// pour fixer sa constante. Voir `relax_anchored`.
 
 struct UEau {
   sim: vec4f,   // x: N (grille FINE), y: nb particules, z: dt, w: gravité
@@ -52,6 +62,7 @@ struct UEau {
   render: vec4f,
   sphere: vec4f, // xyz: centre (voxels FINS), w: rayon (≤ 0 = absente)
   sphere_vel: vec4f,
+  mg: vec4f,     // x: règle de masques (0 = air dominant, 1 = permissive), y: ε d'ancrage
 }
 
 @group(0) @binding(0) var<uniform> U: UEau;
@@ -160,6 +171,36 @@ fn relax(@builtin(global_invocation_id) gid: vec3u) {
   textureStore(scalar_dst, gid, vec4f(mix(p_at(c, n), upd, OMEGA), 0.0, 0.0, 0.0));
 }
 
+// LISSEUR ANCRÉ — réservé au niveau le PLUS GROSSIER, le seul où l'on enchaîne
+// assez de balayages (16) pour qu'un mode constant s'installe ; aux niveaux
+// intermédiaires, 2 balayages ne laissent pas le temps de dériver. C'est la même
+// logique que le pin p(0,0,0)=0 du multigrid du feu, mais sous une forme qui ne
+// suppose RIEN sur la géométrie du fluide : un sous-domaine d'eau sans aucune
+// cellule d'air voisine donne un système de Neumann pur, singulier, dont la
+// solution dérive d'une constante arbitraire — et un pin sur une cellule fixe
+// n'aiderait pas si cette cellule n'appartient pas au sous-domaine fautif.
+//
+// Régularisation : A' p = sum_fluid − (6 − solides + ε)·p. Le mode constant y
+// est borné (c ≈ −moyenne(résidu)/ε) au lieu de dériver, quel que soit le
+// nombre de composantes connexes. Le niveau grossier n'a pas besoin d'être
+// exact — il n'est qu'un préconditionneur —, seulement BORNÉ.
+@compute @workgroup_size(4, 4, 4)
+fn relax_anchored(@builtin(global_invocation_id) gid: vec3u) {
+  let n = n_of(p_src);
+  let c = vec3i(gid);
+  if (any(c >= vec3i(n))) {
+    return;
+  }
+  if (type_at(c, n) != FLUID) {
+    textureStore(scalar_dst, gid, vec4f(0.0));
+    return;
+  }
+  let st = stencil(c, n);
+  let diag = max(6.0 - st.solids, 1.0) + U.mg.y;
+  let upd = (st.sum_fluid - textureLoad(rhs, c, 0).x) / diag;
+  textureStore(scalar_dst, gid, vec4f(mix(p_at(c, n), upd, OMEGA), 0.0, 0.0, 0.0));
+}
+
 @compute @workgroup_size(4, 4, 4)
 fn residual(@builtin(global_invocation_id) gid: vec3u) {
   let n = n_of(p_src);
@@ -212,8 +253,19 @@ fn mask_restrict(@builtin(global_invocation_id) gid: vec3u) {
     any_fluid = any_fluid || t == FLUID;
     any_air = any_air || t == AIR;
   }
+  // Deux règles, commutables à chaud pour pouvoir les MESURER (voir l'en-tête) :
+  //   conservative — l'air domine : sûre même sans ancrage, mais le domaine
+  //     fluide grossier perd une couche par niveau ;
+  //   permissive — le fluide domine : garde tout le domaine, mais crée des
+  //     sous-systèmes sans Dirichlet → EXIGE l'ancrage du niveau grossier.
   var out = SOLID;
-  if (any_air) {
+  if (U.mg.x > 0.5) {
+    if (any_fluid) {
+      out = FLUID;
+    } else if (any_air) {
+      out = AIR;
+    }
+  } else if (any_air) {
     out = AIR;
   } else if (any_fluid) {
     out = FLUID;

@@ -41,6 +41,11 @@ export interface FrameEauInput {
    *  BISSECTER quand le V-cycle diverge : le lisseur seul isole l'opérateur des
    *  transferts. */
   mgLevels: number;
+  /** Restriction des masques : false = air dominant (sûre sans ancrage),
+   *  true = fluide dominant (domaine grossier complet, EXIGE l'ancrage). */
+  mgPermissiveMask: boolean;
+  /** ε de régularisation du niveau le plus grossier (0 = aucun ancrage). */
+  mgAnchor: number;
   jacobiIterations: number;
   substeps: number;
   timeScale: number;
@@ -88,7 +93,7 @@ export class FluidEau {
    *  des cellules par occupation (0, 1-3, 4-7, 8-11, 12-23, 24+). */
   readonly lastCensus = new Uint32Array(80);
   private censusInFlight = false;
-  private readonly uniformData = new Float32Array(36);
+  private readonly uniformData = new Float32Array(40);
   /** Base caméra du dernier writeUniforms : pos(3), right(3), up(3), fwd(3),
    *  tan(fov/2), aspect — de quoi refaire le rayon du pointeur côté CPU. */
   private readonly camRay = new Float32Array(14);
@@ -134,6 +139,7 @@ export class FluidEau {
       densityBlur: GPUComputePipeline;
       cellCensus: GPUComputePipeline;
       mgSmooth: GPUComputePipeline;
+      mgSmoothAnchored: GPUComputePipeline;
       mgResidual: GPUComputePipeline;
       mgMaskFine: GPUComputePipeline;
       mgMaskRestrict: GPUComputePipeline;
@@ -413,7 +419,7 @@ export class FluidEau {
           compute: { module, entryPoint },
         });
 
-      const [initDam, scatter, resolve, forces, divergencePipe, jacobi, gradient, clearPressure, divCensus, g2p, censusPipe, histogram, scan, reorder, densityBlur, cellCensus, mgSmooth, mgResidual, mgMaskFine, mgMaskRestrict, mgRestrict, mgProlong, mgClear, points, surface] =
+      const [initDam, scatter, resolve, forces, divergencePipe, jacobi, gradient, clearPressure, divCensus, g2p, censusPipe, histogram, scan, reorder, densityBlur, cellCensus, mgSmooth, mgSmoothAnchored, mgResidual, mgMaskFine, mgMaskRestrict, mgRestrict, mgProlong, mgClear, points, surface] =
         await Promise.all([
           compute('eau-init-dam', [L.p2g], p2gM, 'init_dam'),
           compute('eau-scatter', [L.p2g], p2gM, 'scatter'),
@@ -432,6 +438,7 @@ export class FluidEau {
           compute('eau-density-blur', [L.densityBlur], surfaceM, 'density_blur'),
           compute('eau-cell-census', [L.cellCensus], surfaceM, 'cell_census'),
           compute('eau-mg-smooth', [L.gridG0, L.mgSmooth], mgM, 'relax'),
+          compute('eau-mg-smooth-anchored', [L.gridG0, L.mgSmooth], mgM, 'relax_anchored'),
           compute('eau-mg-residual', [L.gridG0, L.mgSmooth], mgM, 'residual'),
           compute('eau-mg-mask-fine', [L.gridG0, L.mgMaskFine], mgM, 'mask_fine'),
           compute('eau-mg-mask-restrict', [L.gridG0, L.mgMaskRestrict], mgM, 'mask_restrict'),
@@ -700,7 +707,7 @@ export class FluidEau {
         blockCount,
         censusBuf,
         censusStaging,
-        { initDam, scatter, resolve, forces, divergence: divergencePipe, jacobi, gradient, clearPressure, divCensus, g2p, census: censusPipe, histogram, scan, reorder, densityBlur, cellCensus, mgSmooth, mgResidual, mgMaskFine, mgMaskRestrict, mgRestrict, mgProlong, mgClear, points, surface },
+        { initDam, scatter, resolve, forces, divergence: divergencePipe, jacobi, gradient, clearPressure, divCensus, g2p, census: censusPipe, histogram, scan, reorder, densityBlur, cellCensus, mgSmooth, mgSmoothAnchored, mgResidual, mgMaskFine, mgMaskRestrict, mgRestrict, mgProlong, mgClear, points, surface },
         binds,
       );
     });
@@ -873,9 +880,9 @@ export class FluidEau {
   }
 
   /** Lissages successifs d'un niveau (le ping-pong avance d'un cran par passe). */
-  private encodeSmooth(cp: GPUComputePassEncoder, level: number, count: number): void {
+  private encodeSmooth(cp: GPUComputePassEncoder, level: number, count: number, anchored = false): void {
     const d = Math.ceil(this.levelSizes[level]! / WG_GRID);
-    cp.setPipeline(this.pipelines.mgSmooth);
+    cp.setPipeline(anchored ? this.pipelines.mgSmoothAnchored : this.pipelines.mgSmooth);
     for (let i = 0; i < count; i++) {
       cp.setBindGroup(1, this.binds.mgSmooth[level]![this.mgIdx[level]! as PingIndex]!);
       cp.dispatchWorkgroups(d, d, d);
@@ -904,7 +911,7 @@ export class FluidEau {
     this.mgIdx[0] = this.pressureIdx;
     for (let cycle = 0; cycle < cycles; cycle++) {
       for (let l = 0; l < last; l++) {
-        this.encodeSmooth(cp, l, MG_PRE_SMOOTH);
+        this.encodeSmooth(cp, l, MG_PRE_SMOOTH, l > 0);
         cp.setPipeline(this.pipelines.mgResidual);
         cp.setBindGroup(1, this.binds.mgResidual[l]![this.mgIdx[l]! as PingIndex]!);
         cp.dispatchWorkgroups(d(l), d(l), d(l));
@@ -917,7 +924,10 @@ export class FluidEau {
         cp.setBindGroup(1, this.binds.mgClear[l + 1]![0]!);
         cp.dispatchWorkgroups(d(l + 1), d(l + 1), d(l + 1));
       }
-      this.encodeSmooth(cp, last, MG_COARSE_SMOOTH);
+      // TOUS les niveaux grossiers sont ancrés — pas seulement le plus grossier :
+      // un sous-domaine sans air peut apparaître à n'importe quel étage. Le niveau
+      // 0 garde l'opérateur EXACT, c'est lui le système qu'on résout.
+      this.encodeSmooth(cp, last, MG_COARSE_SMOOTH, true);
       for (let l = last - 1; l >= 0; l--) {
         cp.setPipeline(this.pipelines.mgProlong);
         cp.setBindGroup(
@@ -926,7 +936,7 @@ export class FluidEau {
         );
         cp.dispatchWorkgroups(d(l), d(l), d(l));
         this.mgIdx[l] = flip(this.mgIdx[l]! as PingIndex);
-        this.encodeSmooth(cp, l, MG_POST_SMOOTH);
+        this.encodeSmooth(cp, l, MG_POST_SMOOTH, l > 0);
       }
     }
     this.pressureIdx = this.mgIdx[0]! as PingIndex;
@@ -1075,6 +1085,8 @@ export class FluidEau {
     d[32] = this.sphereVel[0];
     d[33] = this.sphereVel[1];
     d[34] = this.sphereVel[2];
+    d[36] = input.mgPermissiveMask ? 1 : 0;
+    d[37] = input.mgAnchor;
     // Base caméra mémorisée pour le rayon du pointeur (hitTest / saisie).
     const c = this.camRay;
     c[0] = d[8]!;

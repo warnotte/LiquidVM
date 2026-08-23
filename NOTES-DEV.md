@@ -362,10 +362,12 @@ opérateur plein de branches, plus lent et plus fragile que les deux séparés. 
 
 1. ~~**J4 — généraliser le multigrid du feu à l'eau.**~~ **FAIT** (2026-08-23) :
    `eau_mg.wgsl`, MG ×4 par défaut, 2,5× plus exact et 48 % plus rapide que
-   Jacobi 100 à 192³. La thèse « c'est le même opérateur » s'est vérifiée. Reste
-   une amélioration identifiée : ancrer le mode constant aux niveaux grossiers
-   (comme le feu) pour autoriser une restriction de masques plus permissive que
-   la règle conservatrice actuelle — la correction s'essouffle en eau profonde.
+   Jacobi 100 à 192³. La thèse « c'est le même opérateur » s'est vérifiée.
+   L'idée d'ancrer le mode constant pour autoriser une restriction de masques
+   permissive a été implémentée puis RÉFUTÉE par la mesure (journal J4) : le
+   domaine fluide grossier déborderait le domaine fin, ce qu'aucune
+   régularisation ne rattrape. L'ancrage est conservé (ε = 0,1) comme assurance
+   contre les poches d'eau closes. La règle conservatrice est la bonne.
 2. **Extraire une coquille 3D commune** (`platform/web/scene3d.ts`) : caméra
    orbitale + rayon + saisie, boucle de frame, HUD, selftest, sélecteur de
    résolution, navigation. Aucun changement visible, mais J6 (presets, démo,
