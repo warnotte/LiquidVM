@@ -38,6 +38,15 @@ const TUNE_SMOKE: Partial<Sim3Tuning> = {
   buoyancy: 110, emitHeat: 1.2, emitInkRate: 5.5,
   heatCooling: 1.2, inkDissipation: 0.04,
 };
+// Le vent est COUPÉ partout ailleurs : ce preset est le seul qui l'allume, pour
+// qu'on puisse le voir d'un clic sans qu'il change quoi que ce soit par défaut.
+const TUNE_WIND: Partial<Sim3Tuning> = {
+  buoyancy: 160, emitHeat: 2.6, emitInkRate: 3.0, heatCooling: 1.0,
+  inkDissipation: 0.10, vorticityStrength: 16,
+  // 35 CALIBRÉ par captures : à 55 le panache commence à se disperser, à 95 le
+  // vent l'écrase au ras de l'émetteur. À 35 il monte haut, penche, et traîne.
+  windStrength: 35, windSwing: 40, windPeriod: 8, windHeading: 20,
+};
 
 // PRESETS du panneau : appliqués À CHAUD par-dessus les défauts (déterministe
 // quel que soit l'historique de clics). Exposition/pas de marche non touchés.
@@ -46,6 +55,7 @@ const PRESETS: readonly { label: string; values: Partial<Sim3Tuning> }[] = [
   { label: '🕯 bougie', values: TUNE_CANDLE },
   { label: '🔥 fournaise', values: TUNE_FURNACE },
   { label: '🌫 fumée épaisse', values: TUNE_SMOKE },
+  { label: '🌬 vent', values: TUNE_WIND },
 ];
 
 /**
@@ -495,6 +505,10 @@ async function boot(): Promise<void> {
         { label: 'poussée thermique', min: 0, max: 400, step: 5, get: () => p.buoyancy, set: (x) => (p.buoyancy = x), format: (x) => x.toFixed(0) },
         { label: 'vorticité', min: 0, max: 30, step: 0.5, get: () => p.vorticityStrength, set: (x) => (p.vorticityStrength = x), format: (x) => x.toFixed(1) },
         { label: 'viscosité', min: 0, max: 0.2, step: 0.005, get: () => p.velocityDissipation, set: (x) => (p.velocityDissipation = x), format: (x) => x.toFixed(3) },
+        { label: 'vent', min: 0, max: 250, step: 5, get: () => p.windStrength, set: (x) => (p.windStrength = x), format: (x) => (x === 0 ? 'aucun' : x.toFixed(0)) },
+        { label: 'vent : cap', min: 0, max: 360, step: 5, get: () => p.windHeading, set: (x) => (p.windHeading = x), format: (x) => `${x.toFixed(0)}°` },
+        { label: 'vent : oscillation', min: 0, max: 90, step: 5, get: () => p.windSwing, set: (x) => (p.windSwing = x), format: (x) => (x === 0 ? 'constant' : `±${x.toFixed(0)}°`) },
+        { label: 'vent : période', min: 1, max: 30, step: 1, get: () => p.windPeriod, set: (x) => (p.windPeriod = x), format: (x) => `${x.toFixed(0)} s` },
       ],
       checks: [
         { label: 'pression multigrid (sinon Jacobi)', get: () => input.multigrid, set: (v) => (input.multigrid = v) },

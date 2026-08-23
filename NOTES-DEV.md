@@ -322,6 +322,19 @@ particules. Quand une limite n'apparaît qu'en WARNING console, écouter
   height) — la taille pilote la cible HDR.
   long du rayon caméra→scène, dirigée selon le geste (base caméra lue depuis
   renderData — écrite AVANT les uniforms sim). Réglages : blowRadius/blowForce.
+- **Vent horizontal (2026-08-24)** : force DIFFÉRENTIELLE proportionnelle à la
+  matière, ajoutée dans `forces3d.wgsl` à côté de la poussée, avec un cap qui
+  OSCILLE (uniform `wind` = force / amplitude / période / cap, slots 60-63).
+  Pourquoi différentielle : un vent UNIFORME serait vain dans une boîte close —
+  un champ constant viole la non-pénétration aux parois, la projection lui
+  oppose un gradient de pression et l'annule presque entièrement (même leçon
+  que le souffle radial du 2D, annulé parce qu'irrotationnel). Pourquoi
+  oscillant : un cap fixe couche le panache une fois pour toutes, un cap qui
+  tourne le fait onduler. COUPÉ par défaut (`windStrength: 0`) — la scène est
+  alors strictement identique à ce qu'elle était sans la fonction ; le preset
+  « 🌬 vent » l'allume d'un clic. Force calibrée par captures : 35 = panache
+  haut, penché, avec traîne ; 55 = il commence à se disperser ; 95 = il est
+  écrasé au ras de l'émetteur.
 - **Export OpenVDB (touche E)** : readback ponctuel hors boucle (seule lecture
   GPU→CPU du moteur 3D) + encodeur .vdb pur TS (core3d/vdb.ts) + téléchargement.
   Grilles float denses `density` et `temperature`, arbre 5-4-3 sans compression,

@@ -36,7 +36,8 @@ chaîne bloom, résolution de rendu adaptative pilotée par le FPS. **Braises** 
 option (`B`) : étincelles nées des zones chaudes, portées par le fluide, occluses
 par la fumée. Coût mesuré nul quand coupées.
 
-**Autour** : presets un-clic (bougie / fournaise / fumée épaisse), mode démo
+**Autour** : presets un-clic (bougie / fournaise / fumée épaisse / vent — ce
+dernier allume un vent horizontal au cap oscillant, coupé par défaut), mode démo
 chorégraphié en quatre actes (`D` — restaure vos réglages en sortie), export
 OpenVDB (`E`, validé dans Blender, jusqu'à 512³), panneau de réglages déclaratif
 (`Tab`, toute la physique à chaud). Même contrat que le 2D : état 100 % GPU, zéro

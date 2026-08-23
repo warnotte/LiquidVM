@@ -75,6 +75,14 @@ export interface Sim3Tuning {
   expansion: number;
   oxygenRecover: number;
   blowForce: number;
+  /** VENT horizontal (voxels/s² par unité de matière). 0 = aucun vent, et la
+   *  scène est alors STRICTEMENT identique à ce qu'elle était sans la fonction. */
+  windStrength: number;
+  /** Amplitude d'oscillation du cap (degrés) et période (s). */
+  windSwing: number;
+  windPeriod: number;
+  /** Cap moyen du vent (degrés). */
+  windHeading: number;
 }
 
 export function defaultTuning3(): Sim3Tuning {
@@ -92,6 +100,10 @@ export function defaultTuning3(): Sim3Tuning {
     expansion: SIM3_DEFAULTS.expansion,
     oxygenRecover: SIM3_DEFAULTS.oxygenRecover,
     blowForce: SIM3_DEFAULTS.blowForce,
+    windStrength: SIM3_DEFAULTS.windStrength,
+    windSwing: SIM3_DEFAULTS.windSwing,
+    windPeriod: SIM3_DEFAULTS.windPeriod,
+    windHeading: SIM3_DEFAULTS.windHeading,
   };
 }
 
@@ -123,6 +135,12 @@ export const SIM3_DEFAULTS = {
   emitWobbleVelocity: 26,
   /** Souffle du pointeur : rayon du tube (fraction du monde) et force
    *  (unités monde/s² par unité de geste NDC). */
+  /** Vent : COUPÉ par défaut — la page reste exactement telle qu'elle était.
+   *  Le preset « vent » l'allume, le curseur à 0 l'éteint. */
+  windStrength: 0,
+  windSwing: 35,
+  windPeriod: 9,
+  windHeading: 0,
   blowRadius: 0.10,
   blowForce: 260,
   /** Saisie au pointeur : distance rayon-objet maximale pour attraper (monde). */

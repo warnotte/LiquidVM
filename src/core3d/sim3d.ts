@@ -154,7 +154,7 @@ export class FluidSim3D {
   /** Première frame : initialiser la texture d'espèces (O₂ = 1 partout). */
   private needSpeciesInit = true;
 
-  private readonly simData = new Float32Array(60);
+  private readonly simData = new Float32Array(64);
   private readonly renderData = new Float32Array(36);
   private lastRender = new Float32Array(36).fill(Number.NaN);
 
@@ -1569,6 +1569,12 @@ export class FluidSim3D {
     d[56] = D.inkWeights[0] * SCALE3;
     d[57] = D.inkWeights[1] * SCALE3;
     d[58] = D.inkWeights[2] * SCALE3;
+    // Vent : force en voxels/s² (donc ×SCALE3 comme la poussée), cap et
+    // oscillation en radians.
+    d[60] = p.windStrength * SCALE3;
+    d[61] = (p.windSwing * Math.PI) / 180;
+    d[62] = p.windPeriod;
+    d[63] = (p.windHeading * Math.PI) / 180;
     // Oxygène : apport du souffle (blow_force.w) et récupération lente.
     d[27] = D.blowOxygen;
     d[59] = p.oxygenRecover;

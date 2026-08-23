@@ -1,6 +1,7 @@
-// Forces : poussée thermique (la chaleur monte, +y) + impulsion de l'émetteur
-// (jet vertical avec balancement latéral périodique — l'asymétrie qui déclenche
-// les instabilités naturelles du panache). Appliquées aux faces MAC concernées.
+// Forces : poussée thermique (la chaleur monte, +y), VENT horizontal, impulsion
+// de l'émetteur (jet vertical avec balancement latéral périodique — l'asymétrie
+// qui déclenche les instabilités naturelles du panache) et souffle du pointeur.
+// Toutes appliquées aux faces MAC concernées.
 
 struct Params {
   misc: vec4f,      // x: dt, y: temps, z: N, w: force de vorticité
@@ -18,6 +19,7 @@ struct Params {
   emit_inks: vec4f,   // encre (0/1/2) de chaque émetteur
   sphere_vel: vec4f,  // xyz: vitesse de la sphère (voxels/s) — condition de bord mobile
   ink_weights: vec4f, // xyz: poids propre des matières (voxels/s² par unité)
+  wind: vec4f,        // x: force, y: amplitude d'oscillation (rad), z: période (s), w: cap (rad)
 }
 
 fn emitter_pos(i: u32) -> vec4f {
@@ -102,6 +104,23 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
   // matières tire vers le bas (l'encre lourde retombe, le carburant froid coule).
   let dn = density_at(pv);
   vel.y += dt * (P.diss.w * dn.w - dot(P.ink_weights.xyz, dn.xyz));
+
+  // VENT horizontal. Force DIFFÉRENTIELLE, proportionnelle à la matière
+  // présente — exactement comme la poussée. Un vent UNIFORME serait vain : dans
+  // une boîte close, un champ constant viole la non-pénétration aux parois, la
+  // projection lui oppose un gradient de pression et l'annule presque
+  // entièrement (même leçon que le souffle radial du 2D, annulé parce
+  // qu'irrotationnel). Proportionnel à la matière, il pousse le panache sans
+  // que la pression puisse le compenser globalement.
+  // Le cap OSCILLE lentement autour de sa direction moyenne : un vent constant
+  // couche le panache une fois pour toutes, un vent qui tourne le fait onduler.
+  if (P.wind.x > 0.0) {
+    let ang = P.wind.w + P.wind.y * sin(t * 6.28318 / max(P.wind.z, 0.25));
+    let du = density_at(pu);
+    let dw = density_at(pw);
+    vel.x += dt * P.wind.x * cos(ang) * (du.x + du.y + du.z);
+    vel.z += dt * P.wind.x * sin(ang) * (dw.x + dw.y + dw.z);
+  }
 
   // Impulsion de l'émetteur : jet montant + balancement latéral (fréquences
   // incommensurables pour ne jamais boucler visiblement).
