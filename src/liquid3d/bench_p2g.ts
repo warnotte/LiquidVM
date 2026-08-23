@@ -7,7 +7,7 @@
  */
 
 import p2gWGSL from './shaders/p2g_bench.wgsl?raw';
-import { FIXED_POINT_SCALE, GRID_EAU, PARTICLES_EAU, WG_GRID, WG_PARTICLES } from './config_eau';
+import { FIXED_POINT_SCALE, GRID_EAU, particleDispatch, PARTICLES_EAU, WG_GRID } from './config_eau';
 import { createShaderModule, withValidation } from '../core/pipelines';
 
 void FIXED_POINT_SCALE; // (documenté dans config — la valeur vit dans le WGSL)
@@ -38,7 +38,7 @@ export class BenchP2G {
     return withValidation(device, 'init-bench-p2g', async () => {
       const particles = device.createBuffer({
         label: 'eau-particles',
-        size: PARTICLES_EAU * 32,
+        size: PARTICLES_EAU * 32, // le banc J0 garde son layout d'origine (2 vec4)
         usage: GPUBufferUsage.STORAGE,
       });
       const cells = GRID_EAU * GRID_EAU * GRID_EAU;
@@ -118,7 +118,8 @@ export class BenchP2G {
     const pass = encoder.beginComputePass({ label: 'eau-init' });
     pass.setPipeline(pipeline);
     pass.setBindGroup(0, this.bind);
-    pass.dispatchWorkgroups(Math.ceil(PARTICLES_EAU / WG_PARTICLES));
+    const [pdx, pdy] = particleDispatch(PARTICLES_EAU);
+    pass.dispatchWorkgroups(pdx, pdy);
     pass.end();
     this.device.queue.submit([encoder.finish()]);
     await this.device.queue.onSubmittedWorkDone();
@@ -127,6 +128,7 @@ export class BenchP2G {
   /** Une soumission de K itérations, mesurée à la complétion GPU. */
   private async timeSubmission(iterations: number): Promise<number> {
     const gridDispatch = Math.ceil(GRID_EAU / WG_GRID);
+    const [pdx, pdy] = particleDispatch(PARTICLES_EAU);
     const encoder = this.device.createCommandEncoder({ label: 'eau-bench' });
     for (let k = 0; k < iterations; k++) {
       for (const buffer of this.atomicBuffers) {
@@ -135,7 +137,7 @@ export class BenchP2G {
       const pass = encoder.beginComputePass({ label: 'eau-p2g' });
       pass.setBindGroup(0, this.bind);
       pass.setPipeline(this.pipelines.scatter);
-      pass.dispatchWorkgroups(Math.ceil(PARTICLES_EAU / WG_PARTICLES));
+      pass.dispatchWorkgroups(pdx, pdy);
       pass.setPipeline(this.pipelines.resolve);
       pass.dispatchWorkgroups(gridDispatch, gridDispatch, gridDispatch);
       pass.end();

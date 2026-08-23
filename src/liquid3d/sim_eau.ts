@@ -16,7 +16,7 @@ import g2pWGSL from './shaders/eau_g2p.wgsl?raw';
 import sortWGSL from './shaders/eau_sort.wgsl?raw';
 import pointsWGSL from './shaders/eau_points.wgsl?raw';
 import surfaceWGSL from './shaders/eau_surface.wgsl?raw';
-import { EAU_DEFAULTS, GRID_EAU, PARTICLES_EAU, PARTICLE_STRIDE, SORT_BLOCKS, SORT_INTERVAL, WG_GRID, WG_PARTICLES } from './config_eau';
+import { EAU_DEFAULTS, GRID_EAU, particleDispatch, PARTICLES_EAU, PARTICLE_STRIDE, SCALE_EAU, SORT_BLOCKS, SORT_INTERVAL, WG_GRID } from './config_eau';
 import { createShaderModule, withValidation } from '../core/pipelines';
 import { flip, type Pair, type PingIndex } from '../core/types';
 
@@ -532,14 +532,14 @@ export class FluidEau {
 
     const encoder = this.device.createCommandEncoder({ label: 'frame-eau' });
     const gridDispatch = Math.ceil(GRID_EAU / WG_GRID);
-    const particleDispatch = Math.ceil(PARTICLES_EAU / WG_PARTICLES);
+    const [pdx, pdy] = particleDispatch(PARTICLES_EAU);
 
     if (input.reset || this.needsInit) {
       this.needsInit = false;
       const pass = encoder.beginComputePass({ label: 'eau-init' });
       pass.setPipeline(this.pipelines.initDam);
       pass.setBindGroup(0, this.binds.p2g[this.particleIdx]);
-      pass.dispatchWorkgroups(particleDispatch);
+      pass.dispatchWorkgroups(pdx, pdy);
       // Purge du warm start de pression : l'ancien champ kickait les
       // particules (> 550 voxels/s) dès la première frame après un reset.
       pass.setPipeline(this.pipelines.clearPressure);
@@ -560,7 +560,7 @@ export class FluidEau {
         // P2G : particules → accumulateurs → velOld.
         cp.setPipeline(this.pipelines.scatter);
         cp.setBindGroup(0, this.binds.p2g[this.particleIdx]);
-        cp.dispatchWorkgroups(particleDispatch);
+        cp.dispatchWorkgroups(pdx, pdy);
         cp.setPipeline(this.pipelines.resolve);
         cp.dispatchWorkgroups(gridDispatch, gridDispatch, gridDispatch);
         // Densité floutée : lue par le contrôle de densité ET par le rendu.
@@ -589,7 +589,7 @@ export class FluidEau {
         cp.setPipeline(this.pipelines.g2p);
         cp.setBindGroup(0, this.binds.g2pG0);
         cp.setBindGroup(1, this.binds.g2p[this.particleIdx]);
-        cp.dispatchWorkgroups(particleDispatch);
+        cp.dispatchWorkgroups(pdx, pdy);
         cp.end();
       }
 
@@ -601,11 +601,11 @@ export class FluidEau {
         sp.setBindGroup(0, this.binds.gridG0);
         sp.setBindGroup(1, this.binds.sort[this.particleIdx]);
         sp.setPipeline(this.pipelines.histogram);
-        sp.dispatchWorkgroups(particleDispatch);
+        sp.dispatchWorkgroups(pdx, pdy);
         sp.setPipeline(this.pipelines.scan);
         sp.dispatchWorkgroups(1);
         sp.setPipeline(this.pipelines.reorder);
-        sp.dispatchWorkgroups(particleDispatch);
+        sp.dispatchWorkgroups(pdx, pdy);
         sp.end();
         this.particleIdx = flip(this.particleIdx);
       }
@@ -620,7 +620,7 @@ export class FluidEau {
       cpn.setPipeline(this.pipelines.census);
       cpn.setBindGroup(0, this.binds.g2pG0);
       cpn.setBindGroup(1, this.binds.g2p[this.particleIdx]);
-      cpn.dispatchWorkgroups(Math.ceil(PARTICLES_EAU / WG_PARTICLES));
+      cpn.dispatchWorkgroups(pdx, pdy);
       cpn.setPipeline(this.pipelines.cellCensus);
       cpn.setBindGroup(0, this.binds.cellCensus);
       cpn.dispatchWorkgroups(gridDispatch, gridDispatch, gridDispatch);
@@ -736,7 +736,7 @@ export class FluidEau {
         }
       }
       if (dt > 0) {
-        const cap = EAU_DEFAULTS.sphereSpeedCap;
+        const cap = EAU_DEFAULTS.sphereSpeedCap * SCALE_EAU;
         for (let a = 0; a < 3; a++) {
           this.sphereVel[a] = 0.55 * this.sphereVel[a]! + (0.45 * (this.spherePos[a]! - before[a]!)) / dt;
         }
@@ -760,7 +760,8 @@ export class FluidEau {
     d[0] = GRID_EAU;
     d[1] = PARTICLES_EAU;
     d[2] = dtSub;
-    d[3] = input.gravity;
+    // Grandeurs en voxels/s : elles suivent la finesse de la grille.
+    d[3] = input.gravity * SCALE_EAU;
     d[4] = input.flipBlend;
     d[5] = input.damWidth;
     d[6] = input.apic ? 1 : 0;

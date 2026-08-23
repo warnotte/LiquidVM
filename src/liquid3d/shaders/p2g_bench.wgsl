@@ -35,11 +35,16 @@ fn rand01(seed: u32) -> f32 {
   return f32(pcg(seed)) * (1.0 / 4294967296.0);
 }
 
+// Dispatch 2D des passes de particules (voir PARTICLE_DISPATCH_X dans
+// config_eau.ts) : 1024 groupes de 64 par rangée. La limite
+// maxComputeWorkgroupsPerDimension vaut 65535, or n³/64 la dépasse dès 192³.
+const PARTICLE_ROW = 65536u;
+
 // Ordre ALÉATOIRE : threads voisins → cellules quelconques. C'est l'état d'un
 // nuage de particules jamais trié — le pire cas de cache pour les atomics.
 @compute @workgroup_size(64)
 fn init(@builtin(global_invocation_id) gid: vec3u) {
-  let i = gid.x;
+  let i = gid.x + gid.y * PARTICLE_ROW;
   if (f32(i) >= P.misc.y) {
     return;
   }
@@ -57,7 +62,7 @@ fn init(@builtin(global_invocation_id) gid: vec3u) {
 // (pratique standard FLIP, prévu en J1) maintient en régime.
 @compute @workgroup_size(64)
 fn init_sorted(@builtin(global_invocation_id) gid: vec3u) {
-  let i = gid.x;
+  let i = gid.x + gid.y * PARTICLE_ROW;
   if (f32(i) >= P.misc.y) {
     return;
   }
@@ -127,7 +132,7 @@ fn scatter_w(fp: vec3f, value: f32, n: i32) {
 
 @compute @workgroup_size(64)
 fn scatter(@builtin(global_invocation_id) gid: vec3u) {
-  let i = gid.x;
+  let i = gid.x + gid.y * PARTICLE_ROW;
   if (f32(i) >= P.misc.y) {
     return;
   }

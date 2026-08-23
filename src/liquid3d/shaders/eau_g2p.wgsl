@@ -57,7 +57,17 @@ fn sample_old(p: vec3f) -> vec3f {
   ) * wall_fade(p);
 }
 
-const MAX_MOVE = 3.0; // voxels/sous-pas — garde CFL (plan : « clamp + sous-pas »)
+// Garde CFL et filet float16, en VOXELS : ils suivent la résolution (à taille
+// physique constante, un voxel plus fin = plus de voxels parcourus par seconde).
+fn scale_eau() -> f32 {
+  return U.sim.x / 128.0;
+}
+fn max_move() -> f32 {
+  return 3.0 * scale_eau();
+}
+fn vel_limit() -> f32 {
+  return 600.0 * scale_eau();
+}
 // Marge aux parois ≈ 0. LEÇON (2026-08-23, trouvée par le recensement des
 // cellules) : avec une marge de 1 voxel, la rangée 0 (sol) et les colonnes 0
 // restaient VIDES donc classées AIR (p = 0) par le solveur — le sol était une
@@ -67,9 +77,15 @@ const MAX_MOVE = 3.0; // voxels/sous-pas — garde CFL (plan : « clamp + sous-p
 // bord : ce sont leurs faces 0 / N qui sont les murs.
 const MARGIN = 0.01;
 
+// Dispatch 2D des passes de particules (voir PARTICLE_DISPATCH_X dans
+// config_eau.ts) : 1024 groupes de 64 par rangée. La limite
+// maxComputeWorkgroupsPerDimension vaut 65535, or n³/64 la dépasse dès 192³.
+const PARTICLE_ROW = 65536u;
+
+
 @compute @workgroup_size(64)
 fn g2p(@builtin(global_invocation_id) gid: vec3u) {
-  let i = gid.x;
+  let i = gid.x + gid.y * PARTICLE_ROW;
   if (f32(i) >= U.sim.y) {
     return;
   }
@@ -97,12 +113,12 @@ fn g2p(@builtin(global_invocation_id) gid: vec3u) {
     c_u = clamp(vec3f(gx.x, gy.x, gz.x), -lim, lim);
     c_v = clamp(vec3f(gx.y, gy.y, gz.y), -lim, lim);
     c_w = clamp(vec3f(gx.z, gy.z, gz.z), -lim, lim);
-    v = clamp(g_new, vec3f(-600.0), vec3f(600.0));
+    v = clamp(g_new, vec3f(-vel_limit()), vec3f(vel_limit()));
   } else {
     // FLIP/PIC.
     let g_old = sample_old(pos);
     let v_flip = vel_p + (g_new - g_old);
-    v = clamp(mix(g_new, v_flip, U.sim2.x), vec3f(-600.0), vec3f(600.0));
+    v = clamp(mix(g_new, v_flip, U.sim2.x), vec3f(-vel_limit()), vec3f(vel_limit()));
   }
 
   // Advection RK2 (point milieu) sur le champ projeté, déplacement borné.
@@ -110,8 +126,8 @@ fn g2p(@builtin(global_invocation_id) gid: vec3u) {
   let mid = pos + 0.5 * dt * sample_new(pos);
   var disp = dt * sample_new(mid);
   let disp_len = length(disp);
-  if (disp_len > MAX_MOVE) {
-    disp *= MAX_MOVE / disp_len;
+  if (disp_len > max_move()) {
+    disp *= max_move() / disp_len;
   }
   var p_new = pos + disp;
 
@@ -159,7 +175,7 @@ fn g2p(@builtin(global_invocation_id) gid: vec3u) {
 // NaN se détecte par x != x (un NaN n'est jamais égal à lui-même).
 @compute @workgroup_size(64)
 fn census_pass(@builtin(global_invocation_id) gid: vec3u) {
-  let i = gid.x;
+  let i = gid.x + gid.y * PARTICLE_ROW;
   if (f32(i) >= U.sim.y) {
     return;
   }
@@ -173,16 +189,21 @@ fn census_pass(@builtin(global_invocation_id) gid: vec3u) {
   } else {
     atomicAdd(&census[1], 1u);
   }
-  if (vel_ok && length(vel) > 550.0) {
+  if (vel_ok && length(vel) > 550.0 * scale_eau()) {
     atomicAdd(&census[2], 1u);
   }
   if (U.sphere.w > 0.0 && pos_ok && distance(pos, U.sphere.xyz) < U.sphere.w) {
     atomicAdd(&census[3], 1u);
   }
-  // Échantillon brut : 8 particules espacées, pos+vel dans census[4..68]
+  // Échantillon brut : 8 particules espacées, pos+vel dans census[4..67]
   // (u32 = bits float, décodés côté CPU) — voir les données, pas les deviner.
-  if (i % 262144u == 0u) {
-    let slot = 4u + (i / 262144u) * 8u;
+  // Le PAS suit le nombre de particules : figé à 262144, il produisait 16
+  // échantillons à 160³ dont les 8 derniers ÉCRASAIENT l'histogramme des
+  // cellules (census[66..71]) — les compteurs affichaient alors des bits de
+  // position (~1,1e9). Toujours borner un instrument à sa fenêtre.
+  let stride = max(u32(U.sim.y) / 8u, 1u);
+  if (i % stride == 0u && i / stride < 8u) {
+    let slot = 4u + (i / stride) * 8u;
     atomicStore(&census[slot], bitcast<u32>(pos.x));
     atomicStore(&census[slot + 1u], bitcast<u32>(pos.y));
     atomicStore(&census[slot + 2u], bitcast<u32>(pos.z));

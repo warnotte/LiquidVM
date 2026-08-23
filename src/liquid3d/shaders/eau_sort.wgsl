@@ -21,16 +21,28 @@ struct UEau {
 @group(1) @binding(3) var<storage, read_write> block_cursor: array<atomic<u32>>;
 
 const BLOCK = 8.0;
-const BLOCKS_PER_AXIS = 16u;
+
+// Blocs par axe = N / 8, déduit de la résolution (uniform) : rien à répliquer
+// côté CPU quand la grille change.
+fn blocks_per_axis() -> u32 {
+  return max(u32(U.sim.x / BLOCK), 1u);
+}
 
 fn block_of(pos: vec3f) -> u32 {
-  let b = vec3u(clamp(pos / BLOCK, vec3f(0.0), vec3f(f32(BLOCKS_PER_AXIS) - 1.0)));
-  return b.x + BLOCKS_PER_AXIS * (b.y + BLOCKS_PER_AXIS * b.z);
+  let bpa = blocks_per_axis();
+  let b = vec3u(clamp(pos / BLOCK, vec3f(0.0), vec3f(f32(bpa) - 1.0)));
+  return b.x + bpa * (b.y + bpa * b.z);
 }
+
+// Dispatch 2D des passes de particules (voir PARTICLE_DISPATCH_X dans
+// config_eau.ts) : 1024 groupes de 64 par rangée. La limite
+// maxComputeWorkgroupsPerDimension vaut 65535, or n³/64 la dépasse dès 192³.
+const PARTICLE_ROW = 65536u;
+
 
 @compute @workgroup_size(64)
 fn histogram(@builtin(global_invocation_id) gid: vec3u) {
-  let i = gid.x;
+  let i = gid.x + gid.y * PARTICLE_ROW;
   if (f32(i) >= U.sim.y) {
     return;
   }
@@ -44,7 +56,9 @@ fn scan(@builtin(global_invocation_id) gid: vec3u) {
     return;
   }
   var offset = 0u;
-  for (var b = 0u; b < 4096u; b++) {
+  let bpa = blocks_per_axis();
+  let total = bpa * bpa * bpa;
+  for (var b = 0u; b < total; b++) {
     atomicStore(&block_cursor[b], offset);
     offset += atomicLoad(&block_count[b]);
   }
@@ -52,7 +66,7 @@ fn scan(@builtin(global_invocation_id) gid: vec3u) {
 
 @compute @workgroup_size(64)
 fn reorder(@builtin(global_invocation_id) gid: vec3u) {
-  let i = gid.x;
+  let i = gid.x + gid.y * PARTICLE_ROW;
   if (f32(i) >= U.sim.y) {
     return;
   }

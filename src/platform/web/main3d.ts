@@ -571,8 +571,9 @@ async function boot(): Promise<void> {
     [
       { label: '🎬 démo', isActive: () => demoOn, action: toggleDemo },
       { label: '⚙ réglages', action: () => panel.toggle() },
-      // Retour à la page 2D (URL relative : fonctionne en dev et sous /LiquidVM/ sur Pages).
+      // Autres pages (URL relatives : valides en dev et sous /LiquidVM/ sur Pages).
       { label: '🌊 2D', action: () => (location.href = './') },
+      { label: '💧 eau', action: () => (location.href = './eau.html') },
     ],
   ]);
   let last = performance.now();

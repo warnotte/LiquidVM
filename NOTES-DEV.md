@@ -134,8 +134,19 @@ boule = débit prescrit (divergence ET gradient), voisin solide = p_centre,
 particules repoussées avec annulation de la vitesse relative entrante ; saisie
 par `hitTest` au pointeur (glisser dessus = brasser, ailleurs = orbiter). Le
 compteur « dans la boule » du HUD doit rester à 0.
-Jalons J0–J3 verts ; la branche `eau` n'est PAS mergée dans `main` (le site
-public ne montre rien de l'eau — demander avant de merger).
+Jalons J0–J3 verts, MERGÉS dans `main` (les trois pages sont cross-linkées).
+Résolution : `?grid=96|128|160|192` ou boutons du panneau — bindings vivants via
+`setGridEau()` appelé avant toute création, particules = n³, grandeurs en
+voxels/s multipliées par `SCALE_EAU`. Mesuré : 60 FPS jusqu'à 128³, ~50 à 160³,
+~27 à 192³.
+TROIS PIÈGES d'échelle, tous invisibles à 128³ (détail dans le journal PLAN-EAU) :
+`maxStorageBufferBindingSize` (128 Mio par défaut) était frôlé à l'octet près et
+bloquait 160³ — relevé au max de l'adapter dans gpu.ts ;
+`maxComputeWorkgroupsPerDimension` (65535) était dépassé à 192³ — les passes de
+particules dispatchent en 2D (`PARTICLE_ROW`) ; et l'échantillonnage du
+recensement, à pas figé, écrasait son propre histogramme au-delà de 2 M de
+particules. Quand une limite n'apparaît qu'en WARNING console, écouter
+`Log.entryAdded` et juger l'IMAGE, jamais le compteur de FPS.
 
 ## Chantier 3D (branche `3d`)
 

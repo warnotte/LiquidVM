@@ -6,7 +6,14 @@
  */
 
 import { BenchP2G } from '../../liquid3d/bench_p2g';
-import { EAU_DEFAULTS, GRID_EAU, PARTICLES_EAU } from '../../liquid3d/config_eau';
+import {
+  EAU_DEFAULTS,
+  estimateVramEau,
+  GRID_EAU,
+  GRID_EAU_CHOICES,
+  PARTICLES_EAU,
+  setGridEau,
+} from '../../liquid3d/config_eau';
 import { FluidEau, type FrameEauInput } from '../../liquid3d/sim_eau';
 import { Panel3D } from './panel3d';
 import { acquireDevice } from './gpu';
@@ -45,6 +52,9 @@ async function runBench(hud: HTMLDivElement, device: GPUDevice, selftest: boolea
 async function boot(): Promise<void> {
   const params = new URLSearchParams(location.search);
   const selftest = params.has('selftest');
+  // Résolution à la demande : ?grid=96|128|160|192 (défaut 128). À appeler
+  // AVANT toute création de ressource — le cœur lit des bindings vivants.
+  setGridEau(Number(params.get('grid') ?? GRID_EAU));
   const hud = document.getElementById('hud-eau') as HTMLDivElement;
   const { device, format } = await acquireDevice();
   device.lost.then((info) => {
@@ -80,7 +90,7 @@ async function boot(): Promise<void> {
     gravity: EAU_DEFAULTS.gravity,
     apic: params.has('flip') ? false : EAU_DEFAULTS.apic,
     flipBlend: EAU_DEFAULTS.flipBlend,
-    damWidth: params.has('tall') ? 32 : EAU_DEFAULTS.damWidth,
+    damWidth: params.has('tall') ? 0.25 : EAU_DEFAULTS.damWidth,
     densityRate: EAU_DEFAULTS.densityRate,
     jacobiIterations: EAU_DEFAULTS.jacobiIterations,
     substeps: EAU_DEFAULTS.substeps,
@@ -195,12 +205,13 @@ async function boot(): Promise<void> {
       ],
       checks: [
         { label: 'boule (O) — glisser dessus pour brasser', get: () => input.sphereActive, set: (v) => (input.sphereActive = v) },
+
         { label: 'APIC (J2) — décoché : FLIP/PIC', get: () => input.apic, set: (v) => (input.apic = v) },
         {
-          label: 'colonne haute 32×64 (reset)',
-          get: () => input.damWidth === 32,
+          label: 'colonne haute et étroite (reset)',
+          get: () => input.damWidth < 0.4,
           set: (v) => {
-            input.damWidth = v ? 32 : 64;
+            input.damWidth = v ? 0.25 : 0.5;
             input.reset = true;
           },
         },
@@ -222,6 +233,25 @@ async function boot(): Promise<void> {
       ],
       checks: [
         { label: 'points bruts (P — instrument physique)', get: () => input.renderPoints, set: (v) => (input.renderPoints = v) },
+      ],
+    },
+    {
+      // Recharge la page : toutes les ressources dépendent de la résolution.
+      title: 'résolution (recharge)',
+      buttons: GRID_EAU_CHOICES.map((n) => ({
+        label: `${n}³ · ${(n ** 3 / 1e6).toFixed(1)} M · ${(estimateVramEau(n) / 2 ** 30).toFixed(1)} Go${n === GRID_EAU ? ' ✓' : ''}`,
+        action: (): void => {
+          const url = new URL(location.href);
+          url.searchParams.set('grid', String(n));
+          location.href = url.toString();
+        },
+      })),
+    },
+    {
+      title: 'navigation',
+      buttons: [
+        { label: '🌊 2D', action: () => (location.href = './') },
+        { label: '🧊 feu 3D', action: () => (location.href = './3d.html') },
       ],
     },
   ]);

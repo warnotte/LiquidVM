@@ -29,14 +29,21 @@ export async function acquireDevice(): Promise<GpuInit> {
     );
   }
   // Features de base uniquement — aucune feature optionnelle demandée, par portabilité.
-  // maxBufferSize : le défaut (256 Mio) plafonne les staging buffers INTERNES de
-  // Dawn (zéro-init des textures 3D : une rgba16float 384³ = 432 Mo → chaque
-  // submit échouait en silence, écran noir) et le readback de l'export VDB. On
-  // demande le maximum de l'adapter — toujours valide par construction, et
-  // relever une limite n'alloue rien par soi-même.
+  // Deux limites relevées au maximum de l'adapter. Relever une limite n'alloue
+  // rien par soi-même — c'est un plafond, pas une réservation.
+  //  - maxBufferSize : le défaut (256 Mio) plafonne les staging buffers INTERNES
+  //    de Dawn (zéro-init des textures 3D : une rgba16float 384³ = 432 Mo →
+  //    chaque submit échouait EN SILENCE, écran noir) et le readback VDB.
+  //  - maxStorageBufferBindingSize : le défaut (128 Mio) plafonne un BINDING, pas
+  //    l'allocation. Le buffer de particules de l'eau vaut n³ × 64 o, soit
+  //    exactement 128 Mio à 128³ (ça passait à zéro octet près) et 250 Mo à
+  //    160³ — d'où l'échec de validation qui a révélé la limite.
   const device = await adapter.requestDevice({
     label: 'liquidvm-device',
-    requiredLimits: { maxBufferSize: adapter.limits.maxBufferSize },
+    requiredLimits: {
+      maxBufferSize: adapter.limits.maxBufferSize,
+      maxStorageBufferBindingSize: adapter.limits.maxStorageBufferBindingSize,
+    },
   });
   return { device, format: navigator.gpu.getPreferredCanvasFormat() };
 }

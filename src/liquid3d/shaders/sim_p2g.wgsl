@@ -45,25 +45,33 @@ fn rand01(seed: u32) -> f32 {
   return f32(pcg(seed)) * (1.0 / 4294967296.0);
 }
 
-// Colonne d'eau : 64×32×128 cellules (basse et large — la profondeur 32 reste
-// à portée du Jacobi tant que le multigrid masqué n'est pas là), 8/cellule,
-// à RAS du sol et de la paroi (les cellules de bord sont de l'eau, leurs faces
-// extérieures sont les murs).
+// Dispatch 2D des passes de particules (voir PARTICLE_DISPATCH_X dans
+// config_eau.ts) : 1024 groupes de 64 par rangée. La limite
+// maxComputeWorkgroupsPerDimension vaut 65535, or n³/64 la dépasse dès 192³.
+const PARTICLE_ROW = 65536u;
+
+// Colonne d'eau : n/2 × n/4 × n cellules (basse et large ; l'option « haute et
+// étroite » donne n/4 × n/2 × n), 8 particules/cellule, à RAS du sol et de la
+// paroi — les cellules de bord sont de l'eau, ce sont leurs faces extérieures
+// qui sont les murs (voir la leçon du 2026-08-23 dans eau_g2p.wgsl).
 @compute @workgroup_size(64)
 fn init_dam(@builtin(global_invocation_id) gid: vec3u) {
-  let i = gid.x;
+  let i = gid.x + gid.y * PARTICLE_ROW;
   if (f32(i) >= U.sim.y) {
     return;
   }
   let s = i * 1664525u + 77u;
   let cell = i / 8u;
-  // Largeur de la colonne (uniform sim2.y : 64 = basse, 32 = haute) ; la
-  // section largeur×hauteur vaut toujours 2048 cellules × 128 de profondeur.
-  let w = max(u32(U.sim2.y), 1u);
-  let h = 2048u / w;
+  // Colonne : largeur = fraction sim2.y du côté (0,5 = basse, 0,25 = haute),
+  // section largeur×hauteur = n²/8 cellules, profondeur = n. Le total fait
+  // donc exactement n³ particules, quelle que soit la résolution.
+  let n = U.sim.x;
+  let wh = max(u32(n * n / 8.0), 1u);
+  let w = max(u32(n * U.sim2.y), 1u);
+  let h = max(wh / w, 1u);
   let cx = f32(cell % w);
   let cy = f32((cell / w) % h);
-  let cz = f32(cell / 2048u);
+  let cz = f32(cell / wh);
   let pos = vec3f(cx, cy, cz) +
     vec3f(rand01(s), rand01(s ^ 0x9e3779b9u), rand01(s ^ 0x85ebca6bu));
   particles[4u * i] = vec4f(pos, 0.0);
@@ -133,7 +141,7 @@ fn scatter_w(fp: vec3f, value: f32, c: vec3f, n: i32) {
 
 @compute @workgroup_size(64)
 fn scatter(@builtin(global_invocation_id) gid: vec3u) {
-  let i = gid.x;
+  let i = gid.x + gid.y * PARTICLE_ROW;
   if (f32(i) >= U.sim.y) {
     return;
   }

@@ -273,6 +273,43 @@ NOTES-DEV mis à jour à chaque jalon, pièges payés documentés immédiatement
   comparable au suivant (45 vs 60 ici, à code identique) — seul l'A/B dans la
   MÊME session compte.
 
+- **RÉSOLUTION CHOISISSABLE + MERGE DANS MAIN (2026-08-23).** `?grid=96|128|160|192`
+  et boutons au panneau, sur le modèle du feu : `GRID_EAU`/`SCALE_EAU`/
+  `PARTICLES_EAU`/`SORT_BLOCKS` sont des bindings VIVANTS, `setGridEau()` appelé
+  par la plateforme avant toute création. Le nombre de particules suit
+  exactement n³ (la colonne fait n/2 × n/4 × n cellules à 8 particules), et
+  toutes les grandeurs en voxels/s (gravité, plafond CFL, filet float16,
+  vitesse de la boule) sont multipliées par SCALE_EAU = n/128 — la boîte garde
+  sa taille physique. MESURES (RTX 5070 Ti, dam break + boule) : **96³ 0,9 M →
+  60 FPS · 128³ 2,1 M → 60 · 160³ 4,1 M → 48-51 · 192³ 7,1 M → 27-28**. Le
+  solveur de pression domine (Jacobi 100 × 2 sous-pas × n³) : c'est là que le
+  multigrid masqué (J4) paiera.
+  **Trois limites/bugs révélés par la montée en résolution — tous invisibles à
+  128³ :**
+  1. `maxStorageBufferBindingSize` (défaut 128 Mio) plafonne un BINDING, pas une
+     allocation, et le buffer de particules vaut n³ × 64 o = **exactement**
+     128 Mio à 128³ (ça passait à zéro octet près) → 160³ échouait à la
+     validation. Relevée au max de l'adapter dans gpu.ts, à côté de
+     `maxBufferSize` (2 Gio ici). Corollaire : une limite frôlée n'est pas une
+     limite respectée, il faut la relever avant de croire qu'on a de la marge.
+  2. `maxComputeWorkgroupsPerDimension` = 65535, or n³/64 vaut 110 592 à 192³ →
+     tous les submits échouaient (en WARNING console uniquement, encore une
+     fois : le HUD affichait 60 FPS sur une image morte). Les passes de
+     particules dispatchent désormais en **2D** (1024 groupes par rangée,
+     index = `gid.x + gid.y * 65536`, constante `PARTICLE_ROW` partagée
+     WGSL/TS).
+  3. L'instrument se sabotait lui-même : le pas d'échantillonnage des 8
+     particules brutes du recensement était figé à 262144, donc à 160³ il
+     produisait 16 échantillons dont les 8 derniers ÉCRASAIENT l'histogramme
+     des cellules (census[66..71]) — qui affichait alors des bits de position
+     (~1,1e9). Le pas suit maintenant le nombre de particules ET l'index est
+     borné. **Leçon : un instrument doit être borné à sa fenêtre, sinon il
+     ment d'autant plus fort qu'on change d'échelle.**
+  MERGE : `eau` → `main` (demandé par l'utilisateur), navigation croisée
+  ajoutée sur les trois pages (« 💧 eau » depuis la 2D et le feu, « 🌊 2D » et
+  « 🧊 feu 3D » depuis l'eau), README complété. Le HUD de l'eau est en
+  `pointer-events: none` (il captait les clics).
+
 ## Conventions du chantier
 
 - Branche `eau` (depuis `main`). Merge dans `main` par JALON VERT uniquement —
