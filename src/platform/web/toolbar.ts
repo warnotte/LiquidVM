@@ -168,6 +168,17 @@ export class MobileToolbar {
     });
     actionGroup.appendChild(btn3d);
 
+    // Page eau (FLIP/APIC 3D).
+    const btnEau = document.createElement('button');
+    btnEau.type = 'button';
+    btnEau.className = 'toolbar-btn action-btn';
+    btnEau.textContent = '💧 eau';
+    btnEau.title = 'Ouvrir la simulation de liquide 3D';
+    btnEau.addEventListener('click', () => {
+      location.href = './eau.html';
+    });
+    actionGroup.appendChild(btnEau);
+
     content.appendChild(actionGroup);
     this.root.appendChild(this.toggleBtn);
     this.root.appendChild(content);

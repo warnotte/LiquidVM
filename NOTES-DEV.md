@@ -106,10 +106,47 @@ Config actuelle : sim 1024², dye/scène 2048².
 
 ## Chantier suivant : EAU liquide (branche `eau`)
 
-Conception complète dans [PLAN-EAU.md](PLAN-EAU.md) — méthode (FLIP/PIC),
-architecture (`eau.html` + `src/liquid3d/`, pont atomics→textures), jalons
-J0–J5 avec critères de sortie mesurables, risques/mitigations, conventions
-(merge dans main par jalon vert uniquement). À lire AVANT d'écrire du code eau.
+Conception complète dans [PLAN-EAU.md](PLAN-EAU.md) — méthode (PIC/FLIP →
+APIC), architecture (`eau.html` + `src/liquid3d/`, pont atomics→textures),
+jalons J0–J6 avec critères de sortie mesurables ET LEUR JOURNAL (résultats,
+batailles gagnées, leçons). À lire AVANT d'écrire du code eau.
+LA leçon de J1 (2026-08-23) : les cellules de BORD doivent pouvoir contenir
+des particules — une marge de 1 voxel aux parois laissait la rangée 0 vide,
+donc classée AIR (p = 0) : le sol était une surface libre, zéro hydrostatique,
+toute l'eau écrasée en une couche (c'était ça, pas « Jacobi ne tient pas
+l'hydrostatique »). Instruments clés, à utiliser AVANT de spéculer :
+le recensement (`census_pass` dans eau_g2p.wgsl — valides/perdues/rapides +
+8 particules brutes) et le **recensement des cellules** (`cell_census` dans
+eau_surface.wgsl — histogramme d'occupation 1-3/4-7/8-11/12-23/24+ au HUD :
+phase dynamique saine = 8-11 dominant, 24+ < 2 k), plus les vues debug du
+rendu (« coupe z=0 » du quart inférieur ×4, « densité max »). Une image de
+points additifs ne dit RIEN de l'épaisseur ni de la densité : mesurer.
+Rendu : `eau_surface.wgsl` = boîte (sol/parois/grille/arêtes) + iso-surface de
+la densité floutée 3³ (calculée par sous-pas, lue aussi par le contrôle de
+densité) marchée par rayon avec réfraction ; points = touche P.
+Contrôle de densité (eau_grid.wgsl) : EXPANSION SEULE au-delà d'une zone morte
+de 25 %, taux 10/s — la compression des cellules sous-denses fabrique des
+grumeaux, l'absence totale de contrôle compacte l'eau de ~25 % (tableau des
+mesures dans le journal J2 de PLAN-EAU). Transfert APIC par défaut (J2), FLIP
+conservé (case / `?flip`) ; `?tall` = colonne haute 32×64.
+Boule-obstacle (J3, touche O) : ANALYTIQUE comme celle du feu — face touchant la
+boule = débit prescrit (divergence ET gradient), voisin solide = p_centre,
+particules repoussées avec annulation de la vitesse relative entrante ; saisie
+par `hitTest` au pointeur (glisser dessus = brasser, ailleurs = orbiter). Le
+compteur « dans la boule » du HUD doit rester à 0.
+Jalons J0–J3 verts, MERGÉS dans `main` (les trois pages sont cross-linkées).
+Résolution : `?grid=96|128|160|192` ou boutons du panneau — bindings vivants via
+`setGridEau()` appelé avant toute création, particules = n³, grandeurs en
+voxels/s multipliées par `SCALE_EAU`. Mesuré : 60 FPS jusqu'à 128³, ~50 à 160³,
+~27 à 192³.
+TROIS PIÈGES d'échelle, tous invisibles à 128³ (détail dans le journal PLAN-EAU) :
+`maxStorageBufferBindingSize` (128 Mio par défaut) était frôlé à l'octet près et
+bloquait 160³ — relevé au max de l'adapter dans gpu.ts ;
+`maxComputeWorkgroupsPerDimension` (65535) était dépassé à 192³ — les passes de
+particules dispatchent en 2D (`PARTICLE_ROW`) ; et l'échantillonnage du
+recensement, à pas figé, écrasait son propre histogramme au-delà de 2 M de
+particules. Quand une limite n'apparaît qu'en WARNING console, écouter
+`Log.entryAdded` et juger l'IMAGE, jamais le compteur de FPS.
 
 ## Chantier 3D (branche `3d`)
 

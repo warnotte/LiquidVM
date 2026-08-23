@@ -52,6 +52,35 @@ readback en boucle de frame, `src/core3d/` portable sans DOM.
 | `O` / `B` / `F` | boule-obstacle / braises / retours visuels |
 | `D` / `E` / `R` / `Espace` | démo / export .vdb / reset / pause |
 
+## Liquide 3D (`eau.html`)
+
+Troisième page (bouton « 💧 eau »). Simulation de LIQUIDE à surface libre —
+particules + grille, méthode **APIC** (Jiang 2015 ; FLIP/PIC reste disponible au
+panneau) : la vitesse vit sur les particules, la pression se résout sur une
+grille MAC identique à celle du feu. Conception et journal complets dans
+[PLAN-EAU.md](PLAN-EAU.md).
+
+**Simulation** : P2G par scatter atomique en virgule fixe (tri périodique des
+particules par bloc — le banc J0 le rendait obligatoire), gravité, projection à
+surface libre (l'air est un Dirichlet p = 0), contrôle de densité par expansion
+des cellules tassées, advection RK2 bornée. Résolution choisissable 96³ à 192³
+(`?grid=` ou boutons du panneau) : le nombre de particules suit en n³, soit
+2,1 M à 128³ et 7,1 M à 192³. Boule-obstacle analytique déplaçable au pointeur,
+avec bord MOBILE — elle brasse réellement le liquide.
+
+**Rendu** : iso-surface de la densité marchée par rayon, réfraction, absorption
+bleu-vert, mousse sur l'eau aérée (embruns et crêtes), plus une vue « points
+bruts » et deux vues de debug (coupe de densité, densité maximale).
+
+| Entrée (eau) | Effet |
+| ------------ | ----- |
+| glisser la boule | la déplacer — elle pousse l'eau et laisse un sillage |
+| glisser ailleurs / molette | orbiter / zoomer |
+| `O` / `P` / `R` / `Espace` | boule / points bruts / reset / pause |
+
+Mesuré (RTX 5070 Ti) : 60 FPS à 96³ et 128³, ~50 à 160³, ~27 à 192³ — le
+solveur de pression (Jacobi) domine, le multigrid masqué est le prochain gain.
+
 ## Commandes
 
 ```sh
