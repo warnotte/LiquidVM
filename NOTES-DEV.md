@@ -330,7 +330,57 @@ particules. Quand une limite n'apparaît qu'en WARNING console, écouter
   encres colorées (canaux yz réservés dans la densité) ; qualité du confinement
   de vorticité (flouter |ω|).
 
+## Articulation des trois modes (état 2026-08-23, après le merge de l'eau)
+
+Le projet a maintenant TROIS pages : `index.html` (fluide 2D), `3d.html` (feu
+volumétrique), `eau.html` (liquide APIC). Elles partagent déjà `gpu.ts`,
+`pipelines.ts`, `overlay.ts`, `panel3d.ts` et la doctrine (zéro alloc/frame,
+zéro readback en boucle, cœur sans DOM). Ce qu'elles ne partagent PAS encore,
+et ce que ça coûte :
+
+**Duplication réelle (mesurable).** L'eau a ré-écrit, en les adaptant : la
+caméra orbitale et la construction de rayon, le hitTest/saisie d'objet, la
+boule-obstacle analytique et son bord mobile, la boucle de frame + HUD +
+`?selftest`, le sélecteur de résolution. À chaque fois c'était une transposition
+fidèle du feu, donc sans surprise numérique — mais c'est du code en double qui
+divergera.
+
+**Ce qui n'est PAS à unifier.** Les solveurs. Le feu est un gaz compressible-
+par-expansion en boîte fermée ; l'eau est un liquide à surface libre avec
+marqueurs air/eau/solide. Fusionner les deux passes de projection produirait un
+opérateur plein de branches, plus lent et plus fragile que les deux séparés. La
+2D est encore plus à part (autre dimensionnalité, autre modèle d'outils).
+
+**Ordre recommandé (du plus rentable au plus spéculatif) :**
+
+1. **J4 — généraliser le multigrid du feu à l'eau.** C'est LE gain mesuré : le
+   solveur de pression est ce qui plafonne l'eau (60 FPS à 128³, 27 à 192³ avec
+   Jacobi 100). `multigrid3d.wgsl` marche déjà et sa structure (V-cycle,
+   restriction, prolongation, ancrage au niveau grossier) est indépendante du
+   type de cellule. Le travail est d'y injecter un « type de cellule » (fluide /
+   air Dirichlet / solide Neumann) et de construire la pyramide de masques.
+   Écrire un SECOND multigrid serait la faute à ne pas commettre.
+2. **Extraire une coquille 3D commune** (`platform/web/scene3d.ts`) : caméra
+   orbitale + rayon + saisie, boucle de frame, HUD, selftest, sélecteur de
+   résolution, navigation. Aucun changement visible, mais J6 (presets, démo,
+   retours visuels de l'eau) devient presque gratuit puisque le feu a déjà
+   `Panel3D`, `Toolbar3D`, `DemoDriver` et les toasts.
+3. **Feu + eau sur UNE page à deux modes** — seulement APRÈS 2, et seulement si
+   on vise le point 4. Tant qu'ils ne se parlent pas, deux pages coûtent moins
+   cher qu'un sélecteur de mode.
+4. **Le couplage (vapeur)** : l'eau qui s'évapore au contact de la flamme, la
+   vapeur qui monte dans le système d'espèces du feu. C'est LE morceau
+   spectaculaire — et un vrai chantier : une seule grille pour les deux, un
+   solveur qui accepte deux phases de densités très différentes, un rendu qui
+   compose liquide opaque et volume participatif. À ne PAS commencer sans
+   décision explicite : c'est exactement le genre d'excursion séduisante qui a
+   fait dériver le projet par le passé (marbrure, pipeline Blender).
+
+Un couplage PARTIEL, beaucoup moins cher, existe si l'envie vient sans le
+budget : la fumée du feu voyant la surface de l'eau comme un obstacle mobile
+(sens unique, aucune modification du solveur d'eau).
+
 ## Pistes suivantes
 
-Test smartphone (1024², vérifier les limites WebGPU mobiles) · suite du chantier 3D
-ci-dessus.
+Test smartphone (1024², vérifier les limites WebGPU mobiles) · J4/J5/J6 de
+PLAN-EAU · articulation des modes ci-dessus.
