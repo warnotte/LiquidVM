@@ -373,6 +373,26 @@ opérateur plein de branches, plus lent et plus fragile que les deux séparés. 
    résolution, navigation. Aucun changement visible, mais J6 (presets, démo,
    retours visuels de l'eau) devient presque gratuit puisque le feu a déjà
    `Panel3D`, `Toolbar3D`, `DemoDriver` et les toasts.
+
+   ⚠️ **L'étage 2 du couplage a été ESSAYÉ (2026-08-24, branche `melange`) et
+   SUPPRIMÉ — verdict utilisateur : « catastrophique ».** L'architecture était
+   pourtant juste et l'a prouvé : la phase gazeuse n'a demandé aucun second
+   solveur (même opérateur, masque inversé — l'eau devient un solide mobile —,
+   V-cycle partagé tel quel, débit prescrit = la vitesse d'eau projetée), l'eau
+   est restée intacte (résidu 0,005–0,02, 0 perdue) et le tout tournait à
+   60 FPS à 128³. **C'est la QUALITÉ DE LA FUMÉE qui a échoué**, et la cause est
+   claire rétrospectivement : la phase gazeuse était un solveur de fumée
+   appauvri par rapport à celui du feu — advection de vitesse semi-lagrangienne
+   (donc très diffusive, aucune structure de tourbillon), pas de vorticity
+   confinement, 128³ au lieu de 256³, et une pression de gaz sous-convergée
+   (4 V-cycles partagés avec l'eau). À quoi s'ajoute un fait structurel : dans
+   une boîte quasi close, une émission continue FINIT TOUJOURS par remplir
+   l'espace — le feu a le même défaut, mais là-bas la fumée est le sujet.
+   **Leçon : le couplage ne se juge pas sur la plomberie mais sur la qualité de
+   la phase la plus faible.** Refaire l'étage 2 n'a de sens qu'après avoir donné
+   au gaz la VRAIE machinerie du feu (MacCormack sur la vitesse, vorticité,
+   résolution) — c'est-à-dire après le point 2 ci-dessus, pas avant. Ne pas
+   relancer sans décision explicite.
 3. **Feu + eau sur UNE page à deux modes** — seulement APRÈS 2, et seulement si
    on vise le point 4. Tant qu'ils ne se parlent pas, deux pages coûtent moins
    cher qu'un sélecteur de mode.
