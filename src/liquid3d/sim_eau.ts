@@ -16,6 +16,7 @@ import g2pWGSL from './shaders/eau_g2p.wgsl?raw';
 import sortWGSL from './shaders/eau_sort.wgsl?raw';
 import pointsWGSL from './shaders/eau_points.wgsl?raw';
 import surfaceWGSL from './shaders/eau_surface.wgsl?raw';
+import mgWGSL from './shaders/eau_mg.wgsl?raw';
 import { EAU_DEFAULTS, GRID_EAU, particleDispatch, PARTICLES_EAU, PARTICLE_STRIDE, SCALE_EAU, SORT_BLOCKS, SORT_INTERVAL, WG_GRID } from './config_eau';
 import { createShaderModule, withValidation } from '../core/pipelines';
 import { flip, type Pair, type PingIndex } from '../core/types';
@@ -32,6 +33,14 @@ export interface FrameEauInput {
   densityRate: number;
   /** Largeur de la colonne initiale (64 = basse 64×32, 32 = haute 32×64). */
   damWidth: number;
+  /** true = multigrid masqué (J4) ; false = repli Jacobi, conservé en permanence. */
+  multigrid: boolean;
+  /** V-cycles par sous-pas. */
+  mgCycles: number;
+  /** Niveaux de pyramide effectivement utilisés (1 = simple lisseur). Sert à
+   *  BISSECTER quand le V-cycle diverge : le lisseur seul isole l'opérateur des
+   *  transferts. */
+  mgLevels: number;
   jacobiIterations: number;
   substeps: number;
   timeScale: number;
@@ -53,6 +62,13 @@ export interface FrameEauInput {
   grab: { active: boolean; ndcX: number; ndcY: number };
   cam: { azimuth: number; elevation: number; radius: number };
 }
+
+/** Lissages du V-cycle : 2 avant / 2 après, 16 au niveau le plus grossier —
+ *  mêmes valeurs que le multigrid du feu, éprouvées. MG_POST_SMOOTH ne doit pas
+ *  tomber à 0 (voir prolong_add dans eau_mg.wgsl). */
+const MG_PRE_SMOOTH = 2;
+const MG_POST_SMOOTH = 2;
+const MG_COARSE_SMOOTH = 16;
 
 const COMPUTE = GPUShaderStage.COMPUTE;
 const VERTEX = GPUShaderStage.VERTEX;
@@ -86,10 +102,15 @@ export class FluidEau {
   ];
   private readonly sphereVel: [number, number, number] = [0, 0, 0];
   private grabbed = false;
+  /** Index de ping-pong de la pression par niveau multigrid (réutilisé chaque
+   *  frame — aucune allocation dans la boucle). */
+  private readonly mgIdx = new Int32Array(8);
   private readonly submitList: GPUCommandBuffer[] = [];
 
   private constructor(
     private readonly device: GPUDevice,
+    /** Tailles de la pyramide multigrid, du niveau fin au plus grossier. */
+    private readonly levelSizes: readonly number[],
     private readonly uniforms: GPUBuffer,
     private readonly clearTargets: readonly GPUBuffer[],
     private readonly blockCount: GPUBuffer,
@@ -112,6 +133,13 @@ export class FluidEau {
       reorder: GPUComputePipeline;
       densityBlur: GPUComputePipeline;
       cellCensus: GPUComputePipeline;
+      mgSmooth: GPUComputePipeline;
+      mgResidual: GPUComputePipeline;
+      mgMaskFine: GPUComputePipeline;
+      mgMaskRestrict: GPUComputePipeline;
+      mgRestrict: GPUComputePipeline;
+      mgProlong: GPUComputePipeline;
+      mgClear: GPUComputePipeline;
       points: GPURenderPipeline;
       surface: GPURenderPipeline;
     },
@@ -128,6 +156,13 @@ export class FluidEau {
       points: Pair<GPUBindGroup>; // [particules]
       densityBlur: GPUBindGroup;
       divCensus: GPUBindGroup;
+      mgSmooth: readonly Pair<GPUBindGroup>[];
+      mgResidual: readonly Pair<GPUBindGroup>[];
+      mgRestrict: readonly GPUBindGroup[];
+      mgProlong: readonly Pair<Pair<GPUBindGroup>>[];
+      mgMaskFine: GPUBindGroup;
+      mgMaskRestrict: readonly GPUBindGroup[];
+      mgClear: readonly Pair<GPUBindGroup>[];
       cellCensus: GPUBindGroup;
       surface: GPUBindGroup;
     },
@@ -195,6 +230,31 @@ export class FluidEau {
       // Densité floutée pour le rendu de surface (rgba16float : filtrable,
       // format storage de base — r16float n'est ni l'un ni l'autre).
       const density = tex3d('eau-density', 'rgba16float');
+      // PYRAMIDE MULTIGRID (J4). Le niveau 0 réutilise les textures existantes
+      // (pression ping-pong, divergence = second membre) ; il n'ajoute qu'un
+      // masque et un résidu. On descend tant que la taille reste paire et que
+      // le niveau suivant fait au moins 8 : 128 → 64 → 32 → 16 → 8.
+      const levelSizes: number[] = [GRID_EAU];
+      while (levelSizes[levelSizes.length - 1]! % 2 === 0 && levelSizes[levelSizes.length - 1]! / 2 >= 8) {
+        levelSizes.push(levelSizes[levelSizes.length - 1]! / 2);
+      }
+      const texLevel = (label: string, n: number): GPUTextureView =>
+        device
+          .createTexture({
+            label,
+            dimension: '3d',
+            size: { width: n, height: n, depthOrArrayLayers: n },
+            format: 'r32float',
+            usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.STORAGE_BINDING,
+          })
+          .createView({ label: `${label}-view` });
+      const levels = levelSizes.map((n, i) => ({
+        n,
+        p: (i === 0 ? pressure : pair((k) => texLevel(`eau-mg-p${i}-${k}`, n))) as Pair<GPUTextureView>,
+        rhs: i === 0 ? divergence : texLevel(`eau-mg-rhs${i}`, n),
+        res: texLevel(`eau-mg-res${i}`, n),
+        mask: texLevel(`eau-mg-mask${i}`, n),
+      }));
       const uniforms = device.createBuffer({
         label: 'eau-uniforms',
         size: 256,
@@ -293,6 +353,30 @@ export class FluidEau {
           label: 'eau-div-census',
           entries: [sampled(0), storageBuf(2, true), sampled(7), storageBuf(8)],
         }),
+        mgSmooth: device.createBindGroupLayout({
+          label: 'eau-mg-smooth',
+          entries: [sampled(1, false), sampled(2, false), sampled(3, false), storageTex(4, 'r32float')],
+        }),
+        mgRestrict: device.createBindGroupLayout({
+          label: 'eau-mg-restrict',
+          entries: [sampled(0, false), sampled(3, false), storageTex(4, 'r32float')],
+        }),
+        mgProlong: device.createBindGroupLayout({
+          label: 'eau-mg-prolong',
+          entries: [sampled(0, false), sampled(1, false), sampled(3, false), storageTex(4, 'r32float')],
+        }),
+        mgMaskFine: device.createBindGroupLayout({
+          label: 'eau-mg-mask-fine',
+          entries: [storageTex(4, 'r32float'), storageBuf(5, true)],
+        }),
+        mgMaskRestrict: device.createBindGroupLayout({
+          label: 'eau-mg-mask-restrict',
+          entries: [sampled(0, false), storageTex(4, 'r32float')],
+        }),
+        mgClear: device.createBindGroupLayout({
+          label: 'eau-mg-clear',
+          entries: [storageTex(4, 'r32float')],
+        }),
         cellCensus: device.createBindGroupLayout({
           label: 'eau-cell-census',
           entries: [uniformEntry(COMPUTE), storageBuf(2, true), storageBuf(5)],
@@ -307,13 +391,14 @@ export class FluidEau {
         }),
       };
 
-      const [p2gM, gridM, g2pM, sortM, pointsM, surfaceM] = await Promise.all([
+      const [p2gM, gridM, g2pM, sortM, pointsM, surfaceM, mgM] = await Promise.all([
         createShaderModule(device, 'sim_p2g.wgsl', simP2gWGSL),
         createShaderModule(device, 'eau_grid.wgsl', gridWGSL),
         createShaderModule(device, 'eau_g2p.wgsl', g2pWGSL),
         createShaderModule(device, 'eau_sort.wgsl', sortWGSL),
         createShaderModule(device, 'eau_points.wgsl', pointsWGSL),
         createShaderModule(device, 'eau_surface.wgsl', surfaceWGSL),
+        createShaderModule(device, 'eau_mg.wgsl', mgWGSL),
       ]);
 
       const compute = (
@@ -328,7 +413,7 @@ export class FluidEau {
           compute: { module, entryPoint },
         });
 
-      const [initDam, scatter, resolve, forces, divergencePipe, jacobi, gradient, clearPressure, divCensus, g2p, censusPipe, histogram, scan, reorder, densityBlur, cellCensus, points, surface] =
+      const [initDam, scatter, resolve, forces, divergencePipe, jacobi, gradient, clearPressure, divCensus, g2p, censusPipe, histogram, scan, reorder, densityBlur, cellCensus, mgSmooth, mgResidual, mgMaskFine, mgMaskRestrict, mgRestrict, mgProlong, mgClear, points, surface] =
         await Promise.all([
           compute('eau-init-dam', [L.p2g], p2gM, 'init_dam'),
           compute('eau-scatter', [L.p2g], p2gM, 'scatter'),
@@ -346,6 +431,13 @@ export class FluidEau {
           compute('eau-reorder', [L.gridG0, L.sort], sortM, 'reorder'),
           compute('eau-density-blur', [L.densityBlur], surfaceM, 'density_blur'),
           compute('eau-cell-census', [L.cellCensus], surfaceM, 'cell_census'),
+          compute('eau-mg-smooth', [L.gridG0, L.mgSmooth], mgM, 'relax'),
+          compute('eau-mg-residual', [L.gridG0, L.mgSmooth], mgM, 'residual'),
+          compute('eau-mg-mask-fine', [L.gridG0, L.mgMaskFine], mgM, 'mask_fine'),
+          compute('eau-mg-mask-restrict', [L.gridG0, L.mgMaskRestrict], mgM, 'mask_restrict'),
+          compute('eau-mg-restrict', [L.gridG0, L.mgRestrict], mgM, 'restrict_rhs'),
+          compute('eau-mg-prolong', [L.gridG0, L.mgProlong], mgM, 'prolong_add'),
+          compute('eau-mg-clear', [L.gridG0, L.mgClear], mgM, 'clear_level'),
           device.createRenderPipelineAsync({
             label: 'eau-points',
             layout: device.createPipelineLayout({ label: 'eau-points-pl', bindGroupLayouts: [L.points] }),
@@ -496,6 +588,90 @@ export class FluidEau {
             { binding: 8, resource: { buffer: censusBuf } },
           ],
         }),
+        // Pyramide : tous les bind groups sont pré-créés (doctrine zéro alloc).
+        mgSmooth: levels.map((lv) =>
+          pair((k) =>
+            device.createBindGroup({
+              label: `eau-mg-smooth-${lv.n}-${k}`,
+              layout: L.mgSmooth,
+              entries: [
+                { binding: 1, resource: lv.p[k] },
+                { binding: 2, resource: lv.rhs },
+                { binding: 3, resource: lv.mask },
+                { binding: 4, resource: lv.p[flip(k)] },
+              ],
+            }),
+          ),
+        ),
+        mgResidual: levels.map((lv) =>
+          pair((k) =>
+            device.createBindGroup({
+              label: `eau-mg-res-${lv.n}-${k}`,
+              layout: L.mgSmooth,
+              entries: [
+                { binding: 1, resource: lv.p[k] },
+                { binding: 2, resource: lv.rhs },
+                { binding: 3, resource: lv.mask },
+                { binding: 4, resource: lv.res },
+              ],
+            }),
+          ),
+        ),
+        mgRestrict: levels.slice(0, -1).map((lv, i) =>
+          device.createBindGroup({
+            label: `eau-mg-restrict-${lv.n}`,
+            layout: L.mgRestrict,
+            entries: [
+              { binding: 0, resource: lv.res },
+              { binding: 3, resource: lv.mask },
+              { binding: 4, resource: levels[i + 1]!.rhs },
+            ],
+          }),
+        ),
+        // [niveau fin][ping du fin][ping du grossier]
+        mgProlong: levels.slice(0, -1).map((lv, i) =>
+          pair((kf) =>
+            pair((kc) =>
+              device.createBindGroup({
+                label: `eau-mg-prolong-${lv.n}-${kf}${kc}`,
+                layout: L.mgProlong,
+                entries: [
+                  { binding: 0, resource: levels[i + 1]!.p[kc] },
+                  { binding: 1, resource: lv.p[kf] },
+                  { binding: 3, resource: levels[i + 1]!.mask },
+                  { binding: 4, resource: lv.p[flip(kf)] },
+                ],
+              }),
+            ),
+          ),
+        ),
+        mgMaskFine: device.createBindGroup({
+          label: 'eau-mg-mask-fine',
+          layout: L.mgMaskFine,
+          entries: [
+            { binding: 4, resource: levels[0]!.mask },
+            { binding: 5, resource: { buffer: cellCount } },
+          ],
+        }),
+        mgMaskRestrict: levels.slice(0, -1).map((lv, i) =>
+          device.createBindGroup({
+            label: `eau-mg-maskr-${lv.n}`,
+            layout: L.mgMaskRestrict,
+            entries: [
+              { binding: 0, resource: lv.mask },
+              { binding: 4, resource: levels[i + 1]!.mask },
+            ],
+          }),
+        ),
+        mgClear: levels.map((lv) =>
+          pair((k) =>
+            device.createBindGroup({
+              label: `eau-mg-clear-${lv.n}-${k}`,
+              layout: L.mgClear,
+              entries: [{ binding: 4, resource: lv.p[k] }],
+            }),
+          ),
+        ),
         cellCensus: device.createBindGroup({
           label: 'eau-cell-census',
           layout: L.cellCensus,
@@ -518,12 +694,13 @@ export class FluidEau {
 
       return new FluidEau(
         device,
+        levelSizes,
         uniforms,
         [...atomicBuffers, cellCount],
         blockCount,
         censusBuf,
         censusStaging,
-        { initDam, scatter, resolve, forces, divergence: divergencePipe, jacobi, gradient, clearPressure, divCensus, g2p, census: censusPipe, histogram, scan, reorder, densityBlur, cellCensus, points, surface },
+        { initDam, scatter, resolve, forces, divergence: divergencePipe, jacobi, gradient, clearPressure, divCensus, g2p, census: censusPipe, histogram, scan, reorder, densityBlur, cellCensus, mgSmooth, mgResidual, mgMaskFine, mgMaskRestrict, mgRestrict, mgProlong, mgClear, points, surface },
         binds,
       );
     });
@@ -592,12 +769,16 @@ export class FluidEau {
         cp.setPipeline(this.pipelines.divergence);
         cp.setBindGroup(1, this.binds.divergence);
         cp.dispatchWorkgroups(gridDispatch, gridDispatch, gridDispatch);
-        cp.setPipeline(this.pipelines.jacobi);
-        const iters = Math.max(4, Math.round(input.jacobiIterations));
-        for (let j = 0; j < iters; j++) {
-          cp.setBindGroup(1, this.binds.jacobi[this.pressureIdx]);
-          cp.dispatchWorkgroups(gridDispatch, gridDispatch, gridDispatch);
-          this.pressureIdx = flip(this.pressureIdx);
+        if (input.multigrid) {
+          this.encodeMultigrid(cp, Math.max(1, Math.round(input.mgCycles)), Math.round(input.mgLevels));
+        } else {
+          cp.setPipeline(this.pipelines.jacobi);
+          const iters = Math.max(4, Math.round(input.jacobiIterations));
+          for (let j = 0; j < iters; j++) {
+            cp.setBindGroup(1, this.binds.jacobi[this.pressureIdx]);
+            cp.dispatchWorkgroups(gridDispatch, gridDispatch, gridDispatch);
+            this.pressureIdx = flip(this.pressureIdx);
+          }
         }
         cp.setPipeline(this.pipelines.gradient);
         cp.setBindGroup(1, this.binds.gradient[this.pressureIdx]);
@@ -689,6 +870,66 @@ export class FluidEau {
           this.censusInFlight = false;
         });
     }
+  }
+
+  /** Lissages successifs d'un niveau (le ping-pong avance d'un cran par passe). */
+  private encodeSmooth(cp: GPUComputePassEncoder, level: number, count: number): void {
+    const d = Math.ceil(this.levelSizes[level]! / WG_GRID);
+    cp.setPipeline(this.pipelines.mgSmooth);
+    for (let i = 0; i < count; i++) {
+      cp.setBindGroup(1, this.binds.mgSmooth[level]![this.mgIdx[level]! as PingIndex]!);
+      cp.dispatchWorkgroups(d, d, d);
+      this.mgIdx[level] = flip(this.mgIdx[level]! as PingIndex);
+    }
+  }
+
+  /** V-cycle(s) masqué(s) : masques → descente (lissage, résidu, restriction) →
+   *  niveau grossier → remontée (prolongation, lissage). La pression du niveau 0
+   *  reste dans la paire existante, `pressureIdx` en ressort à jour pour le
+   *  gradient. Voir eau_mg.wgsl pour l'opérateur et la règle des masques. */
+  private encodeMultigrid(cp: GPUComputePassEncoder, cycles: number, maxLevels: number): void {
+    const last = Math.min(Math.max(maxLevels, 1), this.levelSizes.length) - 1;
+    const d = (level: number): number => Math.ceil(this.levelSizes[level]! / WG_GRID);
+
+    // La surface libre bouge : la pyramide de masques est reconstruite ici.
+    cp.setPipeline(this.pipelines.mgMaskFine);
+    cp.setBindGroup(1, this.binds.mgMaskFine);
+    cp.dispatchWorkgroups(d(0), d(0), d(0));
+    cp.setPipeline(this.pipelines.mgMaskRestrict);
+    for (let l = 0; l < last; l++) {
+      cp.setBindGroup(1, this.binds.mgMaskRestrict[l]!);
+      cp.dispatchWorkgroups(d(l + 1), d(l + 1), d(l + 1));
+    }
+
+    this.mgIdx[0] = this.pressureIdx;
+    for (let cycle = 0; cycle < cycles; cycle++) {
+      for (let l = 0; l < last; l++) {
+        this.encodeSmooth(cp, l, MG_PRE_SMOOTH);
+        cp.setPipeline(this.pipelines.mgResidual);
+        cp.setBindGroup(1, this.binds.mgResidual[l]![this.mgIdx[l]! as PingIndex]!);
+        cp.dispatchWorkgroups(d(l), d(l), d(l));
+        cp.setPipeline(this.pipelines.mgRestrict);
+        cp.setBindGroup(1, this.binds.mgRestrict[l]!);
+        cp.dispatchWorkgroups(d(l + 1), d(l + 1), d(l + 1));
+        // Le niveau grossier résout l'ERREUR : sa pression repart de zéro.
+        this.mgIdx[l + 1] = 0;
+        cp.setPipeline(this.pipelines.mgClear);
+        cp.setBindGroup(1, this.binds.mgClear[l + 1]![0]!);
+        cp.dispatchWorkgroups(d(l + 1), d(l + 1), d(l + 1));
+      }
+      this.encodeSmooth(cp, last, MG_COARSE_SMOOTH);
+      for (let l = last - 1; l >= 0; l--) {
+        cp.setPipeline(this.pipelines.mgProlong);
+        cp.setBindGroup(
+          1,
+          this.binds.mgProlong[l]![this.mgIdx[l]! as PingIndex]![this.mgIdx[l + 1]! as PingIndex]!,
+        );
+        cp.dispatchWorkgroups(d(l), d(l), d(l));
+        this.mgIdx[l] = flip(this.mgIdx[l]! as PingIndex);
+        this.encodeSmooth(cp, l, MG_POST_SMOOTH);
+      }
+    }
+    this.pressureIdx = this.mgIdx[0]! as PingIndex;
   }
 
   /** Rayon caméra→scène pour un point NDC : origine en VOXELS, direction unitaire

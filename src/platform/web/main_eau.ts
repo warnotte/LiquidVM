@@ -92,6 +92,9 @@ async function boot(): Promise<void> {
     flipBlend: EAU_DEFAULTS.flipBlend,
     damWidth: params.has('tall') ? 0.25 : EAU_DEFAULTS.damWidth,
     densityRate: EAU_DEFAULTS.densityRate,
+    multigrid: !params.has('jacobi') && EAU_DEFAULTS.multigrid,
+    mgCycles: EAU_DEFAULTS.mgCycles,
+    mgLevels: EAU_DEFAULTS.mgLevels,
     jacobiIterations: EAU_DEFAULTS.jacobiIterations,
     substeps: EAU_DEFAULTS.substeps,
     timeScale: EAU_DEFAULTS.timeScale,
@@ -199,11 +202,14 @@ async function boot(): Promise<void> {
         { label: 'gravité', min: 0, max: 2000, step: 20, get: () => input.gravity, set: (x) => (input.gravity = x), format: (x) => x.toFixed(0) },
         { label: 'mélange FLIP', min: 0, max: 1, step: 0.01, get: () => input.flipBlend, set: (x) => (input.flipBlend = x) },
         { label: 'contrôle densité (/s)', min: 0, max: 60, step: 1, get: () => input.densityRate, set: (x) => (input.densityRate = x), format: (x) => x.toFixed(0) },
-        { label: 'itérations Jacobi', min: 10, max: 120, step: 2, get: () => input.jacobiIterations, set: (x) => (input.jacobiIterations = x), format: (x) => x.toFixed(0) },
+        { label: 'V-cycles (multigrid)', min: 1, max: 4, step: 1, get: () => input.mgCycles, set: (x) => (input.mgCycles = x), format: (x) => x.toFixed(0) },
+        { label: 'niveaux multigrid', min: 1, max: 8, step: 1, get: () => input.mgLevels, set: (x) => (input.mgLevels = x), format: (x) => x.toFixed(0) },
+        { label: 'itérations Jacobi (repli)', min: 10, max: 120, step: 2, get: () => input.jacobiIterations, set: (x) => (input.jacobiIterations = x), format: (x) => x.toFixed(0) },
         { label: 'sous-pas', min: 1, max: 4, step: 1, get: () => input.substeps, set: (x) => (input.substeps = x), format: (x) => x.toFixed(0) },
         { label: 'vitesse du temps', min: 0, max: 1.5, step: 0.05, get: () => input.timeScale, set: (x) => (input.timeScale = x), format: (x) => `×${x.toFixed(2)}` },
       ],
       checks: [
+        { label: 'multigrid (J4) — décoché : repli Jacobi', get: () => input.multigrid, set: (v) => (input.multigrid = v) },
         { label: 'boule (O) — glisser dessus pour brasser', get: () => input.sphereActive, set: (v) => (input.sphereActive = v) },
 
         { label: 'APIC (J2) — décoché : FLIP/PIC', get: () => input.apic, set: (v) => (input.apic = v) },
@@ -284,7 +290,7 @@ async function boot(): Promise<void> {
       hud.innerHTML =
         `<b>LiquidVM eau — J3 : dam break + boule</b> · ${GRID_EAU}³ · ` +
         `${PARTICLES_EAU.toLocaleString('fr')} particules · ${input.substeps} sous-pas · ` +
-        `Jacobi ${input.jacobiIterations} · ${Math.round(fps)} FPS${input.paused ? ' · ⏸' : ''}<br>` +
+        `${input.multigrid ? `MG ×${input.mgCycles}` : `Jacobi ${input.jacobiIterations}`} · ${Math.round(fps)} FPS${input.paused ? ' · ⏸' : ''}<br>` +
         `recensement : <b>${(valid ?? 0).toLocaleString('fr')}</b> valides · ` +
         `${(lost ?? 0).toLocaleString('fr')} perdues · ${(fast ?? 0).toLocaleString('fr')} rapides · ` +
         `${(inBall ?? 0).toLocaleString('fr')} dans la boule · ` +

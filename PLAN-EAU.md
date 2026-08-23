@@ -92,7 +92,7 @@ mesuré — pas une option vague.
 | J1 ✅ | **Dam break** : gravité, P2G/G2P (PIC/FLIP), Jacobi surface libre, rendu points | La colonne s'effondre, la vague traverse, clapote et SE CALME (ni explosion ni fonte) ; 60 FPS à 128³/2 M ; `?selftest` 240 frames + compteur de particules affiché au HUD |
 | J2 ✅ | **APIC** : matrice affine C par particule, transferts APIC | A/B FLIP↔APIC par captures : surface plus lisse SANS amortissement visible ; tourbillon d'essai qui survit ; coût ≤ +20 % |
 | J3 ✅ | La **boule** dans l'eau (sphère analytique + saisie + bord mobile) | Vagues au passage de la boule, aucune particule dans la sphère, 60 FPS |
-| J4 | **Multigrid masqué** (pyramide air/eau/solide par niveau) | A/B Jacobi↔MG visuellement identiques, gain FPS mesuré, 2000+ frames stables ; Jacobi RESTE le repli au panneau |
+| J4 ✅ | **Multigrid masqué** (pyramide air/eau/solide par niveau) | A/B Jacobi↔MG visuellement identiques, gain FPS mesuré, 2000+ frames stables ; Jacobi RESTE le repli au panneau |
 | J5 | **Surface** : splat densité → raymarch (absorption bleu-vert, Fresnel) | Des captures qui ressemblent à de l'eau ; 60 FPS tenus |
 | J6 | **Interactions** : verser au pointeur, souffle, presets (bassin calme / tempête), démo courte | Jouable au même niveau de finition que le feu |
 
@@ -309,6 +309,56 @@ NOTES-DEV mis à jour à chaque jalon, pièges payés documentés immédiatement
   ajoutée sur les trois pages (« 💧 eau » depuis la 2D et le feu, « 🌊 2D » et
   « 🧊 feu 3D » depuis l'eau), README complété. Le HUD de l'eau est en
   `pointer-events: none` (il captait les clics).
+
+- **J4 — VERT : multigrid masqué (2026-08-23).** Le point de départ était une
+  vérification d'architecture, pas une intuition : l'opérateur de pression du
+  feu est `A p = Σ_voisins select(p_voisin, p_centre, solide) − 6p`, celui de
+  l'eau ajoute seulement « voisin d'air → 0 ». **Le feu est donc le cas
+  particulier « aucune cellule d'air » de l'opérateur de l'eau.** Écrire un
+  second multigrid aurait été la faute ; `eau_mg.wgsl` est celui du feu plus un
+  masque de type de cellule. Même V-cycle, mêmes facteurs de restriction.
+  MESURES à 192³, là où le solveur limite vraiment (à 128³ tout est plafonné à
+  60 FPS par la vsync et l'on ne voit rien) :
+  | solveur | résidu moyen | FPS |
+  | - | - | - |
+  | Jacobi 100 | 0,53–0,67 | 27 |
+  | Jacobi 30 | 3,11 | 40 |
+  | MG ×2 | 1,20 | 44 |
+  | **MG ×4 (défaut)** | **0,21** | **40** |
+  Quatre V-cycles dominent Jacobi 100 sur LES DEUX axes : 2,5× plus exact et
+  48 % plus rapide. À 128³, 70 s de simulation continue donnent un résidu de
+  0,0017 (Jacobi 100 : 0,011), 0 particule perdue, 60 FPS. Jacobi reste le
+  repli permanent (case au panneau, `?jacobi`) — c'était la convention du plan
+  et c'est ce qui a permis de mesurer.
+  **TROIS erreurs commises et corrigées, toutes instructives :**
+  1. *Lisseur incohérent.* Ma première version sommait les contributions des
+     voisins solides (`+s·p`) PUIS divisait par la diagonale réduite `(6−s)` :
+     somme complète et diagonale réduite mélangées, donc sur-relaxation et
+     explosion. Le Jacobi de production fait l'autre choix cohérent (somme
+     complète ÷ 6). Les deux conventions sont valides, leur mélange non. Le
+     stencil renvoie désormais `sum_fluid` et `solids` séparément, ce qui rend
+     l'opérateur explicite et l'erreur impossible.
+  2. *Restriction des masques.* « Fluide dès qu'un enfant est fluide » (la règle
+     que ce plan préconisait) FAIT EXPLOSER dès deux niveaux : les embruns
+     isolés propagent « fluide » vers le haut, le niveau grossier perd ses
+     cellules d'air donc ses Dirichlet, son système devient singulier et sa
+     solution dérive d'une constante énorme ; prolongée, elle rencontre les
+     cellules d'air remises à zéro au niveau fin et crée un gradient géant à la
+     surface. Le critère de MAJORITÉ explose aussi. Seul « air dès qu'un enfant
+     est air » est stable — au prix d'un domaine fluide grossier plus petit,
+     donc d'une correction qui s'essouffle en profondeur. Pour autoriser une
+     règle plus permissive il faudrait ANCRER le mode constant aux niveaux
+     grossiers, comme le fait le multigrid du feu ; c'est la suite naturelle.
+  3. *Angle mort de l'instrument.* Pendant l'explosion du point 2, le résidu de
+     divergence tombait à 3e-5, « mieux » que Jacobi. **Un champ de vitesse
+     uniforme parasite est à divergence nulle** : le résidu ne le voit pas. Il
+     a fallu le compteur de particules rapides pour comprendre. Leçon : un seul
+     indicateur ne suffit jamais, il faut surveiller AUSSI l'énergie et l'image.
+  MÉTHODE qui a tranché : un réglage « niveaux multigrid » (1 = simple lisseur)
+  pour BISSECTER. Un niveau stable + deux niveaux explosifs a immédiatement
+  innocenté l'opérateur et désigné les transferts. Ce réglage reste au panneau.
+  Piège WGSL de plus : **`smooth` est un mot réservé** (famille `from`,
+  `target`, `move`) — l'entry point s'appelle `relax`.
 
 ## Conventions du chantier
 

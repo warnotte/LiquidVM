@@ -91,7 +91,17 @@ export const EAU_DEFAULTS = {
   /** Contrôle de densité (1/s) : expansion des cellules tassées, compression
    *  des cellules intérieures sous-denses (voir eau_grid.wgsl). */
   densityRate: 10,
-  /** Balayages Jacobi par sous-pas. LEÇON J1 : Jacobi propage ~1 cellule par
+  /** Multigrid masqué (J4) : le solveur de pression par défaut. Jacobi reste le
+   *  repli permanent au panneau — c'est la convention du plan, et le seul moyen
+   *  honnête de comparer (A/B à état de simulation égal). */
+  multigrid: true,
+  /** V-cycles par sous-pas. MESURÉ à 192³ (résidu moyen / FPS) : Jacobi 100 →
+   *  0,53 / 27 · Jacobi 30 → 3,11 / 40 · MG ×2 → 1,20 / 44 · MG ×4 → 0,21 / 40.
+   *  Quatre cycles dominent Jacobi 100 sur LES DEUX axes, à 128³ comme à 192³. */
+  mgCycles: 4,
+  /** Niveaux de pyramide (élevé = descend jusqu'au plus grossier disponible). */
+  mgLevels: 8,
+  /** Balayages Jacobi par sous-pas, quand le multigrid est coupé. LEÇON J1 : Jacobi propage ~1 cellule par
    *  balayage — il ne tient l'hydrostatique que jusqu'à ~32 cellules de
    *  profondeur d'eau (100 it.). Au-delà : explosion d'énergie (le fond se
    *  comprime, la correction de densité surréagit, FLIP accumule). L'eau
