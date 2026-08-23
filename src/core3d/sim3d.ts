@@ -62,6 +62,14 @@ export interface Frame3DInput {
   /** Ajout d'un émetteur sous le pointeur / retrait du dernier (consommés). */
   addEmitter: boolean;
   removeEmitter: boolean;
+  /** CHAMPS DE FORCE (« modificateurs ») : ajout sous le pointeur / retrait du
+   *  dernier (consommés), et réglages appliqués au champ ACTIF (le dernier posé
+   *  ou celui qu'on tient). */
+  addField: boolean;
+  removeField: boolean;
+  fieldType: number;
+  fieldStrength: number;
+  fieldRadius: number;
   /** Sphère-obstacle présente. */
   sphereActive: boolean;
   /** Retours visuels (fuseau du souffle…) — débrayables (touche F). */
@@ -154,15 +162,29 @@ export class FluidSim3D {
   /** Première frame : initialiser la texture d'espèces (O₂ = 1 partout). */
   private needSpeciesInit = true;
 
-  private readonly simData = new Float32Array(64);
-  private readonly renderData = new Float32Array(36);
-  private lastRender = new Float32Array(36).fill(Number.NaN);
+  private readonly simData = new Float32Array(96);
+  private readonly renderData = new Float32Array(48);
+  private lastRender = new Float32Array(48).fill(Number.NaN);
 
   /** Émetteurs (positions en voxels) — le premier est l'émetteur historique. */
   private readonly emitters: { pos: [number, number, number]; ink: number }[] = [
     { pos: [GRID3 * 0.5, GRID3 * 0.08, GRID3 * 0.5], ink: 0 },
   ];
   private activeEmitter = 0;
+  /** Champs de force posés dans la scène. `axis` sert d'axe au tourbillon et de
+   *  direction au vent local. */
+  private readonly fields: {
+    pos: [number, number, number];
+    axis: [number, number, number];
+    type: number;
+    strength: number;
+    radius: number;
+  }[] = [];
+  private activeField = -1;
+
+  /** Encodage de `grabbed` : −2 rien · −1 la boule · 0..n émetteur ·
+   *  FIELD_TAG+i champ de force. */
+  private static readonly FIELD_TAG = 100;
   private readonly spherePos: [number, number, number] = [
     GRID3 * SIM3_DEFAULTS.sphereStart[0],
     GRID3 * SIM3_DEFAULTS.sphereStart[1],
@@ -330,7 +352,8 @@ export class FluidSim3D {
       });
       const simUniforms = device.createBuffer({
         label: 'sim3d-uniforms',
-        size: 256,
+        // 512 o depuis l'ajout des champs de force (96 floats utilisés).
+        size: 512,
         usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
       });
       const renderUniforms = device.createBuffer({
@@ -1275,7 +1298,24 @@ export class FluidSim3D {
         bestDist = d;
       }
     }
+    for (let i = 0; i < this.fields.length; i++) {
+      const d = this.rayDistance(this.fields[i]!.pos);
+      if (d < bestDist) {
+        best = FluidSim3D.FIELD_TAG + i;
+        bestDist = d;
+      }
+    }
     return best;
+  }
+
+  /** Nombre de champs de force posés (affiché au HUD, borné par maxFields). */
+  get fieldCount(): number {
+    return this.fields.length;
+  }
+
+  /** Index du champ actif (dernier posé ou tenu), −1 si aucun. */
+  get activeFieldIndex(): number {
+    return this.activeField;
   }
 
   /** Y a-t-il un objet saisissable sous ce point NDC ? (décide saisie vs orbite) */
@@ -1313,6 +1353,8 @@ export class FluidSim3D {
   private processInteraction(input: Frame3DInput, dt: number): void {
     if (input.reset) {
       this.emitters.length = 1;
+      this.fields.length = 0;
+      this.activeField = -1;
       this.emitters[0] = { pos: [GRID3 * 0.5, GRID3 * 0.08, GRID3 * 0.5], ink: input.emitInk };
       this.activeEmitter = 0;
       this.spherePos[0] = GRID3 * SIM3_DEFAULTS.sphereStart[0];
@@ -1342,18 +1384,60 @@ export class FluidSim3D {
       this.emitters.pop();
       this.activeEmitter = Math.min(this.activeEmitter, this.emitters.length - 1);
     }
+    // CHAMPS DE FORCE : posés à mi-hauteur, là où le panache passe.
+    if (input.addField && this.fields.length < SIM3_DEFAULTS.maxFields) {
+      this.computeRay(input.pointer.ndcX, input.pointer.ndcY);
+      const planeY = GRID3 * 0.42;
+      const t = (planeY - this.rayO[1]) / (this.rayD[1] || 1e-6);
+      const clampXZ = (v: number): number => Math.min(Math.max(v, GRID3 * 0.1), GRID3 * 0.9);
+      const px = t > 0 ? clampXZ(this.rayO[0] + t * this.rayD[0]) : GRID3 * 0.5;
+      const pz = t > 0 ? clampXZ(this.rayO[2] + t * this.rayD[2]) : GRID3 * 0.5;
+      this.fields.push({
+        pos: [px, planeY, pz],
+        // Tourbillon d'axe vertical, vent local horizontal : les orientations
+        // qui parlent le plus pour un panache qui monte.
+        axis: input.fieldType < 0.5 ? [0, 1, 0] : [1, 0, 0],
+        type: input.fieldType,
+        strength: input.fieldStrength,
+        radius: input.fieldRadius,
+      });
+      this.activeField = this.fields.length - 1;
+    }
+    if (input.removeField && this.fields.length > 0) {
+      this.fields.pop();
+      this.activeField = this.fields.length - 1;
+    }
+    // Les réglages s'appliquent aux FUTURS champs et à celui qu'on TIENT — jamais
+    // à un champ posé et lâché (même piège que l'encre des émetteurs, qui
+    // éteignait la flamme pilote à distance).
+    if (this.grabbed >= FluidSim3D.FIELD_TAG) {
+      const f = this.fields[this.grabbed - FluidSim3D.FIELD_TAG];
+      if (f) {
+        f.type = input.fieldType;
+        f.strength = input.fieldStrength;
+        f.radius = input.fieldRadius;
+        f.axis = input.fieldType < 0.5 ? [0, 1, 0] : [1, 0, 0];
+      }
+    }
 
     if (input.grab.active) {
       this.computeRay(input.pointer.ndcX, input.pointer.ndcY);
       if (this.grabbed === -2) {
         this.grabbed = this.pickTarget();
-        if (this.grabbed >= 0) {
+        if (this.grabbed >= 0 && this.grabbed < FluidSim3D.FIELD_TAG) {
           this.activeEmitter = this.grabbed;
+        } else if (this.grabbed >= FluidSim3D.FIELD_TAG) {
+          this.activeField = this.grabbed - FluidSim3D.FIELD_TAG;
         }
       }
       if (this.grabbed !== -2) {
         // Déplacement sur le plan face caméra passant par la position de l'objet.
-        const target = this.grabbed === -1 ? this.spherePos : this.emitters[this.grabbed]!.pos;
+        const target =
+          this.grabbed === -1
+            ? this.spherePos
+            : this.grabbed >= FluidSim3D.FIELD_TAG
+              ? this.fields[this.grabbed - FluidSim3D.FIELD_TAG]!.pos
+              : this.emitters[this.grabbed]!.pos;
         const px = target[0];
         const py = target[1];
         const pz = target[2];
@@ -1575,6 +1659,21 @@ export class FluidSim3D {
     d[61] = (p.windSwing * Math.PI) / 180;
     d[62] = p.windPeriod;
     d[63] = (p.windHeading * Math.PI) / 180;
+    // Champs de force : méta (nombre + types) puis deux vec4 par champ.
+    d[64] = this.fields.length;
+    for (let i = 0; i < SIM3_DEFAULTS.maxFields; i++) {
+      const f = this.fields[i];
+      d[65 + i] = f?.type ?? 0;
+      const o = 68 + i * 8;
+      d[o] = f?.pos[0] ?? 0;
+      d[o + 1] = f?.pos[1] ?? 0;
+      d[o + 2] = f?.pos[2] ?? 0;
+      d[o + 3] = (f?.radius ?? 0) * GRID3;
+      d[o + 4] = f?.axis[0] ?? 0;
+      d[o + 5] = f?.axis[1] ?? 1;
+      d[o + 6] = f?.axis[2] ?? 0;
+      d[o + 7] = (f?.strength ?? 0) * SCALE3;
+    }
     // Oxygène : apport du souffle (blow_force.w) et récupération lente.
     d[27] = D.blowOxygen;
     d[59] = p.oxygenRecover;
@@ -1649,6 +1748,17 @@ export class FluidSim3D {
     d[33] = input.bloomStrength;
     d[34] = input.embersOn ? input.emberStrength : 0;
     d[35] = GRID3;
+    // Gizmos des champs de force : centre en MONDE et rayon SIGNÉ (positif =
+    // tourbillon, négatif = vent local, 0 = pas de champ). Coupés avec les
+    // retours visuels, comme le fuseau du souffle.
+    for (let i = 0; i < 3; i++) {
+      const f = input.feedback ? this.fields[i] : undefined;
+      const o = 36 + i * 4;
+      d[o] = (f?.pos[0] ?? 0) / GRID3 - 0.5;
+      d[o + 1] = (f?.pos[1] ?? 0) / GRID3 - 0.5;
+      d[o + 2] = (f?.pos[2] ?? 0) / GRID3 - 0.5;
+      d[o + 3] = f === undefined ? 0 : f.radius * (f.type < 0.5 ? 1 : -1);
+    }
     let dirty = false;
     for (let i = 0; i < d.length; i++) {
       if (d[i] !== this.lastRender[i]) {

@@ -13,6 +13,7 @@ import {
   INK_COLORS,
   INK_NAMES,
   setGrid3,
+  FIELD_NAMES,
   SIM3_DEFAULTS,
   type Sim3Tuning,
 } from '../../core3d/config3d';
@@ -295,6 +296,11 @@ async function boot(): Promise<void> {
     grab: { active: false },
     addEmitter: false,
     removeEmitter: false,
+    addField: false,
+    removeField: false,
+    fieldType: 0,
+    fieldStrength: SIM3_DEFAULTS.fieldVortexStrength,
+    fieldRadius: SIM3_DEFAULTS.fieldRadius,
     sphereActive: true,
     feedback: true,
     exposure: SIM3_DEFAULTS.exposure,
@@ -306,6 +312,7 @@ async function boot(): Promise<void> {
   };
   if (selftest) {
     (window as unknown as Record<string, unknown>)['__frame3d'] = input;
+    (window as unknown as Record<string, unknown>)['__sim3d'] = sim;
   }
 
   // Caméra orbitale : glisser (gauche) pour tourner — SAUF si le clic attrape un
@@ -555,6 +562,33 @@ async function boot(): Promise<void> {
       ],
     },
     {
+      // MODIFICATEURS : objets posés dans la scène, saisissables comme les
+      // émetteurs et la boule. Les réglages ci-dessous s'appliquent au PROCHAIN
+      // champ posé et à celui qu'on tient — jamais à distance.
+      title: 'champs de force (modificateurs)',
+      sliders: [
+        {
+          label: 'type',
+          min: 0,
+          max: FIELD_NAMES.length - 1,
+          step: 1,
+          get: () => input.fieldType,
+          set: (x) => {
+            input.fieldType = x;
+            input.fieldStrength =
+              x < 0.5 ? SIM3_DEFAULTS.fieldVortexStrength : SIM3_DEFAULTS.fieldWindStrength;
+          },
+          format: (x) => FIELD_NAMES[Math.round(x)] ?? '',
+        },
+        { label: 'force', min: 0, max: 600, step: 10, get: () => input.fieldStrength, set: (x) => (input.fieldStrength = x), format: (x) => x.toFixed(0) },
+        { label: 'rayon', min: 0.05, max: 0.4, step: 0.01, get: () => input.fieldRadius, set: (x) => (input.fieldRadius = x), format: (x) => x.toFixed(2) },
+      ],
+      buttons: [
+        { label: '＋ poser un champ', action: () => (input.addField = true) },
+        { label: '－ retirer le dernier', action: () => (input.removeField = true) },
+      ],
+    },
+    {
       title: 'résolution (recharge la page)',
       buttons: GRID3_CHOICES.map((n) => ({
         // Estimation VRAM affichée : au-delà du budget du GPU, l'échec est un
@@ -609,6 +643,8 @@ async function boot(): Promise<void> {
     input.blow.moveX = 0;
     input.blow.moveY = 0;
     input.addEmitter = false;
+    input.addField = false;
+    input.removeField = false;
     input.removeEmitter = false;
     frames++;
 

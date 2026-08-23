@@ -322,6 +322,27 @@ particules. Quand une limite n'apparaît qu'en WARNING console, écouter
   height) — la taille pilote la cible HDR.
   long du rayon caméra→scène, dirigée selon le geste (base caméra lue depuis
   renderData — écrite AVANT les uniforms sim). Réglages : blowRadius/blowForce.
+- **Champs de force posés dans la scène — « modificateurs » (2026-08-24)** :
+  objets placés au pointeur, SAISISSABLES et supprimables, qui agissent
+  localement sur le fluide. Ils réutilisent tel quel le patron des émetteurs et
+  de la boule : `pickTarget` les reconnaît (encodage `FIELD_TAG + i`, soit 100+i,
+  à côté de −1 pour la boule et 0..n pour les émetteurs), la saisie les déplace
+  sur le plan face caméra, et deux vec4 par champ vivent dans l'uniforme
+  (slots 64-91 ; le tampon sim est passé à 512 o).
+  DEUX TYPES, traités différemment pour une raison PHYSIQUE :
+   · **tourbillon** — rotation solide autour d'un axe. Un champ rotationnel est
+     à divergence nulle, donc la projection le PRÉSERVE : il agit sur l'air
+     lui-même, matière ou pas.
+   · **vent local** — direction constante, donc irrotationnel : uniforme il
+     serait annulé par la projection (leçon du souffle radial 2D). Il doit être
+     DIFFÉRENTIEL, pondéré par la matière, comme la poussée.
+  Réglages (type / force / rayon) appliqués aux FUTURS champs et à celui qu'on
+  TIENT, jamais à distance — le même piège que l'encre des émetteurs, qui
+  éteignait la flamme pilote. GIZMOS : coque lumineuse à la frontière du champ
+  dans le raymarch (bleu = tourbillon, ambre = vent), coupée avec les retours
+  visuels (F) — un modificateur invisible est un modificateur qu'on ne sait pas
+  placer. Étendre à un nouveau type = un cas dans `field_force` (forces3d.wgsl)
+  et une entrée dans FIELD_NAMES.
 - **Vent horizontal (2026-08-24)** : force DIFFÉRENTIELLE proportionnelle à la
   matière, ajoutée dans `forces3d.wgsl` à côté de la poussée, avec un cap qui
   OSCILLE (uniform `wind` = force / amplitude / période / cap, slots 60-63).

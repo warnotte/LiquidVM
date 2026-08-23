@@ -59,6 +59,8 @@ export const INK_COLORS = [
   [1.0, 0.8, 0.45],
 ] as const;
 export const INK_NAMES = ['fumée', 'encre', 'carburant'] as const;
+/** Types de champ de force, dans l'ordre de l'uniforme (0, 1). */
+export const FIELD_NAMES = ['tourbillon', 'vent local'] as const;
 
 /** Réglages à chaud (panneau) : tous initialisés depuis SIM3_DEFAULTS. */
 export interface Sim3Tuning {
@@ -150,6 +152,15 @@ export const SIM3_DEFAULTS = {
   sphereStart: [0.5, 0.45, 0.5],
   /** Nombre maximal d'émetteurs simultanés. */
   maxEmitters: 4,
+  /** CHAMPS DE FORCE posés dans la scène (« modificateurs ») : objets placés au
+   *  pointeur, saisissables comme les émetteurs, qui agissent localement sur le
+   *  fluide. Deux types pour l'instant — voir FIELD_NAMES. */
+  maxFields: 3,
+  fieldRadius: 0.16,
+  /** Forces par défaut, calibrées séparément : le tourbillon agit sur l'air
+   *  (rotationnel, préservé par la projection), le vent local sur la matière. */
+  fieldVortexStrength: 260,
+  fieldWindStrength: 120,
   /** Combustion (modèle Feldman/Fedkiw simplifié) : taux de réaction (1/s au-dessus
    *  de l'ignition), chaleur dégagée par unité de carburant, expansion volumique au
    *  front de flamme (source de divergence, voxels/s — remise à l'échelle SCALE3). */

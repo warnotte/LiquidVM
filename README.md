@@ -50,7 +50,8 @@ readback en boucle de frame, `src/core3d/` portable sans DOM.
 | molette | zoom |
 | `1`/`2`/`3` | encre de l'émetteur : fumée / encre / carburant |
 | `A` / `X` | ajouter un émetteur sous le pointeur (max 4) / retirer le dernier |
-| `O` / `B` / `F` | boule-obstacle / braises / retours visuels |
+| `O` / `B` / `F` | boule-obstacle / braises / retours visuels (dont les gizmos des champs) |
+| panneau → champs de force | poser un tourbillon ou un vent local dans la scène, puis le glisser |
 | `D` / `E` / `R` / `Espace` | démo / export .vdb / reset / pause |
 
 ## Liquide 3D (`eau.html`)

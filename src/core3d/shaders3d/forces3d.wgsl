@@ -20,6 +20,38 @@ struct Params {
   sphere_vel: vec4f,  // xyz: vitesse de la sphère (voxels/s) — condition de bord mobile
   ink_weights: vec4f, // xyz: poids propre des matières (voxels/s² par unité)
   wind: vec4f,        // x: force, y: amplitude d'oscillation (rad), z: période (s), w: cap (rad)
+  // CHAMPS DE FORCE posés dans la scène (« modificateurs »), max 3.
+  field_meta: vec4f,  // x: nombre actif, yzw: type de chaque champ (0 tourbillon, 1 vent)
+  field0_a: vec4f,    // xyz: centre (voxels), w: rayon (voxels)
+  field0_b: vec4f,    // xyz: axe (tourbillon) ou direction (vent), w: force
+  field1_a: vec4f,
+  field1_b: vec4f,
+  field2_a: vec4f,
+  field2_b: vec4f,
+}
+
+fn field_a(i: u32) -> vec4f {
+  switch i {
+    case 0u: { return P.field0_a; }
+    case 1u: { return P.field1_a; }
+    default: { return P.field2_a; }
+  }
+}
+
+fn field_b(i: u32) -> vec4f {
+  switch i {
+    case 0u: { return P.field0_b; }
+    case 1u: { return P.field1_b; }
+    default: { return P.field2_b; }
+  }
+}
+
+fn field_type(i: u32) -> f32 {
+  switch i {
+    case 0u: { return P.field_meta.y; }
+    case 1u: { return P.field_meta.z; }
+    default: { return P.field_meta.w; }
+  }
 }
 
 fn emitter_pos(i: u32) -> vec4f {
@@ -84,6 +116,35 @@ fn blow_gauss(p: vec3f) -> f32 {
   return exp(-d * d * 2.0);
 }
 
+// Force des CHAMPS placés, évaluée en un point. Deux types, et leur traitement
+// diffère pour une raison physique, pas esthétique :
+//  - TOURBILLON : rotation solide autour d'un axe. Un champ rotationnel est
+//    à divergence nulle, donc la projection le PRÉSERVE — il peut agir sur
+//    l'air lui-même, matière ou pas.
+//  - VENT LOCAL : direction constante, donc irrotationnel ; uniforme, il serait
+//    annulé par la projection (leçon du souffle radial 2D). Il doit être
+//    DIFFÉRENTIEL, pondéré par la matière présente, comme la poussée.
+fn field_force(p: vec3f, matter: f32) -> vec3f {
+  var f = vec3f(0.0);
+  let count = u32(P.field_meta.x);
+  for (var i = 0u; i < count; i++) {
+    let a = field_a(i);
+    let b = field_b(i);
+    let rel = p - a.xyz;
+    let radius = max(a.w, 1e-4);
+    let d = length(rel) / radius;
+    let fall = exp(-d * d * 2.0);
+    if (fall > 1e-3) {
+      if (field_type(i) < 0.5) {
+        f += cross(b.xyz, rel) / radius * b.w * fall;
+      } else {
+        f += b.xyz * b.w * fall * matter;
+      }
+    }
+  }
+  return f;
+}
+
 @compute @workgroup_size(4, 4, 4)
 fn main(@builtin(global_invocation_id) gid: vec3u) {
   let n = i32(P.misc.z);
@@ -120,6 +181,17 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     let dw = density_at(pw);
     vel.x += dt * P.wind.x * cos(ang) * (du.x + du.y + du.z);
     vel.z += dt * P.wind.x * sin(ang) * (dw.x + dw.y + dw.z);
+  }
+
+  // CHAMPS DE FORCE posés dans la scène : évalués sur chaque face MAC, à sa
+  // propre position (la matière est celle du voisinage de la face).
+  if (P.field_meta.x > 0.5) {
+    let mu = density_at(pu);
+    let mv = density_at(pv);
+    let mw = density_at(pw);
+    vel.x += dt * field_force(pu, mu.x + mu.y + mu.z).x;
+    vel.y += dt * field_force(pv, mv.x + mv.y + mv.z).y;
+    vel.z += dt * field_force(pw, mw.x + mw.y + mw.z).z;
   }
 
   // Impulsion de l'émetteur : jet montant + balancement latéral (fréquences
