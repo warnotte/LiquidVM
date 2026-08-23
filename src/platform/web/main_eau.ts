@@ -1,6 +1,6 @@
 /**
- * Point d'entrée du chantier EAU (page eau.html — branche `eau`, voir
- * PLAN-EAU.md). ÉTAT : J1 — dam break FLIP/PIC rendu en points.
+ * Point d'entrée de la page EAU (liquide 3D APIC — conception et journal dans
+ * PLAN-EAU.md). Jalons J0 à J4 verts : dam break, APIC, boule, multigrid masqué.
  * `?bench` relance le banc J0 du scatter atomique.
  * `?selftest` : rapport JSON après 240 frames, titre SELFTEST-OK/FAIL.
  */
@@ -199,7 +199,7 @@ async function boot(): Promise<void> {
 
   const panel = new Panel3D(document.body, [
     {
-      title: 'eau (J1 — dam break)',
+      title: 'simulation',
       sliders: [
         { label: 'gravité', min: 0, max: 2000, step: 20, get: () => input.gravity, set: (x) => (input.gravity = x), format: (x) => x.toFixed(0) },
         { label: 'mélange FLIP', min: 0, max: 1, step: 0.01, get: () => input.flipBlend, set: (x) => (input.flipBlend = x) },
@@ -291,7 +291,7 @@ async function boot(): Promise<void> {
       const divMean = divCells > 0 ? (sim.lastCensus[72] ?? 0) / 256 / divCells : 0;
       const divMax = (sim.lastCensus[73] ?? 0) / 256;
       hud.innerHTML =
-        `<b>LiquidVM eau — J3 : dam break + boule</b> · ${GRID_EAU}³ · ` +
+        `<b>LiquidVM — liquide 3D</b> · ${GRID_EAU}³ · ` +
         `${PARTICLES_EAU.toLocaleString('fr')} particules · ${input.substeps} sous-pas · ` +
         `${input.multigrid ? `MG ×${input.mgCycles}` : `Jacobi ${input.jacobiIterations}`} · ${Math.round(fps)} FPS${input.paused ? ' · ⏸' : ''}<br>` +
         `recensement : <b>${(valid ?? 0).toLocaleString('fr')}</b> valides · ` +
