@@ -26,6 +26,7 @@ struct UEau {
 @group(1) @binding(5) var p_dst: texture_storage_3d<r32float, write>;
 @group(1) @binding(6) var div_src: texture_3d<f32>;
 @group(1) @binding(7) var dens_src: texture_3d<f32>; // densité floutée (1 = repos)
+@group(1) @binding(8) var<storage, read_write> census: array<atomic<u32>>;
 
 fn n_size() -> i32 {
   return i32(U.sim.x);
@@ -122,8 +123,14 @@ fn face_w(f: vec3i, n: i32) -> f32 {
 // POMPAIT de l'énergie dans le bassin calme (surface qui « bout »).
 const DENSITY_DEADBAND = 0.25;
 
-fn density_rate() -> f32 {
-  return U.sim2.w;
+// Divergence CIBLE d'une cellule (0 sauf si elle est tassée). Bornée à 1× :
+// sans le clamp, une cellule très tassée (30+ particules) demandait ~180 s⁻¹
+// d'expansion → pressions explosives → au-delà du max float16 → NaN (la saga
+// float16 du 2D). Partagée par la passe de divergence ET par l'instrument de
+// résidu : le solveur doit atteindre CETTE valeur, pas zéro.
+fn density_target(c: vec3i) -> f32 {
+  let over = textureLoad(dens_src, c, 0).x - 1.0 - DENSITY_DEADBAND;
+  return U.sim2.w * clamp(over / (1.0 - DENSITY_DEADBAND), 0.0, 1.0);
 }
 // Pas de pression : écrit 0 (purge du warm start au reset — leçon 2D).
 @compute @workgroup_size(4, 4, 4)
@@ -149,13 +156,7 @@ fn divergence(@builtin(global_invocation_id) gid: vec3u) {
   let d = face_u(c + vec3i(1, 0, 0), n) - face_u(c, n) +
     face_v(c + vec3i(0, 1, 0), n) - face_v(c, n) +
     face_w(c + vec3i(0, 0, 1), n) - face_w(c, n);
-  // Bornée à 1 : sans le clamp, une cellule très tassée (30+ particules)
-  // demandait ~180 s⁻¹ d'expansion → pressions explosives → vitesses au-delà
-  // du max float16 → NaN (la saga float16 du 2D).
-  let over = textureLoad(dens_src, c, 0).x - 1.0 - DENSITY_DEADBAND;
-  let rel = clamp(over / (1.0 - DENSITY_DEADBAND), 0.0, 1.0);
-  let d_target = density_rate() * rel;
-  textureStore(div_dst, gid, vec4f(d - d_target, 0.0, 0.0, 0.0));
+  textureStore(div_dst, gid, vec4f(d - density_target(c), 0.0, 0.0, 0.0));
 }
 
 // Contribution d'un voisin au balayage Jacobi :
@@ -188,6 +189,36 @@ fn jacobi(@builtin(global_invocation_id) gid: vec3u) {
     neighbor_p(c + vec3i(0, 1, 0), pc, n) + neighbor_p(c - vec3i(0, 1, 0), pc, n) +
     neighbor_p(c + vec3i(0, 0, 1), pc, n) + neighbor_p(c - vec3i(0, 0, 1), pc, n);
   textureStore(p_dst, gid, vec4f((sum - textureLoad(div_src, c, 0).x) / 6.0, 0.0, 0.0, 0.0));
+}
+
+// INSTRUMENT D'EXACTITUDE : divergence RÉSIDUELLE après projection, sur les
+// seules cellules d'eau. C'est la mesure qui départage deux solveurs — « ça a
+// l'air pareil » n'est pas une preuve. Accumulée en virgule fixe (×256) dans
+// census[72] (somme) / census[73] (max) / census[74] (cellules d'eau) ; la
+// contribution par cellule est bornée pour que la somme ne déborde pas l'u32.
+// À lire APRÈS le gradient : vel_src doit être la vitesse projetée.
+const DIV_FIXED = 256.0;
+
+@compute @workgroup_size(4, 4, 4)
+fn divergence_census(@builtin(global_invocation_id) gid: vec3u) {
+  let n = n_size();
+  let c = vec3i(gid);
+  if (c.x >= n || c.y >= n || c.z >= n || !fluid(c, n)) {
+    return;
+  }
+  // RÉSIDU : la projection doit rendre div(u) ÉGAL à la cible du contrôle de
+  // densité, pas nul. Mesurer |div| seul confond l'erreur du solveur avec la
+  // divergence VOULUE (c'est ce que faisait la première version : son maximum
+  // de ~9,7 était exactement le taux d'expansion demandé, pas une erreur).
+  let d = abs(
+    face_u(c + vec3i(1, 0, 0), n) - face_u(c, n) +
+    face_v(c + vec3i(0, 1, 0), n) - face_v(c, n) +
+    face_w(c + vec3i(0, 0, 1), n) - face_w(c, n) - density_target(c)
+  );
+  let fixed = u32(clamp(d * DIV_FIXED, 0.0, 1048576.0));
+  atomicAdd(&census[72], fixed);
+  atomicMax(&census[73], fixed);
+  atomicAdd(&census[74], 1u);
 }
 
 // Pression du point de vue du GRADIENT : hors boîte → Neumann (grad nul via

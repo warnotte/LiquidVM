@@ -70,7 +70,7 @@ export class FluidEau {
   /** Dernier recensement lu : [valides, perdues (NaN/hors monde), rapides],
    *  [4..67] 8 particules brutes (pos+vel en bits float), [66..71] histogramme
    *  des cellules par occupation (0, 1-3, 4-7, 8-11, 12-23, 24+). */
-  readonly lastCensus = new Uint32Array(72);
+  readonly lastCensus = new Uint32Array(80);
   private censusInFlight = false;
   private readonly uniformData = new Float32Array(36);
   /** Base caméra du dernier writeUniforms : pos(3), right(3), up(3), fwd(3),
@@ -104,6 +104,7 @@ export class FluidEau {
       jacobi: GPUComputePipeline;
       gradient: GPUComputePipeline;
       clearPressure: GPUComputePipeline;
+      divCensus: GPUComputePipeline;
       g2p: GPUComputePipeline;
       census: GPUComputePipeline;
       histogram: GPUComputePipeline;
@@ -126,6 +127,7 @@ export class FluidEau {
       sort: Pair<GPUBindGroup>; // [source] → destination = flip
       points: Pair<GPUBindGroup>; // [particules]
       densityBlur: GPUBindGroup;
+      divCensus: GPUBindGroup;
       cellCensus: GPUBindGroup;
       surface: GPUBindGroup;
     },
@@ -167,12 +169,12 @@ export class FluidEau {
       // par un readback DIAGNOSTIQUE hors chemin critique (documenté PLAN-EAU).
       const censusBuf = device.createBuffer({
         label: 'eau-census',
-        size: 288,
+        size: 320,
         usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST,
       });
       const censusStaging = device.createBuffer({
         label: 'eau-census-staging',
-        size: 288,
+        size: 320,
         usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
       });
       const tex3d = (label: string, format: GPUTextureFormat): GPUTextureView =>
@@ -287,6 +289,10 @@ export class FluidEau {
           label: 'eau-density-blur',
           entries: [uniformEntry(COMPUTE), storageBuf(2, true), storageTex(3, 'rgba16float')],
         }),
+        divCensus: device.createBindGroupLayout({
+          label: 'eau-div-census',
+          entries: [sampled(0), storageBuf(2, true), sampled(7), storageBuf(8)],
+        }),
         cellCensus: device.createBindGroupLayout({
           label: 'eau-cell-census',
           entries: [uniformEntry(COMPUTE), storageBuf(2, true), storageBuf(5)],
@@ -322,7 +328,7 @@ export class FluidEau {
           compute: { module, entryPoint },
         });
 
-      const [initDam, scatter, resolve, forces, divergencePipe, jacobi, gradient, clearPressure, g2p, censusPipe, histogram, scan, reorder, densityBlur, cellCensus, points, surface] =
+      const [initDam, scatter, resolve, forces, divergencePipe, jacobi, gradient, clearPressure, divCensus, g2p, censusPipe, histogram, scan, reorder, densityBlur, cellCensus, points, surface] =
         await Promise.all([
           compute('eau-init-dam', [L.p2g], p2gM, 'init_dam'),
           compute('eau-scatter', [L.p2g], p2gM, 'scatter'),
@@ -332,6 +338,7 @@ export class FluidEau {
           compute('eau-jacobi', [L.gridG0, L.jacobi], gridM, 'jacobi'),
           compute('eau-gradient', [L.gridG0, L.gradient], gridM, 'gradient'),
           compute('eau-clear-pressure', [L.gridG0, L.jacobi], gridM, 'clear_pressure'),
+          compute('eau-div-census', [L.gridG0, L.divCensus], gridM, 'divergence_census'),
           compute('eau-g2p', [L.g2pG0, L.g2p], g2pM, 'g2p'),
           compute('eau-census', [L.g2pG0, L.g2p], g2pM, 'census_pass'),
           compute('eau-histogram', [L.gridG0, L.sort], sortM, 'histogram'),
@@ -479,6 +486,16 @@ export class FluidEau {
             { binding: 3, resource: density },
           ],
         }),
+        divCensus: device.createBindGroup({
+          label: 'eau-div-census',
+          layout: L.divCensus,
+          entries: [
+            { binding: 0, resource: velNew },
+            { binding: 2, resource: { buffer: cellCount } },
+            { binding: 7, resource: density },
+            { binding: 8, resource: { buffer: censusBuf } },
+          ],
+        }),
         cellCensus: device.createBindGroup({
           label: 'eau-cell-census',
           layout: L.cellCensus,
@@ -506,7 +523,7 @@ export class FluidEau {
         blockCount,
         censusBuf,
         censusStaging,
-        { initDam, scatter, resolve, forces, divergence: divergencePipe, jacobi, gradient, clearPressure, g2p, census: censusPipe, histogram, scan, reorder, densityBlur, cellCensus, points, surface },
+        { initDam, scatter, resolve, forces, divergence: divergencePipe, jacobi, gradient, clearPressure, divCensus, g2p, census: censusPipe, histogram, scan, reorder, densityBlur, cellCensus, points, surface },
         binds,
       );
     });
@@ -624,8 +641,14 @@ export class FluidEau {
       cpn.setPipeline(this.pipelines.cellCensus);
       cpn.setBindGroup(0, this.binds.cellCensus);
       cpn.dispatchWorkgroups(gridDispatch, gridDispatch, gridDispatch);
+      // Résidu de divergence sur la vitesse PROJETÉE : la mesure d'exactitude
+      // du solveur de pression (comparable entre Jacobi et multigrid).
+      cpn.setPipeline(this.pipelines.divCensus);
+      cpn.setBindGroup(0, this.binds.gridG0);
+      cpn.setBindGroup(1, this.binds.divCensus);
+      cpn.dispatchWorkgroups(gridDispatch, gridDispatch, gridDispatch);
       cpn.end();
-      encoder.copyBufferToBuffer(this.censusBuf, 0, this.censusStaging, 0, 288);
+      encoder.copyBufferToBuffer(this.censusBuf, 0, this.censusStaging, 0, 320);
     }
 
     // Boîte + surface (densité floutée du dernier sous-pas — valable aussi en

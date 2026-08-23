@@ -276,6 +276,11 @@ async function boot(): Promise<void> {
       panel.refresh();
       const [valid, lost, fast, inBall] = sim.lastCensus;
       const hist = Array.from(sim.lastCensus.subarray(66, 72), (x) => (x / 1000).toFixed(1) + 'k');
+      // Résidu de divergence après projection (virgule fixe ×256) : LA mesure
+      // qui compare deux solveurs de pression sans se fier à l'apparence.
+      const divCells = sim.lastCensus[74] ?? 0;
+      const divMean = divCells > 0 ? (sim.lastCensus[72] ?? 0) / 256 / divCells : 0;
+      const divMax = (sim.lastCensus[73] ?? 0) / 256;
       hud.innerHTML =
         `<b>LiquidVM eau — J3 : dam break + boule</b> · ${GRID_EAU}³ · ` +
         `${PARTICLES_EAU.toLocaleString('fr')} particules · ${input.substeps} sous-pas · ` +
@@ -283,6 +288,7 @@ async function boot(): Promise<void> {
         `recensement : <b>${(valid ?? 0).toLocaleString('fr')}</b> valides · ` +
         `${(lost ?? 0).toLocaleString('fr')} perdues · ${(fast ?? 0).toLocaleString('fr')} rapides · ` +
         `${(inBall ?? 0).toLocaleString('fr')} dans la boule · ` +
+        `div ${divMean.toFixed(3)} moy / ${divMax.toFixed(2)} max · ` +
         `cellules 1-3/4-7/<b>8-11</b>/12-23/24+ : ${hist.slice(1).join(' / ')}<br>` +
         'glisser la boule : brasser · glisser ailleurs : orbiter · molette : zoom · ' +
           'espace : pause · R : reset · O : boule · P : points · Tab : réglages';
