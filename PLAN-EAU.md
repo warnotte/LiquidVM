@@ -391,6 +391,32 @@ NOTES-DEV mis à jour à chaque jalon, pièges payés documentés immédiatement
   place d'une hypothèse plausible, et un garde-fou gratuit pour un cas qui
   n'était pas couvert.
 
+- **J5 — surface lissée (Zhu-Bridson) : ESSAYÉE, MESURÉE, ANNULÉE (2026-08-24).**
+  Idée : remplacer le seuillage d'un COMPTAGE de particules (qui produit une
+  bosse par particule, d'où le grain) par la distance à leur position MOYENNE.
+  Implémenté : somme des positions accumulée par cellule dans le scatter,
+  moyenne au noyau en tente 3³, champ φ(p) = |d(p)| − r marché à la place de la
+  densité, normale = ∇φ, case et rayon au panneau.
+  RÉSULTAT VISUEL (comparé à état de simulation IDENTIQUE, pause + bascule) :
+  la promesse est tenue — plus de grain, surface franchement plus propre — mais
+  les VAGUES SONT APLATIES. La moyenne se fait par cellule, ce qui n'est qu'une
+  approximation économique du vrai noyau par particule de Zhu & Bridson.
+  Aucune des deux ne domine : le comptage lit mieux une eau agitée, le lissage
+  une eau calme ou vue de près.
+  RÉSULTAT DE PERF, qui a tranché : **33-36 FPS à 192³ contre 39-41 avant**
+  (mesuré en session chaude, A/B impossible autrement puisque le surcoût est
+  dans la disposition mémoire). La cause n'est pas les trois atomicAdd ajoutés
+  mais l'ENTRELACEMENT du tampon de cellules : pour rester sous les 8 tampons
+  de stockage garantis par WebGPU (le groupe P2G y était déjà), comptage et
+  positions ont dû tenir dans un seul tampon de 4 i32 — que TOUTES les passes
+  lisent alors avec un pas de 4, ruinant la localité de cache.
+  VERDICT : 15-20 % de perte à haute résolution pour une option qui ne gagne
+  pas clairement, et désactivée par défaut. Annulé (aucun commit).
+  SI ON Y REVIENT : il faut d'abord libérer un slot de tampon de stockage — par
+  exemple en entrelaçant les paires acc_*/wgt_* du P2G (6 tampons → 3) — pour
+  que le comptage garde ses 4 octets et que les positions vivent à côté. Et
+  viser le vrai noyau par particule, pas la moyenne par cellule.
+
 ## Conventions du chantier
 
 - Branche `eau` (depuis `main`). Merge dans `main` par JALON VERT uniquement —
