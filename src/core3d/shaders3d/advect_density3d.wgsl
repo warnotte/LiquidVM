@@ -16,6 +16,48 @@ struct Params {
   emitter2: vec4f,
   emitter3: vec4f,
   emit_inks: vec4f, // encre (0/1/2) de chaque émetteur
+  // Champs traversés sans être lus ici : la disposition de l'uniforme est
+  // COMMUNE à toutes les passes, un shader n'en déclare qu'un PRÉFIXE et doit
+  // donc décrire tout ce qui précède ce qui l'intéresse.
+  sphere_vel: vec4f,
+  ink_weights: vec4f,
+  wind: vec4f,
+  field_meta: vec4f,
+  field0_a: vec4f,
+  field0_b: vec4f,
+  field1_a: vec4f,
+  field1_b: vec4f,
+  field2_a: vec4f,
+  field2_b: vec4f,
+  // EXPLOSION : xyz centre (voxels), w rayon (voxels).
+  burst_a: vec4f,
+  // x: débit de carburant (1/s), y: débit de l'amorce en chaleur (1/s),
+  // z: injection en cours (0/1) — les deux débits sont déjà à zéro sinon,
+  // w: graine des grumeaux (décalage du bruit, change à chaque détonation).
+  burst_b: vec4f,
+}
+
+// Bruit de valeur 3D — uniquement pour DÉCHIRER la charge d'explosion. Une
+// gaussienne analytique est parfaitement symétrique, et une boule de feu
+// parfaitement symétrique ressemble à une ampoule : les instabilités qui font
+// l'aspect d'une détonation n'ont rien à amplifier. Deux octaves suffisent, et
+// le coût ne se paie que dans la petite boule, pendant les ~3 frames
+// d'injection.
+fn hash31(p: vec3f) -> f32 {
+  var q = fract(p * 0.1031);
+  q += dot(q, q.zyx + 31.32);
+  return fract((q.x + q.y) * q.z);
+}
+
+fn vnoise(p: vec3f) -> f32 {
+  let i = floor(p);
+  let f = fract(p);
+  let u = f * f * (3.0 - 2.0 * f);
+  let a = mix(hash31(i + vec3f(0.0, 0.0, 0.0)), hash31(i + vec3f(1.0, 0.0, 0.0)), u.x);
+  let b = mix(hash31(i + vec3f(0.0, 1.0, 0.0)), hash31(i + vec3f(1.0, 1.0, 0.0)), u.x);
+  let c = mix(hash31(i + vec3f(0.0, 0.0, 1.0)), hash31(i + vec3f(1.0, 0.0, 1.0)), u.x);
+  let d = mix(hash31(i + vec3f(0.0, 1.0, 1.0)), hash31(i + vec3f(1.0, 1.0, 1.0)), u.x);
+  return mix(mix(a, b, u.y), mix(c, d, u.y), u.z);
 }
 
 fn emitter_pos(i: u32) -> vec4f {
@@ -157,6 +199,29 @@ fn correct(@builtin(global_invocation_id) gid: vec3u) {
       val.w + heat_rate * dt * g,
     );
   }
+  // EXPLOSION : une bouffée de CARBURANT avec son AMORCE en chaleur. Rien
+  // d'autre — la combustion trois lignes plus haut fait la boule de feu, la suie
+  // et (par l'expansion, dans la passe de divergence) le souffle. L'amorce est
+  // plus resserrée que le carburant : le cœur part le premier et le front gagne
+  // le bord, ce qui donne une boule qui S'OUVRE au lieu de s'allumer d'un bloc.
+  if (P.burst_b.z > 0.5) {
+    let dq = distance(center, P.burst_a.xyz) / max(P.burst_a.w, 1e-3);
+    let gauss = exp(-dq * dq * 3.0);
+    if (gauss > 1e-3) {
+      // Grumeaux de charge : le bruit est ancré sur le CENTRE de la bouffée (il
+      // ne glisse donc pas d'une frame à l'autre) et décalé par une graine, pour
+      // que deux détonations ne soient pas jumelles. Deux octaves, taille de
+      // motif ≈ un tiers du rayon.
+      let q = (center - P.burst_a.xyz) / max(P.burst_a.w, 1e-3) * 3.4 + P.burst_b.w;
+      let n = vnoise(q) * 0.65 + vnoise(q * 2.7) * 0.35;
+      // Le CARBURANT est fortement modulé (c'est lui qui dessine les langues de
+      // flamme), l'AMORCE beaucoup moins : le cœur doit partir à coup sûr, sinon
+      // la charge couve au lieu de détoner.
+      val.z += P.burst_b.x * dt * gauss * mix(0.25, 1.75, n);
+      val.w += P.burst_b.y * dt * exp(-dq * dq * 7.0) * mix(0.8, 1.2, n);
+    }
+  }
+
   val = min(val, vec4f(3.0, 3.0, 3.0, 2.0));
 
   // Jamais d'encre ni de chaleur dans la sphère-obstacle.

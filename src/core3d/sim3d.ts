@@ -71,6 +71,10 @@ export interface Frame3DInput {
   fieldType: number;
   fieldStrength: number;
   fieldRadius: number;
+  /** EXPLOSION : détonation sous le pointeur (consommée), et son calibre. */
+  explode: boolean;
+  explosionRadius: number;
+  explosionFuel: number;
   /** Sphère-obstacle présente. */
   sphereActive: boolean;
   /** Retours visuels (fuseau du souffle…) — débrayables (touche F). */
@@ -170,7 +174,8 @@ export class FluidSim3D {
   /** Première frame : initialiser la texture d'espèces (O₂ = 1 partout). */
   private needSpeciesInit = true;
 
-  private readonly simData = new Float32Array(96);
+  // 100 floats utilisés (25 vec4) depuis la bouffée d'explosion.
+  private readonly simData = new Float32Array(100);
   // 88 floats utilisés (22 vec4) depuis le bouton d'orientation.
   private readonly renderData = new Float32Array(88);
   private lastRender = new Float32Array(88).fill(Number.NaN);
@@ -214,6 +219,19 @@ export class FluidSim3D {
   private sphereOn = true;
   /** Vitesse de la sphère (voxels/s) — condition de bord mobile, lissée EMA. */
   private readonly sphereVel: [number, number, number] = [0, 0, 0];
+  /** BOUFFÉE D'EXPLOSION en cours : centre (voxels), rayon (voxels) et temps
+   *  d'injection RESTANT (secondes). Injecter « pendant une frame » donnerait un
+   *  résultat dépendant du framerate ; on injecte à débit constant pendant une
+   *  durée fixe, et la même détonation rend la même boule à 30 comme à 120 FPS. */
+  private readonly burstPos: [number, number, number] = [0, 0, 0];
+  private burstRadius = 0;
+  private burstLeft = 0;
+  /** Graine des grumeaux de la charge : avancée à chaque détonation pour que
+   *  deux explosions ne soient pas jumelles, mais AVANCÉE D'UN PAS FIXE — la
+   *  même suite de détonations rejoue donc à l'identique, ce qu'on veut d'un
+   *  simulateur dont on rebaie les sorties. */
+  private burstSeed = 0;
+
   /** Cible saisie : même encodage que `selected` (-2 = aucune). */
   private grabbed = -2;
   /** OBJET SÉLECTIONNÉ (même encodage que `grabbed`) : le dernier posé ou saisi,
@@ -395,7 +413,7 @@ export class FluidSim3D {
       });
       const simUniforms = device.createBuffer({
         label: 'sim3d-uniforms',
-        // 512 o depuis l'ajout des champs de force (96 floats utilisés).
+        // 512 o : 100 floats utilisés depuis la bouffée d'explosion.
         size: 512,
         usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
       });
@@ -1639,6 +1657,22 @@ export class FluidSim3D {
       this.deselect();
       this.grabbed = -2;
     }
+    // EXPLOSION : sous le pointeur, à mi-hauteur — comme les champs de force.
+    if (input.explode) {
+      this.computeRay(input.pointer.ndcX, input.pointer.ndcY);
+      const planeY = GRID3 * 0.42;
+      const t = (planeY - this.rayO[1]) / (this.rayD[1] || 1e-6);
+      const clampXZ = (v: number): number => Math.min(Math.max(v, GRID3 * 0.12), GRID3 * 0.88);
+      this.burstPos[0] = t > 0 ? clampXZ(this.rayO[0] + t * this.rayD[0]) : GRID3 * 0.5;
+      this.burstPos[1] = planeY;
+      this.burstPos[2] = t > 0 ? clampXZ(this.rayO[2] + t * this.rayD[2]) : GRID3 * 0.5;
+      this.burstRadius = input.explosionRadius * GRID3;
+      this.burstLeft = SIM3_DEFAULTS.explosionTime;
+      this.burstSeed = (this.burstSeed + 7.31) % 97;
+    }
+    if (this.burstLeft > 0) {
+      this.burstLeft = Math.max(this.burstLeft - dt, 0);
+    }
     // CHAMPS DE FORCE : posés à mi-hauteur, là où le panache passe.
     if (input.addField && this.fields.length < SIM3_DEFAULTS.maxFields) {
       this.computeRay(input.pointer.ndcX, input.pointer.ndcY);
@@ -1978,6 +2012,18 @@ export class FluidSim3D {
       d[o + 6] = f?.axis[2] ?? 0;
       d[o + 7] = (f?.strength ?? 0) * SCALE3;
     }
+    // Bouffée d'explosion : centre + rayon, puis les débits. Le débit tombe à
+    // zéro dès que la durée d'injection est écoulée — la boule vit ensuite de sa
+    // seule combustion, comme il se doit.
+    d[92] = this.burstPos[0];
+    d[93] = this.burstPos[1];
+    d[94] = this.burstPos[2];
+    d[95] = this.burstRadius;
+    const firing = this.burstLeft > 0 ? 1 : 0;
+    d[96] = firing * input.explosionFuel;
+    d[97] = firing * SIM3_DEFAULTS.explosionSpark;
+    d[98] = firing;
+    d[99] = this.burstSeed;
     // Oxygène : apport du souffle (blow_force.w) et récupération lente.
     d[27] = D.blowOxygen;
     d[59] = p.oxygenRecover;

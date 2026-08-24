@@ -180,6 +180,19 @@ export const SIM3_DEFAULTS = {
    *  (rotationnel, préservé par la projection), le vent local sur la matière. */
   fieldVortexStrength: 260,
   fieldWindStrength: 120,
+  /** EXPLOSION : une bouffée de carburant + son amorce, lâchées d'un coup. Aucune
+   *  physique nouvelle — la combustion existante fait la boule de feu, la suie et
+   *  le souffle (l'expansion au front de flamme EST une source de divergence, que
+   *  la projection convertit en vitesse sortante). Ce qui manquait, c'était de
+   *  savoir injecter une BOUFFÉE au lieu d'un débit continu.
+   *  L'injection dure `explosionTime` secondes à débit constant, jamais « une
+   *  frame » : à débit fixe, une frame donne un résultat qui dépend du framerate.
+   *  `explosionSpark` doit dépasser le seuil d'ignition (0,55) pour que la boule
+   *  s'allume entière au lieu de couver par le bord. */
+  explosionRadius: 0.085,
+  explosionFuel: 55,
+  explosionSpark: 22,
+  explosionTime: 0.05,
   /** Combustion (modèle Feldman/Fedkiw simplifié) : taux de réaction (1/s au-dessus
    *  de l'ignition), chaleur dégagée par unité de carburant, expansion volumique au
    *  front de flamme (source de divergence, voxels/s — remise à l'échelle SCALE3). */

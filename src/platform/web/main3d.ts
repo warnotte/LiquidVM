@@ -301,6 +301,9 @@ async function boot(): Promise<void> {
     fieldType: 0,
     fieldStrength: SIM3_DEFAULTS.fieldVortexStrength,
     fieldRadius: SIM3_DEFAULTS.fieldRadius,
+    explode: false,
+    explosionRadius: SIM3_DEFAULTS.explosionRadius,
+    explosionFuel: SIM3_DEFAULTS.explosionFuel,
     sphereActive: true,
     feedback: true,
     exposure: SIM3_DEFAULTS.exposure,
@@ -462,6 +465,9 @@ async function boot(): Promise<void> {
     } else if (e.code === 'Escape') {
       sim.deselect();
       say('rien de sélectionné');
+    } else if (k === 'g') {
+      input.explode = true;
+      say('💥 détonation');
     } else if (k === 'o') {
       input.sphereActive = !input.sphereActive;
       say(input.sphereActive ? 'boule : présente' : 'boule : retirée');
@@ -574,6 +580,17 @@ async function boot(): Promise<void> {
       ],
     },
     {
+      // EXPLOSION : une bouffée de carburant + son amorce, sous le pointeur. La
+      // boule de feu, la suie et le souffle sortent de la combustion existante —
+      // il n'y a rien ici qu'un calibre.
+      title: 'explosion',
+      sliders: [
+        { label: 'rayon', min: 0.03, max: 0.2, step: 0.005, get: () => input.explosionRadius, set: (x) => (input.explosionRadius = x), format: (x) => x.toFixed(3) },
+        { label: 'charge', min: 4, max: 80, step: 1, get: () => input.explosionFuel, set: (x) => (input.explosionFuel = x), format: (x) => x.toFixed(0) },
+      ],
+      buttons: [{ label: '💥 détoner (G)', action: () => (input.explode = true) }],
+    },
+    {
       // MODIFICATEURS : objets posés dans la scène, saisissables comme les
       // émetteurs et la boule. Les réglages ci-dessous s'appliquent au PROCHAIN
       // champ posé et à celui qu'on tient — jamais à distance.
@@ -638,6 +655,7 @@ async function boot(): Promise<void> {
       { label: '⚪ boule', isActive: () => input.sphereActive, action: () => (input.sphereActive = !input.sphereActive) },
     ],
     [
+      { label: '💥 boum', action: () => (input.explode = true) },
       { label: '🎬 démo', isActive: () => demoOn, action: toggleDemo },
       { label: '⚙ réglages', action: () => panel.toggle() },
       // Autres pages (URL relatives : valides en dev et sous /LiquidVM/ sur Pages).
@@ -677,6 +695,7 @@ async function boot(): Promise<void> {
     input.addEmitter = false;
     input.addField = false;
     input.removeField = false;
+    input.explode = false;
     input.removeEmitter = false;
     frames++;
 
@@ -697,8 +716,8 @@ async function boot(): Promise<void> {
         `<b>LiquidVM 3D</b> · ${GRID3}³ · encre : ${INK_NAMES[input.emitInk] ?? '?'} · ${solver} · ${Math.round(fps)} FPS` +
         `${renderScale < 1 ? ` · rendu ${Math.round(renderScale * 100)} %` : ''}` +
         `${input.paused ? ' · ⏸ pause' : ''}${demoOn ? ' · <b>DÉMO</b> (D : reprendre la main)' : ' · D : démo'}<br>` +
-        '1/2/3 : encre · glisser un objet : déplacer · ses poignées : un seul axe · son bouton violet : orienter · A : + émetteur · X : supprimer · Échap : désélectionner · O : boule · B : braises · F : repères<br>' +
-        'glisser : orbiter · clic droit : souffler · molette : zoom · espace : pause · R : reset · E : export .vdb';
+        '1/2/3 : encre · glisser un objet : déplacer · ses poignées : un seul axe · son bouton violet : orienter · A : + émetteur · X : supprimer · G : 💥 · O : boule · B : braises · F : repères<br>' +
+        'glisser : orbiter · clic droit : souffler · molette : zoom · Échap : désélectionner · espace : pause · R : reset · E : export .vdb';
     }
     if (selftest && frames === SELFTEST_FRAMES) {
       const report = document.createElement('div');

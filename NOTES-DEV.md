@@ -42,6 +42,8 @@ typecheck strict + bundle. Aucune dépendance runtime.
 - `node .selftest/cdp-check.mjs 9333` : attend le rapport, capture les 5 vues.
   `cdp-gizmos.mjs 9333` (page 3D) : repères + poignées, avec de VRAIS événements
   souris — vérifie qu'un geste diagonal sur une poignée ne bouge qu'un axe.
+  `cdp-boom.mjs 9333 [tag] [rayon] [charge]` : une détonation, capturée à neuf
+  instants — une explosion se juge sur sa CHRONOLOGIE, pas sur une image.
   `cdp-timeline.mjs 9333 [action] [index] [ms] [n] [tag] [urlFilter]` : captures
   périodiques — l'outil pour localiser une mort dans le temps.
 - Chrome de test : `--remote-debugging-port=9333 --user-data-dir=<tmp>
@@ -484,6 +486,40 @@ particules. Quand une limite n'apparaît qu'en WARNING console, écouter
   github.com/jangafx/simple-vdb-writer (et tinyvdbio pour le point de vue lecteur).
   Piège Blender headless : --factory-startup garde le cube par défaut (dans la
   collection enfant) — purger bpy.data.objects avant tout rendu de test.
+- **EXPLOSIONS (2026-08-25)** — le moteur en contenait DÉJÀ une : la combustion
+  allume le carburant au-dessus d'un seuil de température, ce qui brûle chauffe
+  et fume, et l'expansion au front de flamme est injectée comme **source de
+  divergence** (`project3d.wgsl`) — que la projection convertit en gradient de
+  pression, donc en vitesse sortante. C'est le mécanisme correct du souffle, et
+  la raison pour laquelle une force radiale ne marcherait pas (elle est
+  irrotationnelle, la projection l'annule — leçon du souffle radial 2D).
+  Ce qui manquait n'était pas de la physique mais **l'ÉVÉNEMENT** : le moteur ne
+  savait qu'émettre en continu. Une explosion = une bouffée de carburant + son
+  amorce en chaleur, et la combustion existante fait tout le reste.
+   1. **Injection à débit constant pendant une DURÉE fixe** (`explosionTime`),
+      jamais « pendant une frame » : à débit fixe, une frame donne un résultat
+      qui dépend du framerate. La même détonation rend la même boule à 30 comme
+      à 120 FPS.
+   2. **La charge doit être GRUMELEUSE.** Une gaussienne analytique est
+      parfaitement symétrique, et une boule de feu parfaitement symétrique
+      ressemble à une AMPOULE — les instabilités qui font l'aspect d'une
+      détonation n'ont rien à amplifier. Un bruit de valeur à deux octaves,
+      ancré sur le centre de la bouffée et décalé par une graine, module
+      fortement le carburant (il dessine les langues de flamme) et faiblement
+      l'amorce (le cœur doit partir à coup sûr, sinon la charge couve).
+      Le coût ne se paie que dans la petite boule, pendant les ~3 frames
+      d'injection.
+   3. **Piège de calibrage** : le terme d'expansion lit `min(carburant, 1)` — il
+      SATURE. Rendre la charge grumeleuse à moyenne constante réduit donc le
+      souffle, puisque les creux passent sous la saturation sans que les bosses
+      compensent. Il a fallu doubler la charge (26 → 55) pour retrouver la
+      taille de boule d'avant le bruit, ET la déchirure en plus.
+  Graine avancée d'un pas FIXE à chaque détonation : deux explosions ne sont pas
+  jumelles, mais la même suite de détonations rejoue à l'identique — ce qu'on
+  attend d'un simulateur dont on rebaie les sorties.
+  Chronologie mesurée (`.selftest/cdp-boom.mjs`, planche datée) : amorce à 80 ms,
+  boule déchirée à 260 ms, chou-fleur à 600 ms, champignon qui monte à 900 ms,
+  suie ensuite. 60 FPS à 256³.
 - **Prochaines briques** : séquences VDB animées (File System Access API) ;
   encres colorées (canaux yz réservés dans la densité) ; qualité du confinement
   de vorticité (flouter |ω|).
