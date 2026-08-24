@@ -88,8 +88,9 @@ export interface Frame3DInput {
 /** Sommets de la passe de gizmos — doit rester d'accord avec gizmo3d.wgsl, dans
  *  le MÊME ORDRE : 3 champs (3 cercles de 64 segments + un axe fléché), puis
  *  4 émetteurs (un anneau de 32 segments + une tige fléchée), puis les 12 arêtes
- *  de la boîte, puis les 3 poignées d'axe de l'objet sélectionné. */
-const GIZMO_VERTS = 3 * (64 * 2 * 3 + 6) + 4 * (32 * 2 + 6) + 24 + 3 * 6;
+ *  de la boîte, puis les 3 poignées d'axe de l'objet sélectionné, puis son
+ *  bouton d'orientation (un anneau de 24 segments face caméra + sa tige). */
+const GIZMO_VERTS = 3 * (64 * 2 * 3 + 6) + 4 * (32 * 2 + 6) + 24 + 3 * 6 + (24 * 2 + 2);
 
 const COMPUTE = GPUShaderStage.COMPUTE;
 const FRAGMENT = GPUShaderStage.FRAGMENT;
@@ -170,9 +171,9 @@ export class FluidSim3D {
   private needSpeciesInit = true;
 
   private readonly simData = new Float32Array(96);
-  // 84 floats utilisés (21 vec4) depuis les poignées de manipulation.
-  private readonly renderData = new Float32Array(84);
-  private lastRender = new Float32Array(84).fill(Number.NaN);
+  // 88 floats utilisés (22 vec4) depuis le bouton d'orientation.
+  private readonly renderData = new Float32Array(88);
+  private lastRender = new Float32Array(88).fill(Number.NaN);
 
   /** Émetteurs (positions en voxels) — le premier est l'émetteur historique. */
   private readonly emitters: { pos: [number, number, number]; ink: number }[] = [
@@ -222,11 +223,17 @@ export class FluidSim3D {
    *  deux curseurs SÉPARÉS, un par famille, et désignent la cible des réglages
    *  (encre, type/force/rayon de champ). */
   private selected = -2;
-  /** Traînée le long d'une poignée : axe du monde (0/1/2) ou −1 pour le
-   *  déplacement libre sur le plan face caméra. La DROITE de contrainte est figée
-   *  à la saisie (`dragOrigin`) : la recalculer depuis l'objet qui bouge ferait
-   *  boucler la mesure sur elle-même et l'objet dériverait. */
+  /** Traînée en cours : axe du monde (0/1/2) pour un déplacement contraint,
+   *  `AIM_DRAG` pour une réorientation, ou −1 pour le déplacement libre sur le
+   *  plan face caméra. La DROITE de contrainte est figée à la saisie
+   *  (`dragOrigin`) : la recalculer depuis l'objet qui bouge ferait boucler la
+   *  mesure sur elle-même et l'objet dériverait. */
   private dragAxis = -1;
+  /** Valeur de `dragAxis` qui signifie « on fait tourner l'axe, pas déplacer ».
+   *  Rayon (voxels) de la sphère sur laquelle le bouton d'orientation coulisse,
+   *  figé à la saisie comme la droite de contrainte. */
+  private static readonly AIM_DRAG = 3;
+  private dragAimRadius = 0;
   private readonly dragOrigin: [number, number, number] = [0, 0, 0];
   private dragGrip = 0;
   private readonly rayO: [number, number, number] = [0, 0, 0];
@@ -1334,11 +1341,14 @@ export class FluidSim3D {
     this.rayO[2] = (r[2]! + 0.5) * GRID3;
   }
 
-  /** Distance point (voxels) → rayon courant ; +∞ si le point est derrière. */
-  private rayDistance(p: readonly number[]): number {
-    const vx = p[0]! - this.rayO[0];
-    const vy = p[1]! - this.rayO[1];
-    const vz = p[2]! - this.rayO[2];
+  /** Distance point (voxels) → rayon courant ; +∞ si le point est derrière.
+   *  Prend TROIS NOMBRES et non un vecteur : les appelants calculent souvent un
+   *  point dérivé (le bout d'une poignée…) et un littéral de tableau ici serait
+   *  une allocation dans un chemin appelé au pointeur. */
+  private rayDistance(x: number, y: number, z: number): number {
+    const vx = x - this.rayO[0];
+    const vy = y - this.rayO[1];
+    const vz = z - this.rayO[2];
     const t = vx * this.rayD[0] + vy * this.rayD[1] + vz * this.rayD[2];
     if (t <= 0) {
       return Number.POSITIVE_INFINITY;
@@ -1356,14 +1366,15 @@ export class FluidSim3D {
     let best = -2;
     let bestDist = limit;
     if (this.sphereOn) {
-      const d = this.rayDistance(this.spherePos);
+      const d = this.rayDistance(this.spherePos[0], this.spherePos[1], this.spherePos[2]);
       if (d < bestDist + SIM3_DEFAULTS.sphereRadius * GRID3 * 0.5) {
         best = -1;
         bestDist = d;
       }
     }
     for (let i = 0; i < this.emitters.length; i++) {
-      const d = this.rayDistance(this.emitters[i]!.pos);
+      const e = this.emitters[i]!.pos;
+      const d = this.rayDistance(e[0], e[1], e[2]);
       if (d < bestDist) {
         best = i;
         bestDist = d;
@@ -1373,7 +1384,7 @@ export class FluidSim3D {
       const f = this.fields[i]!;
       // La zone de saisie suit le RAYON VISIBLE du champ (même bonus que la
       // boule) : sans ça on cliquait sur le gizmo sans rien attraper.
-      const d = this.rayDistance(f.pos);
+      const d = this.rayDistance(f.pos[0], f.pos[1], f.pos[2]);
       if (d < bestDist + f.radius * GRID3 * 0.5) {
         best = FluidSim3D.FIELD_TAG + i;
         bestDist = d;
@@ -1395,6 +1406,15 @@ export class FluidSim3D {
       return this.emitters[this.selected]?.pos;
     }
     return undefined;
+  }
+
+  /** L'axe de l'objet sélectionné, quand il en a un — seuls les champs de force
+   *  ont une ORIENTATION (axe de rotation d'un tourbillon, cap d'un vent local).
+   *  Un émetteur souffle vers le haut, la boule est une boule. */
+  private selectedAxis(): [number, number, number] | undefined {
+    return this.selected >= FluidSim3D.FIELD_TAG
+      ? this.fields[this.selected - FluidSim3D.FIELD_TAG]?.axis
+      : undefined;
   }
 
   /** Longueur des poignées EN VOXELS. Constante à l'écran : elle grandit avec la
@@ -1441,7 +1461,8 @@ export class FluidSim3D {
     return Math.hypot(vx - t * this.rayD[0], vy - t * this.rayD[1], vz - t * this.rayD[2]);
   }
 
-  /** L'axe de poignée sous le rayon (0/1/2), ou −1. Testé AVANT les objets : les
+  /** La poignée sous le rayon : 0/1/2 pour un axe de déplacement, `AIM_DRAG`
+   *  pour le bouton d'orientation, −1 pour rien. Testé AVANT les objets : les
    *  poignées se DESSINENT par-dessus tout, elles doivent aussi s'attraper par-
    *  dessus tout — sinon viser la poignée d'un objet revient à saisir l'objet. */
   private pickHandle(): number {
@@ -1459,7 +1480,66 @@ export class FluidSim3D {
         bestDist = d;
       }
     }
+    const axis = this.selectedAxis();
+    if (axis !== undefined) {
+      const reach = len * SIM3_DEFAULTS.handleAim;
+      const d = this.rayDistance(
+        p[0]! + axis[0] * reach,
+        p[1]! + axis[1] * reach,
+        p[2]! + axis[2] * reach,
+      );
+      if (d < bestDist) {
+        best = FluidSim3D.AIM_DRAG;
+      }
+    }
     return best;
+  }
+
+  /** Réoriente l'objet sélectionné : l'axe pointe vers le point de la SPHÈRE de
+   *  rayon `dragAimRadius` (centrée sur `centre`) que vise le pointeur. Quand le
+   *  rayon manque la sphère on prend le point le plus proche de sa surface —
+   *  c'est ce qui rend le geste continu au-delà de la silhouette, au lieu de le
+   *  faire décrocher net au bord. */
+  private aimSelected(centre: readonly number[]): void {
+    const axis = this.selectedAxis();
+    if (axis === undefined) {
+      return;
+    }
+    const R = this.dragAimRadius;
+    const mx = centre[0]! - this.rayO[0];
+    const my = centre[1]! - this.rayO[1];
+    const mz = centre[2]! - this.rayO[2];
+    const t = mx * this.rayD[0] + my * this.rayD[1] + mz * this.rayD[2];
+    if (t <= 0 || R <= 0) {
+      return; // objet derrière la caméra : le geste n'a plus de sens à l'écran
+    }
+    // Point du rayon le plus proche du centre, puis écart au centre.
+    let hx = this.rayO[0] + t * this.rayD[0] - centre[0]!;
+    let hy = this.rayO[1] + t * this.rayD[1] - centre[1]!;
+    let hz = this.rayO[2] + t * this.rayD[2] - centre[2]!;
+    const h = Math.hypot(hx, hy, hz);
+    if (h < R) {
+      // Le rayon traverse la sphère : on prend l'intersection AVANT (la face
+      // qu'on voit), sinon l'axe basculerait vers l'arrière au moindre tremblé.
+      const back = Math.sqrt(R * R - h * h);
+      hx -= back * this.rayD[0];
+      hy -= back * this.rayD[1];
+      hz -= back * this.rayD[2];
+    } else if (h > 1e-4) {
+      const k = R / h;
+      hx *= k;
+      hy *= k;
+      hz *= k;
+    } else {
+      return; // pointeur pile sur le centre : direction indéterminée
+    }
+    const len = Math.hypot(hx, hy, hz);
+    if (len < 1e-4) {
+      return;
+    }
+    axis[0] = hx / len;
+    axis[1] = hy / len;
+    axis[2] = hz / len;
   }
 
   /** Nombre de champs de force posés (affiché au HUD, borné par maxFields). */
@@ -1580,10 +1660,19 @@ export class FluidSim3D {
     if (this.heldField >= 0) {
       const f = this.fields[this.heldField];
       if (f) {
+        // L'axe ne revient à sa valeur canonique QUE si le type change. Le
+        // remettre à chaque frame effaçait, à la frame suivante, toute
+        // orientation donnée à la main par le bouton d'orientation.
+        const wasVortex = f.type < 0.5;
+        const isVortex = input.fieldType < 0.5;
+        if (wasVortex !== isVortex) {
+          f.axis[0] = isVortex ? 0 : 1;
+          f.axis[1] = isVortex ? 1 : 0;
+          f.axis[2] = 0;
+        }
         f.type = input.fieldType;
         f.strength = input.fieldStrength;
         f.radius = input.fieldRadius;
-        f.axis = input.fieldType < 0.5 ? [0, 1, 0] : [1, 0, 0];
       }
     }
 
@@ -1592,7 +1681,14 @@ export class FluidSim3D {
       if (this.grabbed === -2) {
         const axis = this.pickHandle();
         const held = this.selectedPos();
-        if (axis >= 0 && held !== undefined) {
+        if (axis === FluidSim3D.AIM_DRAG && held !== undefined) {
+          // Réorientation : le bouton coulisse sur une SPHÈRE centrée sur
+          // l'objet, dont on fige le rayon — sinon il grandirait à mesure qu'on
+          // s'éloigne de la caméra, en plein geste.
+          this.grabbed = this.selected;
+          this.dragAxis = FluidSim3D.AIM_DRAG;
+          this.dragAimRadius = this.handleLength(held) * SIM3_DEFAULTS.handleAim;
+        } else if (axis >= 0 && held !== undefined) {
           // Traînée CONTRAINTE : on fige la droite de contrainte et le point de
           // prise, pour que l'objet ne saute pas sous le curseur au premier pas.
           this.grabbed = this.selected;
@@ -1629,7 +1725,9 @@ export class FluidSim3D {
         const r = this.renderData;
         const lo = GRID3 * 0.05;
         const hi = GRID3 * 0.95;
-        if (this.dragAxis >= 0) {
+        if (this.dragAxis === FluidSim3D.AIM_DRAG) {
+          this.aimSelected(target);
+        } else if (this.dragAxis >= 0) {
           // Poignée : un seul degré de liberté, mesuré sur la droite figée.
           const a = this.dragAxis;
           const s = this.axisParam(this.dragOrigin, a);
@@ -1989,7 +2087,16 @@ export class FluidSim3D {
     d[80] = (sel?.[0] ?? 0) / GRID3 - 0.5;
     d[81] = (sel?.[1] ?? 0) / GRID3 - 0.5;
     d[82] = (sel?.[2] ?? 0) / GRID3 - 0.5;
-    d[83] = sel === undefined ? 0 : this.handleLength(sel) / GRID3;
+    const handle = sel === undefined ? 0 : this.handleLength(sel) / GRID3;
+    d[83] = handle;
+    // BOUTON D'ORIENTATION : axe unitaire + sa distance monde (0 = l'objet
+    // sélectionné n'a pas d'orientation). Un seul nombre sert à la fois de
+    // drapeau et de position.
+    const axis = sel === undefined ? undefined : this.selectedAxis();
+    d[84] = axis?.[0] ?? 0;
+    d[85] = axis?.[1] ?? 1;
+    d[86] = axis?.[2] ?? 0;
+    d[87] = axis === undefined ? 0 : handle * SIM3_DEFAULTS.handleAim;
     let dirty = false;
     for (let i = 0; i < d.length; i++) {
       if (d[i] !== this.lastRender[i]) {

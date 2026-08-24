@@ -160,6 +160,12 @@ export const SIM3_DEFAULTS = {
    *  où on voulait le déplacement libre. Transmis au shader (opts.w) plutôt que
    *  recopié : une seule source pour le dessin et pour la saisie. */
   handleInner: 0.3,
+  /** BOUTON D'ORIENTATION des champs de force, en fraction de la longueur des
+   *  poignées : posé JUSTE AU-DELÀ des flèches de déplacement. Sur l'axe mais
+   *  hors de leur portée — un tourbillon a l'axe vertical par défaut, son bouton
+   *  tomberait donc pile sur la pointe de la poignée Y et l'une mangerait
+   *  l'autre. Il est constant à l'écran pour la même raison qu'elles. */
+  handleAim: 1.5,
   /** Sphère-obstacle : rayon (fraction du monde), position de départ. */
   sphereRadius: 0.085,
   sphereStart: [0.5, 0.45, 0.5],

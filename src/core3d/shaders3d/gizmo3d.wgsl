@@ -65,6 +65,10 @@ struct RenderParams {
   // (0 = rien de sélectionné). La longueur vient du CPU pour que le dessin et
   // la saisie partagent exactement le même nombre.
   sel: vec4f,
+  // Bouton d'orientation : xyz axe unitaire de l'objet sélectionné, w distance
+  // monde du bouton (0 = l'objet n'a pas d'orientation). Un seul nombre sert de
+  // drapeau ET de position.
+  aim: vec4f,
 }
 
 @group(0) @binding(0) var<uniform> R: RenderParams;
@@ -84,8 +88,14 @@ const EMITS_TOTAL: u32 = EMIT_VERTS * 4u;
 const BOX_VERTS: u32 = 24u;
 const HANDLE_VERTS: u32 = ARROW_VERTS * 3u;
 
-/** Sommets à dessiner : 3 champs + 4 émetteurs + la boîte + les 3 poignées. */
-const TOTAL_VERTS: u32 = FIELDS_TOTAL + EMITS_TOTAL + BOX_VERTS + HANDLE_VERTS;
+const ASEG: u32 = 24u;
+const AIM_RING: u32 = ASEG * 2u;
+const AIM_VERTS: u32 = AIM_RING + 2u;
+
+/** Sommets à dessiner : 3 champs + 4 émetteurs + la boîte + les 3 poignées +
+ *  le bouton d'orientation. */
+const TOTAL_VERTS: u32 =
+  FIELDS_TOTAL + EMITS_TOTAL + BOX_VERTS + HANDLE_VERTS + AIM_VERTS;
 
 // Palette des trois matières (canaux xyz) — dupliquée depuis config3d.ts, comme
 // dans raymarch.wgsl : fumée grise, encre magenta, vapeur de carburant ambrée.
@@ -297,6 +307,38 @@ fn vs_gizmo(@builtin(vertex_index) vi: u32) -> VSOut {
     }
     out.pos = project(box_point(vi - FIELDS_TOTAL - EMITS_TOTAL));
     out.color = vec4f(0.62, 0.68, 0.78, 0.22);
+    return out;
+  }
+
+  // ---- BOUTON D'ORIENTATION ----
+  // Un anneau FACE CAMÉRA au bout de l'axe, relié par une tige : le point qu'on
+  // tire pour viser. Il est posé juste au-delà des flèches de déplacement (sur
+  // le même axe, mais hors de leur portée) — le tourbillon a l'axe vertical par
+  // défaut, son bouton tomberait sinon pile sur la pointe de la poignée Y.
+  if (vi >= FIELDS_TOTAL + EMITS_TOTAL + BOX_VERTS + HANDLE_VERTS) {
+    if (R.aim.w <= 0.0 || R.sel.w <= 0.0) {
+      return hidden();
+    }
+    let k = vi - (FIELDS_TOTAL + EMITS_TOTAL + BOX_VERTS + HANDLE_VERTS);
+    let knob = R.sel.xyz + normalize(R.aim.xyz) * R.aim.w;
+    var p: vec3f;
+    if (k < AIM_RING) {
+      let ang = (f32(k / 2u) + f32(k % 2u)) * 6.2831853 / f32(ASEG);
+      let rad = R.sel.w * 0.13;
+      p = knob + R.cam_right.xyz * (cos(ang) * rad) + R.cam_up.xyz * (sin(ang) * rad);
+    } else {
+      // Tige : du bout des flèches de déplacement jusqu'au bouton — elle dit
+      // « ce bouton appartient à cet axe » sans ajouter une deuxième ligne.
+      p = R.sel.xyz + normalize(R.aim.xyz) * select(R.sel.w, R.aim.w, k % 2u == 1u);
+    }
+    var col = vec3f(0.74, 0.62, 1.0);
+    var alpha = 0.8;
+    if (R.opts.z >= 2.5) {
+      col = mix(col, vec3f(1.0), 0.55);
+      alpha = 1.0;
+    }
+    out.pos = project(p);
+    out.color = vec4f(col, alpha);
     return out;
   }
 

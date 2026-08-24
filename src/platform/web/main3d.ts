@@ -676,7 +676,7 @@ async function boot(): Promise<void> {
         `<b>LiquidVM 3D</b> · ${GRID3}³ · encre : ${INK_NAMES[input.emitInk] ?? '?'} · ${solver} · ${Math.round(fps)} FPS` +
         `${renderScale < 1 ? ` · rendu ${Math.round(renderScale * 100)} %` : ''}` +
         `${input.paused ? ' · ⏸ pause' : ''}${demoOn ? ' · <b>DÉMO</b> (D : reprendre la main)' : ' · D : démo'}<br>` +
-        '1/2/3 : encre · glisser un objet : déplacer · glisser sa poignée : sur un seul axe · A : + émetteur · X : − émetteur · O : boule · B : braises · F : repères<br>' +
+        '1/2/3 : encre · glisser un objet : déplacer · ses poignées : un seul axe · son bouton violet : orienter · A : + émetteur · X : − émetteur · O : boule · B : braises · F : repères<br>' +
         'glisser : orbiter · clic droit : souffler · molette : zoom · espace : pause · R : reset · E : export .vdb';
     }
     if (selftest && frames === SELFTEST_FRAMES) {

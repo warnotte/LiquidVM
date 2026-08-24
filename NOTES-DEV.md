@@ -388,6 +388,8 @@ particules. Quand une limite n'apparaît qu'en WARNING console, écouter
      visibles qu'à leurs effets. Slot 77.
    - POIGNÉES (manipulateurs) : trois flèches d'axe portées par l'objet
      SÉLECTIONNÉ. Slots 78-83.
+   - BOUTON D'ORIENTATION : anneau face caméra au bout de l'axe d'un champ de
+     force (les émetteurs et la boule n'ont pas d'orientation). Slots 84-87.
   Têtes de flèche BILLBOARDÉES (perpendiculaire prise dans le plan de l'écran) :
   une flèche vue dans l'axe de son propre plan se réduisait à un trait,
   précisément quand on l'orientait vers la caméra.
@@ -416,6 +418,28 @@ particules. Quand une limite n'apparaît qu'en WARNING console, écouter
   Vérifié par vrais événements souris CDP (`.selftest/cdp-gizmos.mjs`, scène en
   pause) : geste diagonal sur la poignée Y → seul Y bouge (Δ = 0 · 0,2306 · 0) ;
   même geste sur le corps → les trois axes bougent.
+- **Orienter un champ (bouton d'orientation, 2026-08-25)** — la flèche d'un champ
+  AFFICHAIT son axe sans qu'on puisse le changer : il était imposé par le type
+  (vertical pour un tourbillon, horizontal pour un vent). Un bouton tiré à la
+  souris donne les deux degrés de liberté d'une direction, d'un seul geste.
+   1. **Le bouton coulisse sur une SPHÈRE** centrée sur l'objet, de rayon figé à
+      la saisie. Quand le rayon du pointeur manque la sphère, on prend le point
+      le plus proche de sa surface : le geste reste continu au-delà de la
+      silhouette au lieu de décrocher net au bord. Quand il la traverse, on
+      prend l'intersection AVANT — sinon l'axe bascule vers l'arrière au moindre
+      tremblé. L'axe reste unitaire par construction.
+   2. **Il est posé au-delà des flèches de déplacement** (`handleAim` = 1,5 fois
+      leur longueur, donc constant à l'écran lui aussi). Le placer au bout de la
+      flèche du champ le mettait PILE sur la pointe de la poignée Y — le
+      tourbillon a l'axe vertical par défaut — et l'une mangeait l'autre.
+   3. **Piège trouvé en chemin** : les réglages du panneau s'appliquent au champ
+      TENU, et remettaient `axis` à sa valeur canonique à chaque frame de
+      saisie. L'orientation était donc effacée dès qu'on retouchait le champ.
+      L'axe ne se réinitialise plus que si le TYPE change.
+  Les deux types acceptent un axe quelconque sans rien changer au solveur
+  (`cross(axe, rel)` pour le tourbillon, `axe · force` pour le vent local).
+  Vérifié CDP : axe (1,0,0) → (0,822 · −0,273 · −0,500), norme 1,00000, position
+  inchangée, et l'axe survit à une nouvelle saisie du champ.
 - **Vent horizontal (2026-08-24)** : force DIFFÉRENTIELLE proportionnelle à la
   matière, ajoutée dans `forces3d.wgsl` à côté de la poussée, avec un cap qui
   OSCILLE (uniform `wind` = force / amplitude / période / cap, slots 60-63).
