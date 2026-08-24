@@ -85,6 +85,11 @@ export interface Sim3Tuning {
   windPeriod: number;
   /** Cap moyen du vent (degrés). */
   windHeading: number;
+  /** SUIE : rendement, évanouissement, et densité au RENDU (0 = image d'avant). */
+  sootYield: number;
+  sootFade: number;
+  sootDensity: number;
+  sootCooling: number;
 }
 
 export function defaultTuning3(): Sim3Tuning {
@@ -100,6 +105,10 @@ export function defaultTuning3(): Sim3Tuning {
     burnRate: SIM3_DEFAULTS.burnRate,
     heatYield: SIM3_DEFAULTS.heatYield,
     expansion: SIM3_DEFAULTS.expansion,
+    sootYield: SIM3_DEFAULTS.sootYield,
+    sootFade: SIM3_DEFAULTS.sootFade,
+    sootDensity: SIM3_DEFAULTS.sootDensity,
+    sootCooling: SIM3_DEFAULTS.sootCooling,
     oxygenRecover: SIM3_DEFAULTS.oxygenRecover,
     blowForce: SIM3_DEFAULTS.blowForce,
     windStrength: SIM3_DEFAULTS.windStrength,
@@ -193,6 +202,22 @@ export const SIM3_DEFAULTS = {
   explosionFuel: 55,
   explosionSpark: 22,
   explosionTime: 0.05,
+  /** SUIE — une flamme qui manque d'air craque son carburant et noircit. Trois
+   *  nombres : le rendement (par unité de carburant chaud privé d'air), son
+   *  évanouissement, et sa densité AU RENDU (0 = image strictement identique à
+   *  ce qu'elle était avant la suie). Une bougie brûle dans l'air libre et reste
+   *  claire ; une charge dévore l'oxygène de son propre volume et noircit — le
+   *  même terme donne les deux, sans réglage séparé. */
+  sootYield: 12,
+  sootFade: 0.06,
+  sootDensity: 1.0,
+  /** Refroidissement PAR la suie (1/s par unité). Ce n'est pas un artifice : les
+   *  particules de suie rayonnent bien mieux que les gaz, c'est ce qui rend une
+   *  flamme riche lumineuse ET la refroidit vite. Sans ce terme, la boucle reste
+   *  ouverte — le nuage devient opaque mais garde de la chaleur, donc il émet en
+   *  orange sous une peau désormais impénétrable, et on obtient une braise
+   *  géante au lieu d'un nuage de suie. */
+  sootCooling: 2.6,
   /** Combustion (modèle Feldman/Fedkiw simplifié) : taux de réaction (1/s au-dessus
    *  de l'ignition), chaleur dégagée par unité de carburant, expansion volumique au
    *  front de flamme (source de divergence, voxels/s — remise à l'échelle SCALE3). */

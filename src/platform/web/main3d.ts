@@ -587,6 +587,13 @@ async function boot(): Promise<void> {
       sliders: [
         { label: 'rayon', min: 0.03, max: 0.2, step: 0.005, get: () => input.explosionRadius, set: (x) => (input.explosionRadius = x), format: (x) => x.toFixed(3) },
         { label: 'charge', min: 4, max: 80, step: 1, get: () => input.explosionFuel, set: (x) => (input.explosionFuel = x), format: (x) => x.toFixed(0) },
+        // La suie ne dépend pas de l'explosion : elle naît partout où le
+        // carburant chaud manque d'air. Mais c'est là qu'on la règle, parce que
+        // c'est une explosion qui en fabrique.
+        { label: 'suie : rendement', min: 0, max: 40, step: 0.5, get: () => p.sootYield, set: (x) => (p.sootYield = x) },
+        { label: 'suie : opacité', min: 0, max: 3, step: 0.05, get: () => p.sootDensity, set: (x) => (p.sootDensity = x) },
+        { label: 'suie : évanouis.', min: 0, max: 0.6, step: 0.01, get: () => p.sootFade, set: (x) => (p.sootFade = x) },
+        { label: 'suie : rayonnement', min: 0, max: 8, step: 0.1, get: () => p.sootCooling, set: (x) => (p.sootCooling = x) },
       ],
       buttons: [{ label: '💥 détoner (G)', action: () => (input.explode = true) }],
     },

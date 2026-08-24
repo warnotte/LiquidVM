@@ -1,5 +1,13 @@
-// Transport des ESPÈCES (texture rgba16float : x = oxygène, yzw = réservés aux
-// espèces futures — le cadre extensible du modèle de réaction).
+// Transport des ESPÈCES (texture rgba16float : x = oxygène, y = SUIE, zw =
+// réservés — le cadre extensible du modèle de réaction).
+//
+// SUIE : une flamme qui manque d'air ne brûle pas proprement, elle CRAQUE son
+// carburant et noircit. C'est la signature d'une explosion — la charge dévore
+// l'oxygène de son propre volume en quelques dizaines de millisecondes, et ce
+// qu'elle recrache est noir. Une bougie, elle, brûle dans l'air libre et reste
+// claire : le même terme donne les deux, sans réglage séparé.
+// La suie vit dans le canal y parce qu'il était libre ET déjà advecté par cette
+// passe — elle voyage avec le gaz sans coûter un transport de plus.
 // Advection semi-lagrangienne RK2, puis chimie de l'oxygène : la combustion le
 // consomme (stœchiométrie, mêmes critères que la réaction des densités qui lit
 // les densités POST-advection de cette frame), il revient lentement (boîte qui
@@ -21,6 +29,19 @@ struct Params {
   emit_inks: vec4f,
   sphere_vel: vec4f,
   ink_weights: vec4f, // w: taux de récupération d'oxygène (1/s)
+  wind: vec4f,
+  field_meta: vec4f,
+  field0_a: vec4f,
+  field0_b: vec4f,
+  field1_a: vec4f,
+  field1_b: vec4f,
+  field2_a: vec4f,
+  field2_b: vec4f,
+  burst_a: vec4f,
+  burst_b: vec4f,
+  // x: rendement de suie (1/s par unité de carburant chaud privé d'air),
+  // y: son évanouissement (1/s). Le reste est libre.
+  soot: vec4f,
 }
 
 @group(0) @binding(0) var<uniform> P: Params;
@@ -74,6 +95,19 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
   let burn = min(den.z * P.emit_meta.y * dt * ignite, den.z) * oxy_factor;
   o2 -= O2_PER_FUEL * burn;
 
+  // SUIE : le carburant CHAUD que l'air ne suffit plus à brûler craque en noir.
+  // La mesure de MANQUE D'AIR se prend sur le rapport de ce que le carburant
+  // présent RÉCLAME à ce qui est disponible — surtout pas sur `oxy_factor`, qui
+  // sature à 1 dès 0,25 d'oxygène et vaut donc 1 presque partout (première
+  // version : suie invisible, la bascule au rendu ne changeait rien).
+  // Une bougie brûle dans l'air libre, du carburant très dilué : elle reste
+  // propre. Une charge concentre des unités de carburant dans un volume qui n'a
+  // qu'une unité d'oxygène : elle noircit. Le même terme donne les deux.
+  let demande = den.z * O2_PER_FUEL;
+  let manque = clamp(1.0 - o2 / max(demande, 1e-3), 0.0, 1.0);
+  var soot = species.y + P.soot.x * dt * den.z * ignite * manque;
+  soot = soot / (1.0 + P.soot.y * dt);
+
   // Récupération lente (la boîte fuit) + apport du souffle le long de son rayon.
   o2 += dt * P.ink_weights.w * (1.0 - o2);
   if (P.blow_dir.w > 0.5) {
@@ -86,5 +120,5 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     }
   }
 
-  textureStore(oxy_dst, gid, vec4f(clamp(o2, 0.0, 1.0), species.yzw));
+  textureStore(oxy_dst, gid, vec4f(clamp(o2, 0.0, 1.0), min(soot, 4.0), species.zw));
 }

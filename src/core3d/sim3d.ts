@@ -174,11 +174,11 @@ export class FluidSim3D {
   /** Première frame : initialiser la texture d'espèces (O₂ = 1 partout). */
   private needSpeciesInit = true;
 
-  // 100 floats utilisés (25 vec4) depuis la bouffée d'explosion.
-  private readonly simData = new Float32Array(100);
-  // 88 floats utilisés (22 vec4) depuis le bouton d'orientation.
-  private readonly renderData = new Float32Array(88);
-  private lastRender = new Float32Array(88).fill(Number.NaN);
+  // 104 floats utilisés (26 vec4) depuis la suie.
+  private readonly simData = new Float32Array(104);
+  // 92 floats utilisés (23 vec4) depuis la suie.
+  private readonly renderData = new Float32Array(92);
+  private lastRender = new Float32Array(92).fill(Number.NaN);
 
   /** Émetteurs (positions en voxels) — le premier est l'émetteur historique. */
   private readonly emitters: { pos: [number, number, number]; ink: number }[] = [
@@ -308,7 +308,7 @@ export class FluidSim3D {
       clearsOne: readonly GPUBindGroup[]; // espèces → O₂ = 1
       jacobi: Pair<GPUBindGroup>; // [press]
       gradient: Pair<Pair<GPUBindGroup>>; // [press][vel]
-      render: Pair<GPUBindGroup>; // [den] (+glow[1])
+      render: Pair<Pair<GPUBindGroup>>; // [den][espèces] (+glow[1])
       glowInject: Pair<GPUBindGroup>; // [den] → glow[0]
       glowBlurAB: GPUBindGroup; // glow[0] → glow[1]
       glowBlurBA: GPUBindGroup; // glow[1] → glow[0]
@@ -505,6 +505,7 @@ export class FluidSim3D {
             { binding: 1, visibility: FRAGMENT, sampler: { type: 'filtering' } },
             sampled3d(2, FRAGMENT),
             sampled3d(3, FRAGMENT),
+            sampled3d(4, FRAGMENT),
           ],
         }),
         // Chaîne bloom (compute 2D) : source échantillonnée + sortie storage.
@@ -857,17 +858,22 @@ export class FluidSim3D {
             }),
           ),
         ),
+        // Deux ping-pong à croiser depuis l'ajout de la suie : densités ET
+        // espèces. Les groupes sont pré-créés à l'init, comme tous les autres.
         render: pair((d) =>
-          device.createBindGroup({
-            label: `render-3d-${d}`,
-            layout: L.render,
-            entries: [
-              { binding: 0, resource: { buffer: renderUniforms } },
-              { binding: 1, resource: sampler },
-              { binding: 2, resource: density[d] },
-              { binding: 3, resource: glow[1] },
-            ],
-          }),
+          pair((o) =>
+            device.createBindGroup({
+              label: `render-3d-d${d}-o${o}`,
+              layout: L.render,
+              entries: [
+                { binding: 0, resource: { buffer: renderUniforms } },
+                { binding: 1, resource: sampler },
+                { binding: 2, resource: density[d] },
+                { binding: 3, resource: glow[1] },
+                { binding: 4, resource: species[o] },
+              ],
+            }),
+          ),
         ),
         glowInject: pair((d) =>
           device.createBindGroup({
@@ -1294,7 +1300,7 @@ export class FluidSim3D {
       ],
     });
     rp.setPipeline(this.pipelines.render);
-    rp.setBindGroup(0, this.binds.render[this.denIdx]);
+    rp.setBindGroup(0, this.binds.render[this.denIdx][this.oxyIdx]);
     rp.draw(3);
     // Braises : billboards additifs par-dessus le volume (occlusion par
     // particule au vertex) — elles hériteront du bloom.
@@ -2024,6 +2030,10 @@ export class FluidSim3D {
     d[97] = firing * SIM3_DEFAULTS.explosionSpark;
     d[98] = firing;
     d[99] = this.burstSeed;
+    // Suie : rendement et évanouissement (le rendu lit sa densité côté render).
+    d[100] = p.sootYield;
+    d[101] = p.sootFade;
+    d[102] = p.sootCooling;
     // Oxygène : apport du souffle (blow_force.w) et récupération lente.
     d[27] = D.blowOxygen;
     d[59] = p.oxygenRecover;
@@ -2150,6 +2160,8 @@ export class FluidSim3D {
     d[85] = axis?.[1] ?? 1;
     d[86] = axis?.[2] ?? 0;
     d[87] = axis === undefined ? 0 : handle * SIM3_DEFAULTS.handleAim;
+    // Densité de suie AU RENDU (slot z du vec4 « soot » côté raymarch).
+    d[90] = input.params.sootDensity;
     let dirty = false;
     for (let i = 0; i < d.length; i++) {
       if (d[i] !== this.lastRender[i]) {

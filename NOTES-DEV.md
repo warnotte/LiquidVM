@@ -44,6 +44,10 @@ typecheck strict + bundle. Aucune dépendance runtime.
   souris — vérifie qu'un geste diagonal sur une poignée ne bouge qu'un axe.
   `cdp-boom.mjs 9333 [tag] [rayon] [charge]` : une détonation, capturée à neuf
   instants — une explosion se juge sur sa CHRONOLOGIE, pas sur une image.
+  `cdp-suie-ab.mjs 9333` : détone, FIGE la scène, puis bascule un terme de
+  couleur à la fois sur exactement le même état. À l'œil, émission, diffusion et
+  lueur se ressemblent — c'est le seul moyen honnête de savoir ce qui teinte un
+  nuage, et c'est ce qui a démasqué la suie qui ne se produisait pas.
   `cdp-timeline.mjs 9333 [action] [index] [ms] [n] [tag] [urlFilter]` : captures
   périodiques — l'outil pour localiser une mort dans le temps.
 - Chrome de test : `--remote-debugging-port=9333 --user-data-dir=<tmp>
@@ -520,6 +524,38 @@ particules. Quand une limite n'apparaît qu'en WARNING console, écouter
   Chronologie mesurée (`.selftest/cdp-boom.mjs`, planche datée) : amorce à 80 ms,
   boule déchirée à 260 ms, chou-fleur à 600 ms, champignon qui monte à 900 ms,
   suie ensuite. 60 FPS à 256³.
+- **SUIE (2026-08-25)** — le nuage d'après-explosion restait rose pâle là où une
+  vraie détonation vire au noir. La suie est le chaînon manquant, et elle se
+  déduit du modèle existant sans réglage séparé : **une flamme qui manque d'air
+  craque son carburant et noircit**. Une bougie brûle du carburant très dilué
+  dans l'air libre et reste propre ; une charge concentre plusieurs unités de
+  carburant dans un volume qui n'a qu'une unité d'oxygène et noircit. Le même
+  terme donne les deux.
+   - **Logement** : canal y des ESPÈCES (`species3d.wgsl`), qui était libre ET
+     déjà advecté par cette passe — la suie voyage avec le gaz sans coûter un
+     transport de plus. Le rendu lie la texture d'espèces en binding 4 : un
+     sondage de plus par pas de marche ET par pas d'ombre.
+   - **PIÈGE, coûté une itération complète** : la première loi mesurait le
+     manque d'air par `1 − oxy_factor`. Or `oxy_factor = clamp(o2/0,25, 0, 1)`
+     **SATURE à 1** dès qu'il reste un quart d'oxygène — le facteur valait donc
+     zéro presque partout et la suie était invisible. Diagnostic par A/B sur un
+     état FIGÉ (`.selftest/cdp-suie-ab.mjs`) : basculer la densité de suie de 0
+     à 3 ne changeait rien à l'image, ce qu'aucune inspection de code n'aurait
+     dit aussi vite. La bonne mesure est le rapport de ce que le carburant
+     présent RÉCLAME (`carburant × O2_PER_FUEL`) à ce qui est disponible.
+   - **La boucle doit se refermer par le RAYONNEMENT.** Avec la seule extinction,
+     le nuage devenait opaque mais gardait sa chaleur : il émettait en orange
+     sous une peau désormais impénétrable — une braise géante, pas de la suie.
+     Or les particules de suie rayonnent bien mieux que les gaz (c'est ce qui
+     rend une flamme riche lumineuse ET la refroidit vite) : `sootCooling`
+     accélère le refroidissement en proportion de la suie présente. C'est CE
+     terme qui fait virer le nuage au noir.
+   - Extinction 46 par unité (contre 22 pour la fumée) et albédo quasi noir
+     (0,055) : la suie absorbe au lieu de diffuser. L'albédo du voxel est un
+     mélange pondéré par l'extinction que chacun apporte — là où il n'y a pas de
+     suie, l'image est strictement celle d'avant.
+   - `sootDensity = 0` rend exactement l'image d'avant la fonction. 60 FPS tenus
+     à 256³ malgré le sondage supplémentaire.
 - **Prochaines briques** : séquences VDB animées (File System Access API) ;
   encres colorées (canaux yz réservés dans la densité) ; qualité du confinement
   de vorticité (flouter |ω|).

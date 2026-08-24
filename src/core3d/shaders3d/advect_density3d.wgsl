@@ -35,6 +35,8 @@ struct Params {
   // z: injection en cours (0/1) — les deux débits sont déjà à zéro sinon,
   // w: graine des grumeaux (décalage du bruit, change à chaque détonation).
   burst_b: vec4f,
+  // x: rendement de suie, y: évanouissement, z: refroidissement PAR la suie.
+  soot: vec4f,
 }
 
 // Bruit de valeur 3D — uniquement pour DÉCHIRER la charge d'explosion. Une
@@ -160,7 +162,8 @@ fn correct(@builtin(global_invocation_id) gid: vec3u) {
   // le carburant (canal z) se consume — il dégage de la chaleur et de la suie grise
   // (canal x). L'expansion volumique associée est injectée par la passe divergence.
   // Le triangle du feu est complet : sans OXYGÈNE, la flamme faiblit puis s'étouffe.
-  let o2 = textureSampleLevel(oxy_src, lin, center * inv_n(), 0.0).x;
+  let spec = textureSampleLevel(oxy_src, lin, center * inv_n(), 0.0);
+  let o2 = spec.x;
   let oxy_factor = clamp(o2 / 0.25, 0.0, 1.0);
   let ignite = smoothstep(0.28, 0.55, val.w);
   let burn = min(val.z * P.emit_meta.y * dt * ignite, val.z) * oxy_factor;
@@ -171,7 +174,11 @@ fn correct(@builtin(global_invocation_id) gid: vec3u) {
   // Dissipations : la fumée s'estompe lentement, la chaleur se refroidit vite —
   // avec un terme RADIATIF en T⁴ (Fedkiw) : les gaz les plus chauds s'éteignent
   // brutalement (pointes de flammes nettes), la fumée tiède flotte longtemps.
-  var heat = val.w / (1.0 + P.diss.z * dt);
+  // La SUIE rayonne : un gaz qui en est chargé perd sa chaleur bien plus vite
+  // qu'un gaz clair. C'est ce terme qui fait virer au NOIR le nuage d'une
+  // explosion — sans lui, il devient opaque tout en restant chaud, donc il émet
+  // en orange sous une peau impénétrable : une braise géante, pas de la suie.
+  var heat = val.w / (1.0 + (P.diss.z + P.soot.z * spec.y) * dt);
   heat = max(heat - dt * 0.30 * heat * heat * heat * heat, 0.0);
   val = vec4f(val.xyz / (1.0 + P.diss.y * dt), heat);
 

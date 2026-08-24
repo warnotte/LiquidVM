@@ -17,6 +17,17 @@ struct RenderParams {
   blow_a: vec4f,    // retour visuel du souffle : xyz origine (monde), w rayon
   blow_b: vec4f,    // xyz direction, w actif (0/1)
   style: vec4f,     // x: lueur du feu, y: bloom (présentation), zw: libres
+  // Les gizmos occupent les vec4 suivants (voir gizmo3d.wgsl) : ils ne servent
+  // pas ici, mais la disposition de l'uniforme est COMMUNE et il faut donc les
+  // traverser pour atteindre ce qui suit.
+  giz0_a: vec4f, giz0_b: vec4f,
+  giz1_a: vec4f, giz1_b: vec4f,
+  giz2_a: vec4f, giz2_b: vec4f,
+  emit0: vec4f, emit1: vec4f, emit2: vec4f, emit3: vec4f,
+  opts: vec4f,
+  sel: vec4f,
+  aim: vec4f,
+  soot: vec4f,      // z: densité de suie au rendu (0 = comme avant)
   // Suivent les gizmos des champs de force (2 vec4 par champ) — dessinés par
   // gizmo3d.wgsl en LIGNES après la présentation, pas ici : un repère doit être
   // net, pas un halo noyé dans le volume.
@@ -26,6 +37,8 @@ struct RenderParams {
 @group(0) @binding(1) var lin: sampler;
 @group(0) @binding(2) var density_tex: texture_3d<f32>;
 @group(0) @binding(3) var glow_tex: texture_3d<f32>;
+// Espèces : on n'en lit que le canal y, la SUIE (voir species3d.wgsl).
+@group(0) @binding(4) var species_tex: texture_3d<f32>;
 
 struct VSOut {
   @builtin(position) pos: vec4f,
@@ -58,8 +71,18 @@ const INK0 = vec3f(0.55, 0.60, 0.68);
 const INK1 = vec3f(1.00, 0.30, 0.80);
 const INK2 = vec3f(1.00, 0.80, 0.45);
 
+// La SUIE éteint bien plus que la fumée à concentration égale — c'est ce qui
+// fait qu'un panache d'explosion est OPAQUE là où une fumée de bougie est un
+// voile. Son albédo est presque noir : elle absorbe au lieu de diffuser.
+const SOOT_EXT = 46.0;
+const SOOT_ALBEDO = vec3f(0.055, 0.050, 0.047);
+
 fn extinction(s: vec4f) -> f32 {
   return (s.x + s.y + s.z) * 22.0 + s.w * 5.0;
+}
+
+fn soot_at(pos: vec3f) -> f32 {
+  return textureSampleLevel(species_tex, lin, pos + vec3f(0.5), 0.0).y;
 }
 
 // Albédo du voxel : mélange des couleurs d'encres pondéré par leurs concentrations.
@@ -186,7 +209,11 @@ fn fs_main(frag: VSOut) -> @location(0) vec4f {
       }
       let pos = ro + rd * t;
       let s = textureSampleLevel(density_tex, lin, pos + vec3f(0.5), 0.0);
-      let ext = extinction(s);
+      // Suie : lue au même point, elle s'ajoute à l'extinction et TIRE L'ALBÉDO
+      // VERS LE NOIR. Le pas adaptatif ci-dessous doit en tenir compte, sinon un
+      // nuage de suie sans fumée serait traversé à double enjambée.
+      let soot = soot_at(pos) * R.soot.z;
+      let ext = extinction(s) + soot * SOOT_EXT;
       // Pas ADAPTATIF : l'air vide se traverse à double enjambée (gros gain quand
       // la boîte est peu remplie), les intégrales utilisent la longueur réelle.
       var adv = step_len;
@@ -209,7 +236,10 @@ fn fs_main(frag: VSOut) -> @location(0) vec4f {
         for (var j = 1u; j <= 6u; j++) {
           let sp = pos + ldir * (f32(j) * shadow_step);
           let ss = textureSampleLevel(density_tex, lin, sp + vec3f(0.5), 0.0);
-          occ += extinction(ss);
+          // La suie compte AUSSI dans l'ombre interne : c'est elle qui rend un
+          // panache d'explosion sombre en son cœur. L'ignorer ici donnerait un
+          // nuage noir de face et translucide de dos.
+          occ += extinction(ss) + soot_at(sp) * R.soot.z * SOOT_EXT;
         }
         // DEUX octaves d'extinction (« powder ») : la seconde, 4× plus
         // transparente, laisse la lumière pénétrer les cœurs épais — la fumée
@@ -219,7 +249,11 @@ fn fs_main(frag: VSOut) -> @location(0) vec4f {
         if (sphere_hit(pos, ldir) < 1e8) {
           shade *= 0.25;
         }
-        let albedo = ink_albedo(s);
+        // Mélange des albédos pondéré par l'extinction que chacun apporte : là
+        // où la suie domine, elle impose sa noirceur ; là où elle est absente,
+        // rien ne change par rapport à avant.
+        let soot_ext = soot * SOOT_EXT;
+        let albedo = mix(ink_albedo(s), SOOT_ALBEDO, clamp(soot_ext / max(ext, 1e-4), 0.0, 1.0));
         let lo = blackbody(s.w) * 2.2 +
           albedo * (
             R.light.w * phase * (shade * 0.92 + 0.08) * 0.28 +
