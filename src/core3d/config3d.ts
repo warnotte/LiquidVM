@@ -90,6 +90,8 @@ export interface Sim3Tuning {
   sootFade: number;
   sootDensity: number;
   sootCooling: number;
+  openBand: number;
+  openStrength: number;
 }
 
 export function defaultTuning3(): Sim3Tuning {
@@ -109,6 +111,8 @@ export function defaultTuning3(): Sim3Tuning {
     sootFade: SIM3_DEFAULTS.sootFade,
     sootDensity: SIM3_DEFAULTS.sootDensity,
     sootCooling: SIM3_DEFAULTS.sootCooling,
+    openBand: SIM3_DEFAULTS.openBand,
+    openStrength: SIM3_DEFAULTS.openStrength,
     oxygenRecover: SIM3_DEFAULTS.oxygenRecover,
     blowForce: SIM3_DEFAULTS.blowForce,
     windStrength: SIM3_DEFAULTS.windStrength,
@@ -218,6 +222,14 @@ export const SIM3_DEFAULTS = {
    *  orange sous une peau désormais impénétrable, et on obtient une braise
    *  géante au lieu d'un nuage de suie. */
   sootCooling: 2.6,
+  /** CIEL OUVERT : largeur de la bande éponge (fraction de N) et sa force. La
+   *  boîte reste CLOSE — l'opérateur de pression garde donc sa symétrie et le
+   *  multigrid sa convergence — mais la matière et la vitesse s'éteignent près
+   *  des parois au lieu de s'y empiler. Le SOL est exclu : c'est la seule paroi
+   *  qui soit un objet de la scène. `openBand = 0` referme la boîte et rend
+   *  exactement le comportement d'avant. */
+  openBand: 0.11,
+  openStrength: 26,
   /** Combustion (modèle Feldman/Fedkiw simplifié) : taux de réaction (1/s au-dessus
    *  de l'ignition), chaleur dégagée par unité de carburant, expansion volumique au
    *  front de flamme (source de divergence, voxels/s — remise à l'échelle SCALE3). */

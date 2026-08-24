@@ -20,7 +20,48 @@ struct Params {
   emitter3: vec4f,
   emit_inks: vec4f,
   sphere_vel: vec4f, // xyz: vitesse de la sphère (voxels/s) — condition de bord MOBILE
+  // Champs traversés sans être lus ici : la disposition de l'uniforme est
+  // COMMUNE à toutes les passes, un shader n'en déclare qu'un préfixe.
+  ink_weights: vec4f,
+  wind: vec4f,
+  field_meta: vec4f,
+  field0_a: vec4f, field0_b: vec4f,
+  field1_a: vec4f, field1_b: vec4f,
+  field2_a: vec4f, field2_b: vec4f,
+  burst_a: vec4f, burst_b: vec4f,
+  soot: vec4f,
+  // x: largeur de la bande éponge (voxels, 0 = boîte close), y: sa force.
+  open_box: vec4f,
 }
+
+// BANDE ÉPONGE (« ciel ouvert ») — la boîte 3D est close de partout (Neumann par
+// clamp), donc tout ce qu'on injecte finit par la remplir : un panache plafonne
+// et repeint le plafond, une explosion sature le volume en deux secondes.
+//
+// La solution n'est PAS une vraie sortie Dirichlet avec face virtuelle : elle
+// rend le système non symétrique (dernière rangée découplée) et le multigrid
+// diverge par construction — leçon déjà payée en 2D, ne pas y revenir. On garde
+// la boîte fermée, donc l'opérateur symétrique intact, et on AMORTIT dans une
+// bande près des parois : la matière et la vitesse s'y éteignent avant d'avoir
+// eu le temps de s'accumuler.
+//
+// Le SOL est exclu : c'est la seule paroi qui soit un vrai objet de la scène
+// (le raymarch l'éclaire et y projette les ombres). Une explosion doit rebondir
+// dessus, pas s'y dissoudre.
+fn sponge3(p: vec3f, dt: f32) -> f32 {
+  let band = P.open_box.x;
+  if (band <= 0.0) {
+    return 1.0;
+  }
+  let n = P.misc.z;
+  let d = min(
+    min(min(p.x, n - p.x), min(p.z, n - p.z)),
+    n - p.y, // plafond seulement — le sol reste dur
+  );
+  let s = 1.0 - clamp(d / band, 0.0, 1.0);
+  return 1.0 / (1.0 + P.open_box.y * s * s * dt);
+}
+
 
 // Sphère-obstacle analytique : la cellule est solide si son CENTRE est dans la
 // sphère — la même règle que le gradient et le lisseur (adjonction exacte).
@@ -146,9 +187,13 @@ fn correct(@builtin(global_invocation_id) gid: vec3u) {
   let mu = stencil_minmax(backtrace(pu, dt), OFF_U, 0);
   let mv = stencil_minmax(backtrace(pv, dt), OFF_V, 1);
   let mw = stencil_minmax(backtrace(pw, dt), OFF_W, 2);
-  u = clamp(u, mu.x, mu.y) * decay;
-  v = clamp(v, mv.x, mv.y) * decay;
-  w = clamp(w, mw.x, mw.y) * decay;
+  // Éponge : chaque composante est amortie à SA position MAC. Amortir la vitesse
+  // ici introduit de la divergence, que la projection de la frame suivante
+  // reprend — c'est le prix, et il est faible devant le jet qui longeait le
+  // plafond quand la boîte était close.
+  u = clamp(u, mu.x, mu.y) * decay * sponge3(pu, dt);
+  v = clamp(v, mv.x, mv.y) * decay * sponge3(pv, dt);
+  w = clamp(w, mw.x, mw.y) * decay * sponge3(pw, dt);
 
   // Sphère-obstacle MOBILE : les faces bloquées portent SA vitesse (la boule
   // brasse le fluide) ; les parois de la boîte restent immobiles.

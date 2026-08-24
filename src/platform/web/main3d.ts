@@ -594,6 +594,8 @@ async function boot(): Promise<void> {
         { label: 'suie : opacité', min: 0, max: 3, step: 0.05, get: () => p.sootDensity, set: (x) => (p.sootDensity = x) },
         { label: 'suie : évanouis.', min: 0, max: 0.6, step: 0.01, get: () => p.sootFade, set: (x) => (p.sootFade = x) },
         { label: 'suie : rayonnement', min: 0, max: 8, step: 0.1, get: () => p.sootCooling, set: (x) => (p.sootCooling = x) },
+        { label: 'ciel ouvert', min: 0, max: 0.25, step: 0.005, get: () => p.openBand, set: (x) => (p.openBand = x), format: (x) => (x <= 0 ? 'boîte close' : x.toFixed(3)) },
+        { label: 'ciel : absorption', min: 2, max: 90, step: 1, get: () => p.openStrength, set: (x) => (p.openStrength = x), format: (x) => x.toFixed(0) },
       ],
       buttons: [{ label: '💥 détoner (G)', action: () => (input.explode = true) }],
     },

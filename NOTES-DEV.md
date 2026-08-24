@@ -556,6 +556,26 @@ particules. Quand une limite n'apparaît qu'en WARNING console, écouter
      suie, l'image est strictement celle d'avant.
    - `sootDensity = 0` rend exactement l'image d'avant la fonction. 60 FPS tenus
      à 256³ malgré le sondage supplémentaire.
+- **CIEL OUVERT (bande éponge 3D, 2026-08-25)** — la boîte 3D était close de
+  partout (Neumann par clamp) : tout ce qu'on injecte finit par la remplir. Un
+  panache plafonne et repeint le plafond, une explosion sature le volume en deux
+  secondes — ce qui ruine n'importe quel rendu. C'est le défaut structurel déjà
+  nommé dans la section « articulation des modes ».
+  La solution n'est PAS une vraie sortie Dirichlet avec face virtuelle : elle
+  rend le système non symétrique et le multigrid diverge par construction (leçon
+  payée en 2D, cf. « Pièges durement payés »). On garde la boîte fermée — donc
+  l'opérateur de pression symétrique et le MG convergent — et on AMORTIT dans
+  une bande près des parois, exactement comme `sponge()` en 2D : matière et
+  vitesse s'y éteignent avant d'avoir pu s'accumuler.
+  Deux différences avec le 2D : le **SOL est exclu** (c'est la seule paroi qui
+  soit un objet de la scène — le raymarch l'éclaire et y projette les ombres ;
+  une explosion doit rebondir dessus, pas s'y dissoudre), et la vitesse est
+  amortie **à sa position MAC** composante par composante. Amortir la vitesse
+  introduit de la divergence, que la projection de la frame suivante reprend :
+  c'est le prix, et il est faible devant le jet qui longeait le plafond.
+  `openBand = 0` referme la boîte et rend exactement le comportement d'avant.
+  Mesuré : à 2,2 s l'explosion donne un vrai champignon à cœur noir au lieu
+  d'une dalle rose collée au plafond. 60 FPS tenus.
 - **Prochaines briques** : séquences VDB animées (File System Access API) ;
   encres colorées (canaux yz réservés dans la densité) ; qualité du confinement
   de vorticité (flouter |ω|).

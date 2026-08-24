@@ -174,8 +174,8 @@ export class FluidSim3D {
   /** Première frame : initialiser la texture d'espèces (O₂ = 1 partout). */
   private needSpeciesInit = true;
 
-  // 104 floats utilisés (26 vec4) depuis la suie.
-  private readonly simData = new Float32Array(104);
+  // 108 floats utilisés (27 vec4) depuis la bande éponge.
+  private readonly simData = new Float32Array(108);
   // 92 floats utilisés (23 vec4) depuis la suie.
   private readonly renderData = new Float32Array(92);
   private lastRender = new Float32Array(92).fill(Number.NaN);
@@ -2034,6 +2034,9 @@ export class FluidSim3D {
     d[100] = p.sootYield;
     d[101] = p.sootFade;
     d[102] = p.sootCooling;
+    // Ciel ouvert : la bande est donnée en VOXELS au shader (fraction × N).
+    d[104] = p.openBand * GRID3;
+    d[105] = p.openStrength;
     // Oxygène : apport du souffle (blow_force.w) et récupération lente.
     d[27] = D.blowOxygen;
     d[59] = p.oxygenRecover;

@@ -37,7 +37,38 @@ struct Params {
   burst_b: vec4f,
   // x: rendement de suie, y: évanouissement, z: refroidissement PAR la suie.
   soot: vec4f,
+  // x: largeur de la bande éponge (voxels, 0 = boîte close), y: sa force.
+  open_box: vec4f,
 }
+
+// BANDE ÉPONGE (« ciel ouvert ») — la boîte 3D est close de partout (Neumann par
+// clamp), donc tout ce qu'on injecte finit par la remplir : un panache plafonne
+// et repeint le plafond, une explosion sature le volume en deux secondes.
+//
+// La solution n'est PAS une vraie sortie Dirichlet avec face virtuelle : elle
+// rend le système non symétrique (dernière rangée découplée) et le multigrid
+// diverge par construction — leçon déjà payée en 2D, ne pas y revenir. On garde
+// la boîte fermée, donc l'opérateur symétrique intact, et on AMORTIT dans une
+// bande près des parois : la matière et la vitesse s'y éteignent avant d'avoir
+// eu le temps de s'accumuler.
+//
+// Le SOL est exclu : c'est la seule paroi qui soit un vrai objet de la scène
+// (le raymarch l'éclaire et y projette les ombres). Une explosion doit rebondir
+// dessus, pas s'y dissoudre.
+fn sponge3(p: vec3f, dt: f32) -> f32 {
+  let band = P.open_box.x;
+  if (band <= 0.0) {
+    return 1.0;
+  }
+  let n = P.misc.z;
+  let d = min(
+    min(min(p.x, n - p.x), min(p.z, n - p.z)),
+    n - p.y, // plafond seulement — le sol reste dur
+  );
+  let s = 1.0 - clamp(d / band, 0.0, 1.0);
+  return 1.0 / (1.0 + P.open_box.y * s * s * dt);
+}
+
 
 // Bruit de valeur 3D — uniquement pour DÉCHIRER la charge d'explosion. Une
 // gaussienne analytique est parfaitement symétrique, et une boule de feu
@@ -230,6 +261,9 @@ fn correct(@builtin(global_invocation_id) gid: vec3u) {
   }
 
   val = min(val, vec4f(3.0, 3.0, 3.0, 2.0));
+
+  // Éponge : la matière s'éteint près des parois ouvertes au lieu de s'y empiler.
+  val *= sponge3(center, dt);
 
   // Jamais d'encre ni de chaleur dans la sphère-obstacle.
   if (P.sphere.w > 0.0 && distance(center, P.sphere.xyz) < P.sphere.w) {
