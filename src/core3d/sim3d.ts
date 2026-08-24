@@ -183,8 +183,21 @@ export class FluidSim3D {
   private activeField = -1;
 
   /** Encodage de `grabbed` : −2 rien · −1 la boule · 0..n émetteur ·
-   *  FIELD_TAG+i champ de force. */
+   *  FIELD_TAG+i champ de force. NE PAS tester `grabbed` à la main : un
+   *  `grabbed >= 0` naïf attrape aussi les champs (bug de l'écran noir, corrigé
+   *  le 2026-08-24 — l'encre était appliquée à `emitters[100]`, l'exception
+   *  tuait la boucle de rendu). Passer par les deux accesseurs ci-dessous. */
   private static readonly FIELD_TAG = 100;
+
+  /** Index de l'émetteur tenu, ou −1. */
+  private get heldEmitter(): number {
+    return this.grabbed >= 0 && this.grabbed < FluidSim3D.FIELD_TAG ? this.grabbed : -1;
+  }
+
+  /** Index du champ de force tenu, ou −1. */
+  private get heldField(): number {
+    return this.grabbed >= FluidSim3D.FIELD_TAG ? this.grabbed - FluidSim3D.FIELD_TAG : -1;
+  }
   private readonly spherePos: [number, number, number] = [
     GRID3 * SIM3_DEFAULTS.sphereStart[0],
     GRID3 * SIM3_DEFAULTS.sphereStart[1],
@@ -1299,8 +1312,11 @@ export class FluidSim3D {
       }
     }
     for (let i = 0; i < this.fields.length; i++) {
-      const d = this.rayDistance(this.fields[i]!.pos);
-      if (d < bestDist) {
+      const f = this.fields[i]!;
+      // La zone de saisie suit le RAYON VISIBLE du champ (même bonus que la
+      // boule) : sans ça on cliquait sur le gizmo sans rien attraper.
+      const d = this.rayDistance(f.pos);
+      if (d < bestDist + f.radius * GRID3 * 0.5) {
         best = FluidSim3D.FIELD_TAG + i;
         bestDist = d;
       }
@@ -1365,8 +1381,8 @@ export class FluidSim3D {
     // L'encre sélectionnée s'applique aux FUTURS émetteurs — et à celui qu'on tient
     // en main (manipulation directe). Jamais à un émetteur posé et lâché : changer
     // d'encre ne doit pas éteindre la flamme pilote à distance.
-    if (this.grabbed >= 0) {
-      this.emitters[this.grabbed]!.ink = input.emitInk;
+    if (this.heldEmitter >= 0) {
+      this.emitters[this.heldEmitter]!.ink = input.emitInk;
     }
 
     if (input.addEmitter && this.emitters.length < SIM3_DEFAULTS.maxEmitters) {
@@ -1410,8 +1426,8 @@ export class FluidSim3D {
     // Les réglages s'appliquent aux FUTURS champs et à celui qu'on TIENT — jamais
     // à un champ posé et lâché (même piège que l'encre des émetteurs, qui
     // éteignait la flamme pilote à distance).
-    if (this.grabbed >= FluidSim3D.FIELD_TAG) {
-      const f = this.fields[this.grabbed - FluidSim3D.FIELD_TAG];
+    if (this.heldField >= 0) {
+      const f = this.fields[this.heldField];
       if (f) {
         f.type = input.fieldType;
         f.strength = input.fieldStrength;
@@ -1424,10 +1440,10 @@ export class FluidSim3D {
       this.computeRay(input.pointer.ndcX, input.pointer.ndcY);
       if (this.grabbed === -2) {
         this.grabbed = this.pickTarget();
-        if (this.grabbed >= 0 && this.grabbed < FluidSim3D.FIELD_TAG) {
-          this.activeEmitter = this.grabbed;
-        } else if (this.grabbed >= FluidSim3D.FIELD_TAG) {
-          this.activeField = this.grabbed - FluidSim3D.FIELD_TAG;
+        if (this.heldEmitter >= 0) {
+          this.activeEmitter = this.heldEmitter;
+        } else if (this.heldField >= 0) {
+          this.activeField = this.heldField;
         }
       }
       if (this.grabbed !== -2) {
@@ -1435,9 +1451,9 @@ export class FluidSim3D {
         const target =
           this.grabbed === -1
             ? this.spherePos
-            : this.grabbed >= FluidSim3D.FIELD_TAG
-              ? this.fields[this.grabbed - FluidSim3D.FIELD_TAG]!.pos
-              : this.emitters[this.grabbed]!.pos;
+            : this.heldField >= 0
+              ? this.fields[this.heldField]!.pos
+              : this.emitters[this.heldEmitter]!.pos;
         const px = target[0];
         const py = target[1];
         const pz = target[2];

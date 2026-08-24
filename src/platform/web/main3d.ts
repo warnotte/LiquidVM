@@ -638,7 +638,18 @@ async function boot(): Promise<void> {
       demoDriver.tick(dt);
     }
     input.dt = dt;
-    sim.frame(input, context.getCurrentTexture().createView(), canvas.width, canvas.height);
+    // Une exception ici tuerait la boucle SANS RIEN DIRE : le canvas WebGPU
+    // cesse d'être présenté et l'écran devient noir, symptôme parfaitement
+    // muet (vécu deux fois). On la montre au lieu de la subir.
+    try {
+      sim.frame(input, context.getCurrentTexture().createView(), canvas.width, canvas.height);
+    } catch (err: unknown) {
+      showFatalError(
+        `La simulation s'est arrêtée : ${err instanceof Error ? err.message : String(err)}`,
+      );
+      document.title = 'SELFTEST-FAIL';
+      return;
+    }
     input.reset = false;
     input.blow.moveX = 0;
     input.blow.moveY = 0;

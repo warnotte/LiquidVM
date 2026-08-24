@@ -341,8 +341,17 @@ particules. Quand une limite n'apparaît qu'en WARNING console, écouter
   éteignait la flamme pilote. GIZMOS : coque lumineuse à la frontière du champ
   dans le raymarch (bleu = tourbillon, ambre = vent), coupée avec les retours
   visuels (F) — un modificateur invisible est un modificateur qu'on ne sait pas
-  placer. Étendre à un nouveau type = un cas dans `field_force` (forces3d.wgsl)
-  et une entrée dans FIELD_NAMES.
+  placer. La zone de SAISIE suit le rayon visible du champ (même bonus que la
+  boule) : sans ça on cliquait sur le gizmo sans rien attraper. Étendre à un
+  nouveau type = un cas dans `field_force` (forces3d.wgsl) et une entrée dans
+  FIELD_NAMES.
+  ⚠️ **`grabbed` est un index TAGUÉ** (−2 rien · −1 boule · 0..n émetteur ·
+  100+i champ). Un `grabbed >= 0` naïf attrape aussi les champs : c'est le bug
+  de l'écran noir du 2026-08-24 — l'encre était appliquée à `emitters[100]`,
+  l'exception tuait la boucle de rendu et le canvas WebGPU cessait d'être
+  présenté, symptôme parfaitement muet. Passer par `heldEmitter` / `heldField`,
+  jamais par un test brut. Et depuis, une exception dans la frame est ATTRAPÉE
+  et affichée par l'overlay au lieu de noircir l'écran (les deux pages 3D).
 - **Vent horizontal (2026-08-24)** : force DIFFÉRENTIELLE proportionnelle à la
   matière, ajoutée dans `forces3d.wgsl` à côté de la poussée, avec un cap qui
   OSCILLE (uniform `wind` = force / amplitude / période / cap, slots 60-63).
