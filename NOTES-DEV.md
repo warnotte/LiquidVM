@@ -44,6 +44,9 @@ typecheck strict + bundle. Aucune dépendance runtime.
   souris — vérifie qu'un geste diagonal sur une poignée ne bouge qu'un axe.
   `cdp-boom.mjs 9333 [tag] [rayon] [charge]` : une détonation, capturée à neuf
   instants — une explosion se juge sur sa CHRONOLOGIE, pas sur une image.
+  `cdp-nuke-ab.mjs 9333` : rejoue le TIR ENTIER par variante (reset complet,
+  même temps SIMULÉ) — pour tout ce qui est cumulatif, où un état figé ne dit
+  rien. Lancer les mesures d'image avec `?lock` (résolution verrouillée).
   `cdp-suie-ab.mjs 9333` : détone, FIGE la scène, puis bascule un terme de
   couleur à la fois sur exactement le même état. À l'œil, émission, diffusion et
   lueur se ressemblent — c'est le seul moyen honnête de savoir ce qui teinte un
@@ -624,6 +627,28 @@ particules. Quand une limite n'apparaît qu'en WARNING console, écouter
   Les presets sont exposés au harnais (`window.__presets3d` en `?selftest`) :
   `cdp-boom.mjs 9333 NUKE champignon` applique CE QUE VOIT L'UTILISATEUR plutôt
   qu'une copie des réglages, et bascule seul sur la chronologie longue.
+- **CHAPEAU DIFFUS : deux causes, aucune dans le solveur (2026-08-25)** — le
+  chapeau du champignon perdait sa structure passé quelques secondes. Diagnostic
+  en rejouant le TIR ENTIER avec une seule variable changée (`cdp-nuke-ab.mjs`,
+  capture au même temps SIMULÉ) — le flou est cumulatif, il ne se lit pas sur un
+  état figé. Quatre suspects écartés par la mesure : dissipation d'encre (nuage
+  plus dense, toujours flou), vorticité ×2 (le PIED gagne du détail, pas le
+  chapeau), temps normal (pire), et l'idée que ralentir le temps multiplierait la
+  diffusion numérique (réfutée : c'est l'inverse ici).
+   1. **L'ÉPONGE lamine ce qui se gare dedans.** Un panache TRAVERSE la bande ;
+      le chapeau d'un champignon, lui, monte au plafond et y RESTE. Une éponge
+      calibrée pour absorber un passage le rabote alors sur place. Mesuré : boîte
+      close, le chapeau retrouve ses lobes ; à 0,07/26 c'est une dalle ; à
+      0,035/8 il garde ses lobes ET la boîte ne se remplit pas. Le preset
+      champignon prend donc une éponge resserrée et adoucie ; le défaut général
+      (calibré pour un panache continu) ne bouge pas.
+   2. **La RÉSOLUTION DE RENDU baissait toute seule.** L'adaptation automatique
+      tombe à 60 % dès que la scène s'alourdit — donc précisément au moment le
+      plus dense, donc au moment où l'on regarde. Le flou qu'elle produit se lit
+      à tort comme un défaut de simulation : un champignon « diffus » à 9 s
+      l'était pour moitié à cause de ça. Verrou à 100 % (touche **L** ou
+      `?lock`), état affiché au HUD. **À utiliser pour toute mesure d'image** —
+      sans lui, deux captures ne sont pas comparables.
 - **Prochaines briques** : séquences VDB animées (File System Access API) ;
   encres colorées (canaux yz réservés dans la densité) ; qualité du confinement
   de vorticité (flouter |ω|).

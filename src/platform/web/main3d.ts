@@ -65,7 +65,15 @@ const TUNE_MUSHROOM: Partial<Sim3Tuning> = {
   timeScale: 0.55, buoyancy: 330, velocityDissipation: 0.008, vorticityStrength: 22,
   heatCooling: 0.5, inkDissipation: 0.02, burnRate: 7, heatYield: 1.3,
   expansion: 12, oxygenRecover: 0.02,
-  sootYield: 20, sootCooling: 3.2, openBand: 0.07,
+  sootYield: 20, sootCooling: 3.2,
+  // Éponge RESSERRÉE ET ADOUCIE — le réglage le plus contre-intuitif du preset.
+  // Le chapeau d'un champignon ne TRAVERSE pas la bande, il s'y GARE : il monte
+  // au plafond et y reste. Une éponge calibrée pour absorber un panache de
+  // passage le lamine alors sur place, et on obtient une dalle diffuse au lieu
+  // d'un chapeau à lobes. Mesuré en rejouant le tir entier (cdp-nuke-ab) : à
+  // 0,07/26 le chapeau est une dalle ; boîte close il retrouve ses lobes ; à
+  // 0,035/8 il les garde ET la boîte ne se remplit pas.
+  openBand: 0.035, openStrength: 8,
 };
 
 /** Réglages de DÉTONATION d'un preset (ils vivent sur l'entrée, pas sur les
@@ -319,6 +327,14 @@ async function boot(): Promise<void> {
   // RÉSOLUTION DYNAMIQUE : le ray-marching est payé par pixel — l'échelle de rendu
   // s'ajuste au FPS (hystérésis), imperceptible en mouvement, gros gain en charge.
   let renderScale = 1;
+  // Résolution de rendu VERROUILLÉE : l'adaptation automatique ci-dessous baisse
+  // la résolution quand la scène s'alourdit — c'est le bon réflexe pour tenir
+  // 60 FPS, et exactement le mauvais quand on juge une image. Elle se déclenche
+  // précisément au moment le plus dense, donc au moment où l'on regarde, et le
+  // flou qu'elle produit se lit à tort comme un défaut de SIMULATION (constaté :
+  // un champignon « diffus » à 9 s l'était pour moitié parce que le rendu était
+  // tombé à 60 %). Verrou explicite, état affiché au HUD.
+  let lockScale = urlParams.has('lock');
   const resize = (): void => {
     const scale = Math.min(window.devicePixelRatio || 1, 2) * renderScale;
     canvas.width = Math.max(1, Math.round(canvas.clientWidth * scale));
@@ -523,6 +539,9 @@ async function boot(): Promise<void> {
     } else if (e.code === 'Escape') {
       sim.deselect();
       say('rien de sélectionné');
+    } else if (k === 'l') {
+      lockScale = !lockScale;
+      say(lockScale ? 'rendu verrouillé à 100 %' : 'rendu adaptatif (60-100 %)');
     } else if (k === 'g') {
       input.explode = true;
       say('💥 détonation');
@@ -775,7 +794,12 @@ async function boot(): Promise<void> {
       hudTimer = 0;
       panel.refresh();
       toolbar.refresh();
-      if (fps < 50 && renderScale > 0.6) {
+      if (lockScale) {
+        if (renderScale !== 1) {
+          renderScale = 1;
+          resize();
+        }
+      } else if (fps < 50 && renderScale > 0.6) {
         renderScale = Math.max(0.6, renderScale - 0.1);
         resize();
       } else if (fps > 58.5 && renderScale < 1) {
@@ -785,9 +809,9 @@ async function boot(): Promise<void> {
       const solver = input.multigrid ? `MG ×${input.vcycles}` : `jacobi ${input.jacobiIterations} it.`;
       hud.innerHTML =
         `<b>LiquidVM 3D</b> · ${GRID3}³ · encre : ${INK_NAMES[input.emitInk] ?? '?'} · ${solver} · ${Math.round(fps)} FPS` +
-        `${renderScale < 1 ? ` · rendu ${Math.round(renderScale * 100)} %` : ''}` +
+        `${lockScale ? ' · rendu 100 % 🔒' : renderScale < 1 ? ` · rendu ${Math.round(renderScale * 100)} %` : ''}` +
         `${input.paused ? ' · ⏸ pause' : ''}${demoOn ? ' · <b>DÉMO</b> (D : reprendre la main)' : ' · D : démo'}<br>` +
-        '1/2/3 : encre · glisser un objet : déplacer · ses poignées : un seul axe · son bouton violet : orienter · A : + émetteur · X : supprimer · G : 💥 · O : boule · B : braises · F : repères<br>' +
+        '1/2/3 : encre · glisser un objet : déplacer · ses poignées : un seul axe · son bouton violet : orienter · A : + émetteur · X : supprimer · G : 💥 · L : rendu 100 % · O : boule · B : braises · F : repères<br>' +
         'glisser : orbiter · clic droit : souffler · molette : zoom · Échap : désélectionner · espace : pause · R : reset · E : export .vdb';
     }
     if (selftest && frames === SELFTEST_FRAMES) {
