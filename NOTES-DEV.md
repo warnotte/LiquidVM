@@ -576,6 +576,23 @@ particules. Quand une limite n'apparaît qu'en WARNING console, écouter
   `openBand = 0` referme la boîte et rend exactement le comportement d'avant.
   Mesuré : à 2,2 s l'explosion donne un vrai champignon à cœur noir au lieu
   d'une dalle rose collée au plafond. 60 FPS tenus.
+- **PLAFOND DE LA MARCHE (2026-08-25)** — la boucle du raymarch était bornée en
+  dur à `256u`, et le curseur « pas de marche » s'arrêtait exactement à 256 :
+  rien de cassé côté UI, mais un plafond de QUALITÉ, devenu contraignant depuis
+  qu'on vise des rendus plutôt que la frame d'un jeu.
+  **Le symptôme, si on dépasse ce plafond, ne ressemble pas à un plafond** : le
+  rayon s'arrête avant la sortie de boîte, tout ce qui est derrière disparaît, et
+  le nuage s'ÉCLAIRCIT. Poussé à 560 pas par un script, ça se lisait comme « la
+  suie s'évapore quand j'augmente la qualité » — un faux problème de rendu qui a
+  coûté une hypothèse avant que la borne ne saute aux yeux. Le plafond est passé
+  à 1024 et le curseur avec ; les deux doivent rester d'accord.
+  Le GRAIN visible dans les zones de forte extinction vient du décalage
+  aléatoire du départ de rayon (`hash12`, l'anti-bandes) : il est proportionnel à
+  la longueur de pas, donc il s'efface en montant les pas.
+  **Mesuré** (scène chargée, 256³) : 160 pas → 60 FPS · 320 → 57 · 560 → 51.
+  La qualité d'image s'achète donc pour presque rien — c'est le SOLVEUR qui tient
+  le budget, pas la marche. Le sondage de suie, lui, ne se mesure pas (160 pas
+  avec et sans : 60 FPS dans les deux cas).
 - **Prochaines briques** : séquences VDB animées (File System Access API) ;
   encres colorées (canaux yz réservés dans la densité) ; qualité du confinement
   de vorticité (flouter |ω|).

@@ -565,7 +565,8 @@ async function boot(): Promise<void> {
         { label: 'lueur du feu', min: 0, max: 3, step: 0.05, get: () => input.glowStrength, set: (x) => (input.glowStrength = x) },
         { label: 'bloom', min: 0, max: 1, step: 0.05, get: () => input.bloomStrength, set: (x) => (input.bloomStrength = x) },
         { label: 'braises : débit', min: 0, max: 1, step: 0.05, get: () => input.emberStrength, set: (x) => (input.emberStrength = x) },
-        { label: 'pas de marche', min: 64, max: 256, step: 16, get: () => input.raymarchSteps, set: (x) => (input.raymarchSteps = x), format: (x) => x.toFixed(0) },
+        // Le maximum doit rester ≤ au plafond de boucle de raymarch.wgsl (1024).
+        { label: 'pas de marche', min: 64, max: 1024, step: 16, get: () => input.raymarchSteps, set: (x) => (input.raymarchSteps = x), format: (x) => x.toFixed(0) },
       ],
       checks: [
         { label: 'boule-obstacle (O)', get: () => input.sphereActive, set: (v) => (input.sphereActive = v) },

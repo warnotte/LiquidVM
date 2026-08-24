@@ -203,7 +203,13 @@ fn fs_main(frag: VSOut) -> @location(0) vec4f {
     let shadow_step = 0.5 / 6.0;
     // Phase directionnelle : constante par rayon (mu = angle vue/lumière).
     let phase = phase_hg(dot(rd, ldir));
-    for (var i = 0u; i < 256u; i++) {
+    // PLAFOND DUR de la boucle. Il doit rester ≥ au maximum du curseur « pas de
+    // marche » (main3d.ts) : au-delà, le rayon s'arrête AVANT la sortie de boîte
+    // et tout ce qui est derrière disparaît — pas d'erreur, juste un nuage qui
+    // s'éclaircit, ce qui se lit à tort comme un problème de rendu. La sortie se
+    // fait normalement par `t >= t_end` ou par extinction, donc ce plafond ne
+    // coûte rien tant qu'on ne le touche pas.
+    for (var i = 0u; i < 1024u; i++) {
       if (t >= t_end || transmit < 0.015) {
         break;
       }
