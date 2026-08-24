@@ -206,6 +206,17 @@ export const SIM3_DEFAULTS = {
   explosionFuel: 55,
   explosionSpark: 22,
   explosionTime: 0.05,
+  /** HAUTEUR de la détonation (fraction de N). Au RAS DU SOL par défaut : c'est
+   *  ce qui distingue une boule de feu en l'air d'une explosion « au sol », et
+   *  c'est la seule position qui produise un pied de champignon. */
+  explosionHeight: 0.1,
+  /** POUSSIÈRE SOULEVÉE : débit, rayon horizontal et épaisseur (fractions de N).
+   *  Le pied d'un champignon n'est PAS fait de la charge — il est fait du sol
+   *  arraché par le souffle, que le courant ascendant aspire ensuite derrière la
+   *  boule. Sans ce terme, on obtient un chapeau qui flotte sans colonne. */
+  dustRate: 26,
+  dustRadius: 0.3,
+  dustHeight: 0.045,
   /** SUIE — une flamme qui manque d'air craque son carburant et noircit. Trois
    *  nombres : le rendement (par unité de carburant chaud privé d'air), son
    *  évanouissement, et sa densité AU RENDU (0 = image strictement identique à

@@ -75,6 +75,9 @@ export interface Frame3DInput {
   explode: boolean;
   explosionRadius: number;
   explosionFuel: number;
+  /** Hauteur de la détonation (fraction de N) et poussière soulevée au sol. */
+  explosionHeight: number;
+  dustRate: number;
   /** Sphère-obstacle présente. */
   sphereActive: boolean;
   /** Retours visuels (fuseau du souffle…) — débrayables (touche F). */
@@ -174,8 +177,8 @@ export class FluidSim3D {
   /** Première frame : initialiser la texture d'espèces (O₂ = 1 partout). */
   private needSpeciesInit = true;
 
-  // 108 floats utilisés (27 vec4) depuis la bande éponge.
-  private readonly simData = new Float32Array(108);
+  // 112 floats utilisés (28 vec4) depuis la poussière soulevée.
+  private readonly simData = new Float32Array(112);
   // 92 floats utilisés (23 vec4) depuis la suie.
   private readonly renderData = new Float32Array(92);
   private lastRender = new Float32Array(92).fill(Number.NaN);
@@ -1666,12 +1669,22 @@ export class FluidSim3D {
     // EXPLOSION : sous le pointeur, à mi-hauteur — comme les champs de force.
     if (input.explode) {
       this.computeRay(input.pointer.ndcX, input.pointer.ndcY);
-      const planeY = GRID3 * 0.42;
+      // Le point de visée est l'intersection du rayon avec le plan de la charge.
+      // ATTENTION au plan BAS : vue de presque niveau, une caméra le coupe très
+      // loin de la boîte, et rabattre ce point sur la paroi la plus proche pose
+      // la bombe dans un COIN. Hors de la boîte, on retombe donc au centre — une
+      // détonation mal visée doit rester au milieu de la scène, pas se coller à
+      // un mur où elle n'a plus de place pour monter.
+      const planeY = GRID3 * input.explosionHeight;
       const t = (planeY - this.rayO[1]) / (this.rayD[1] || 1e-6);
-      const clampXZ = (v: number): number => Math.min(Math.max(v, GRID3 * 0.12), GRID3 * 0.88);
-      this.burstPos[0] = t > 0 ? clampXZ(this.rayO[0] + t * this.rayD[0]) : GRID3 * 0.5;
+      const rawX = this.rayO[0] + t * this.rayD[0];
+      const rawZ = this.rayO[2] + t * this.rayD[2];
+      const inside =
+        t > 0 && rawX > 0 && rawX < GRID3 && rawZ > 0 && rawZ < GRID3;
+      const clampXZ = (v: number): number => Math.min(Math.max(v, GRID3 * 0.14), GRID3 * 0.86);
+      this.burstPos[0] = inside ? clampXZ(rawX) : GRID3 * 0.5;
       this.burstPos[1] = planeY;
-      this.burstPos[2] = t > 0 ? clampXZ(this.rayO[2] + t * this.rayD[2]) : GRID3 * 0.5;
+      this.burstPos[2] = inside ? clampXZ(rawZ) : GRID3 * 0.5;
       this.burstRadius = input.explosionRadius * GRID3;
       this.burstLeft = SIM3_DEFAULTS.explosionTime;
       this.burstSeed = (this.burstSeed + 7.31) % 97;
@@ -2037,6 +2050,11 @@ export class FluidSim3D {
     // Ciel ouvert : la bande est donnée en VOXELS au shader (fraction × N).
     d[104] = p.openBand * GRID3;
     d[105] = p.openStrength;
+    // Poussière soulevée : débit, puis rayon et épaisseur EN VOXELS. Le débit ne
+    // vaut que pendant la fenêtre d'injection, comme la charge elle-même.
+    d[108] = firing * input.dustRate;
+    d[109] = SIM3_DEFAULTS.dustRadius * GRID3;
+    d[110] = SIM3_DEFAULTS.dustHeight * GRID3;
     // Oxygène : apport du souffle (blow_force.w) et récupération lente.
     d[27] = D.blowOxygen;
     d[59] = p.oxygenRecover;

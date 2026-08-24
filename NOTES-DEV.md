@@ -593,6 +593,37 @@ particules. Quand une limite n'apparaît qu'en WARNING console, écouter
   La qualité d'image s'achète donc pour presque rien — c'est le SOLVEUR qui tient
   le budget, pas la marche. Le sondage de suie, lui, ne se mesure pas (160 pas
   avec et sans : 60 FPS dans les deux cas).
+- **CHAMPIGNON ATOMIQUE (preset 🍄, 2026-08-25)** — le cas qui met le moteur à
+  l'épreuve : il ne suffit pas de faire une boule de feu, il faut tenir un
+  ANNEAU TOURBILLONNAIRE plusieurs secondes et lui faire traîner une colonne.
+  Le moteur y arrive, à trois conditions qui ne se devinent pas :
+   1. **Le pied n'est pas fait de la charge, il est fait du SOL.** Une bouffée en
+      l'air donne un chapeau qui flotte sans colonne. La détonation est donc
+      posée au ras du sol (`explosionHeight`) et soulève une galette de matière
+      FROIDE autour du point d'impact (`dustRate`) : froide, elle ne monte que
+      parce que la boule l'aspire — c'est exactement ce qui donne au pied sa
+      lenteur et son étranglement.
+   2. **« Atomique » n'appelle PAS une grosse charge.** Contre-intuitif et mesuré :
+      à 170 de charge et 30 d'expansion, la boule occupe la moitié de la boîte
+      dès 1,8 s et on obtient un couvercle de fumée. Dans un domaine de taille
+      fixe, il faut une charge PETITE, pour lui laisser de la place à monter.
+      Séparer les deux rôles est la clé : **l'expansion fait ENFLER, la poussée
+      fait MONTER**. Le preset baisse donc l'expansion (12) et pousse la
+      poussée thermique (330).
+   3. **Le temps est ralenti** (timeScale 0,55), la dissipation de vitesse presque
+      nulle et la vorticité forte : c'est ce qui garde l'anneau vivant assez
+      longtemps pour qu'on le voie se former, au lieu d'un champignon mou.
+      La bande éponge est resserrée (0,07) pour que le chapeau puisse s'étaler
+      près du plafond au lieu d'y être mangé avant d'avoir pris sa forme.
+  Piège de VISÉE trouvé en chemin : avec un plan de charge BAS, une caméra
+  presque de niveau coupe ce plan très loin de la boîte, et rabattre le point sur
+  la paroi la plus proche posait la bombe dans un COIN. Hors de la boîte, on
+  retombe désormais au centre.
+  Chronologie mesurée : boule à 0,3 s, colonne formée à 1,8 s, chapeau étalé à
+  4,5 s, silhouette mûre tenue jusqu'à ~10 s. 59-60 FPS à 256³.
+  Les presets sont exposés au harnais (`window.__presets3d` en `?selftest`) :
+  `cdp-boom.mjs 9333 NUKE champignon` applique CE QUE VOIT L'UTILISATEUR plutôt
+  qu'une copie des réglages, et bascule seul sur la chronologie longue.
 - **Prochaines briques** : séquences VDB animées (File System Access API) ;
   encres colorées (canaux yz réservés dans la densité) ; qualité du confinement
   de vorticité (flouter |ω|).

@@ -39,6 +39,8 @@ struct Params {
   soot: vec4f,
   // x: largeur de la bande éponge (voxels, 0 = boîte close), y: sa force.
   open_box: vec4f,
+  // POUSSIÈRE soulevée : x débit, y rayon horizontal (voxels), z épaisseur.
+  dust: vec4f,
 }
 
 // BANDE ÉPONGE (« ciel ouvert ») — la boîte 3D est close de partout (Neumann par
@@ -258,6 +260,18 @@ fn correct(@builtin(global_invocation_id) gid: vec3u) {
       val.z += P.burst_b.x * dt * gauss * mix(0.25, 1.75, n);
       val.w += P.burst_b.y * dt * exp(-dq * dq * 7.0) * mix(0.8, 1.2, n);
     }
+  }
+
+  // POUSSIÈRE SOULEVÉE : une galette de matière FROIDE plaquée au sol, autour du
+  // point d'impact. Le pied d'un champignon n'est pas fait de la charge — il est
+  // fait du sol arraché, que le courant ascendant de la boule aspire ensuite
+  // derrière elle. Sans ce terme, on obtient un chapeau qui flotte sans colonne.
+  // Froide, donc : elle ne monte que parce qu'on l'entraîne, ce qui est
+  // exactement ce qui donne au pied sa lenteur et son étranglement.
+  if (P.dust.x > 0.0) {
+    let dr = length(center.xz - P.burst_a.xz) / max(P.dust.y, 1e-3);
+    let dh = center.y / max(P.dust.z, 1e-3);
+    val.x += P.dust.x * dt * exp(-dr * dr * 1.4) * exp(-dh * dh * 2.0);
   }
 
   val = min(val, vec4f(3.0, 3.0, 3.0, 2.0));

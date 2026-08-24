@@ -49,14 +49,66 @@ const TUNE_WIND: Partial<Sim3Tuning> = {
   windStrength: 35, windSwing: 40, windPeriod: 8, windHeading: 20,
 };
 
+// CHAMPIGNON ATOMIQUE — le cas qui met le moteur à l'épreuve : il ne suffit pas
+// de faire une boule de feu, il faut tenir un ANNEAU TOURBILLONNAIRE plusieurs
+// secondes, et lui faire traîner une colonne derrière lui. D'où ces choix :
+//  · temps RALENTI — une bombe monte lentement ; à vitesse normale la montée est
+//    finie avant qu'on ait vu le tore se former ;
+//  · dissipation de vitesse quasi nulle et vorticité forte — c'est ce qui garde
+//    l'anneau vivant au lieu de le laisser s'étaler en champignon mou ;
+//  · refroidissement lent — la boule de feu d'une bombe reste chaude longtemps,
+//    et c'est cette chaleur qui alimente la poussée pendant toute la montée ;
+//  · suie et poussière poussées — le chapeau sale et le pied sombre ;
+//  · bande éponge RESSERRÉE : le chapeau doit pouvoir s'étaler près du plafond
+//    au lieu d'y être mangé avant d'avoir pris sa forme.
+const TUNE_MUSHROOM: Partial<Sim3Tuning> = {
+  timeScale: 0.55, buoyancy: 330, velocityDissipation: 0.008, vorticityStrength: 22,
+  heatCooling: 0.5, inkDissipation: 0.02, burnRate: 7, heatYield: 1.3,
+  expansion: 12, oxygenRecover: 0.02,
+  sootYield: 20, sootCooling: 3.2, openBand: 0.07,
+};
+
+/** Réglages de DÉTONATION d'un preset (ils vivent sur l'entrée, pas sur les
+ *  paramètres de simulation : ce sont des réglages d'outil, pas de physique). */
+interface BoomTune {
+  explosionRadius: number;
+  explosionFuel: number;
+  explosionHeight: number;
+  dustRate: number;
+}
+const BOOM_DEFAULT: BoomTune = {
+  explosionRadius: SIM3_DEFAULTS.explosionRadius,
+  explosionFuel: SIM3_DEFAULTS.explosionFuel,
+  explosionHeight: SIM3_DEFAULTS.explosionHeight,
+  dustRate: SIM3_DEFAULTS.dustRate,
+};
+// Charge PETITE, posée au ras du sol. Contre-intuitif — « atomique » n'appelle
+// pas une charge énorme : dans une boîte de taille fixe, une grosse charge
+// remplit le volume AVANT d'avoir eu le temps de monter, et on obtient un
+// couvercle de fumée au lieu d'un champignon. Mesuré : à 170 de charge et 30
+// d'expansion, la boule occupe la moitié de la boîte dès 1,8 s.
+// C'est la POUSSIÈRE qui est poussée à fond : froide, elle n'enfle rien, elle ne
+// monte que parce que la boule l'aspire — c'est exactement ce qui fait le pied.
+const BOOM_MUSHROOM: BoomTune = {
+  explosionRadius: 0.055,
+  explosionFuel: 65,
+  explosionHeight: 0.07,
+  dustRate: 55,
+};
+
 // PRESETS du panneau : appliqués À CHAUD par-dessus les défauts (déterministe
 // quel que soit l'historique de clics). Exposition/pas de marche non touchés.
-const PRESETS: readonly { label: string; values: Partial<Sim3Tuning> }[] = [
+const PRESETS: readonly {
+  label: string;
+  values: Partial<Sim3Tuning>;
+  boom?: BoomTune;
+}[] = [
   { label: '↺ défaut', values: {} },
   { label: '🕯 bougie', values: TUNE_CANDLE },
   { label: '🔥 fournaise', values: TUNE_FURNACE },
   { label: '🌫 fumée épaisse', values: TUNE_SMOKE },
   { label: '🌬 vent', values: TUNE_WIND },
+  { label: '🍄 champignon', values: TUNE_MUSHROOM, boom: BOOM_MUSHROOM },
 ];
 
 /**
@@ -304,6 +356,8 @@ async function boot(): Promise<void> {
     explode: false,
     explosionRadius: SIM3_DEFAULTS.explosionRadius,
     explosionFuel: SIM3_DEFAULTS.explosionFuel,
+    explosionHeight: SIM3_DEFAULTS.explosionHeight,
+    dustRate: SIM3_DEFAULTS.dustRate,
     sphereActive: true,
     feedback: true,
     exposure: SIM3_DEFAULTS.exposure,
@@ -316,6 +370,10 @@ async function boot(): Promise<void> {
   if (selftest) {
     (window as unknown as Record<string, unknown>)['__frame3d'] = input;
     (window as unknown as Record<string, unknown>)['__sim3d'] = sim;
+    // Les presets pour le harnais de test : sans ce hook, un script qui veut
+    // vérifier « le champignon » recopierait leurs valeurs et vérifierait donc
+    // sa propre copie plutôt que ce que voit l'utilisateur.
+    (window as unknown as Record<string, unknown>)['__presets3d'] = PRESETS;
   }
 
   // Caméra orbitale : glisser (gauche) pour tourner — SAUF si le clic attrape un
@@ -516,6 +574,7 @@ async function boot(): Promise<void> {
         label: preset.label,
         action: (): void => {
           Object.assign(p, defaultTuning3(), preset.values);
+          Object.assign(input, preset.boom ?? BOOM_DEFAULT);
           panel.refresh();
           if (input.feedback) {
             toast(`preset : ${preset.label}`);
@@ -587,7 +646,9 @@ async function boot(): Promise<void> {
       title: 'explosion',
       sliders: [
         { label: 'rayon', min: 0.03, max: 0.2, step: 0.005, get: () => input.explosionRadius, set: (x) => (input.explosionRadius = x), format: (x) => x.toFixed(3) },
-        { label: 'charge', min: 4, max: 80, step: 1, get: () => input.explosionFuel, set: (x) => (input.explosionFuel = x), format: (x) => x.toFixed(0) },
+        { label: 'charge', min: 4, max: 200, step: 2, get: () => input.explosionFuel, set: (x) => (input.explosionFuel = x), format: (x) => x.toFixed(0) },
+        { label: 'hauteur', min: 0.05, max: 0.7, step: 0.01, get: () => input.explosionHeight, set: (x) => (input.explosionHeight = x), format: (x) => (x <= 0.13 ? 'au sol' : x.toFixed(2)) },
+        { label: 'poussière', min: 0, max: 90, step: 2, get: () => input.dustRate, set: (x) => (input.dustRate = x), format: (x) => (x <= 0 ? 'aucune' : x.toFixed(0)) },
         // La suie ne dépend pas de l'explosion : elle naît partout où le
         // carburant chaud manque d'air. Mais c'est là qu'on la règle, parce que
         // c'est une explosion qui en fabrique.
