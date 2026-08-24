@@ -179,7 +179,7 @@ export class FluidSim3D {
   private readonly emitters: { pos: [number, number, number]; ink: number }[] = [
     { pos: [GRID3 * 0.5, GRID3 * 0.08, GRID3 * 0.5], ink: 0 },
   ];
-  private activeEmitter = 0;
+
   /** Champs de force posés dans la scène. `axis` sert d'axe au tourbillon et de
    *  direction au vent local. */
   private readonly fields: {
@@ -189,7 +189,6 @@ export class FluidSim3D {
     strength: number;
     radius: number;
   }[] = [];
-  private activeField = -1;
 
   /** Encodage de `grabbed` : −2 rien · −1 la boule · 0..n émetteur ·
    *  FIELD_TAG+i champ de force. NE PAS tester `grabbed` à la main : un
@@ -218,10 +217,11 @@ export class FluidSim3D {
   /** Cible saisie : même encodage que `selected` (-2 = aucune). */
   private grabbed = -2;
   /** OBJET SÉLECTIONNÉ (même encodage que `grabbed`) : le dernier posé ou saisi,
-   *  toutes familles confondues. C'est lui, et lui seul, qui porte les poignées
-   *  d'axe — à ne pas confondre avec `activeEmitter` / `activeField`, qui sont
-   *  deux curseurs SÉPARÉS, un par famille, et désignent la cible des réglages
-   *  (encre, type/force/rayon de champ). */
+   *  toutes familles confondues. UNE seule notion d'« objet courant » — il porte
+   *  les poignées, il est mis en évidence, et c'est lui que retire la commande
+   *  de suppression. Il y avait auparavant deux curseurs de plus, un par
+   *  famille, qui ne servaient qu'à la mise en évidence : trois surbrillances
+   *  pour une seule idée. */
   private selected = -2;
   /** Traînée en cours : axe du monde (0/1/2) pour un déplacement contraint,
    *  `AIM_DRAG` pour une réorientation, ou −1 pour le déplacement libre sur le
@@ -1542,14 +1542,23 @@ export class FluidSim3D {
     axis[2] = hz / len;
   }
 
-  /** Nombre de champs de force posés (affiché au HUD, borné par maxFields). */
-  get fieldCount(): number {
-    return this.fields.length;
+  /** Émetteurs posés. La plateforme s'en sert pour dire la vérité plutôt que
+   *  d'annoncer une suppression qui n'aura pas lieu : le dernier émetteur ne se
+   *  retire pas, une scène sans flamme pilote n'a rien à montrer. */
+  get emitterCount(): number {
+    return this.emitters.length;
   }
 
-  /** Index du champ actif (dernier posé ou tenu), −1 si aucun. */
-  get activeFieldIndex(): number {
-    return this.activeField;
+  /** La sélection est-elle un champ de force ? (la plateforme s'en sert pour
+   *  router une même touche « supprimer » vers la bonne famille) */
+  get selectedIsField(): boolean {
+    return this.selected >= FluidSim3D.FIELD_TAG;
+  }
+
+  /** Ne plus rien avoir de sélectionné : les poignées disparaissent. */
+  deselect(): void {
+    this.selected = -2;
+    this.dragAxis = -1;
   }
 
   /** Y a-t-il quelque chose à saisir sous ce point NDC — poignée d'axe ou objet ?
@@ -1581,7 +1590,7 @@ export class FluidSim3D {
       return;
     }
     this.emitters.push({ pos: [nx * GRID3, ny * GRID3, nz * GRID3], ink });
-    this.activeEmitter = this.emitters.length - 1;
+    this.selected = this.emitters.length - 1;
   }
 
   /** Saisie, ajout/retrait d'émetteurs, sphère — tout l'état interactif. */
@@ -1589,11 +1598,8 @@ export class FluidSim3D {
     if (input.reset) {
       this.emitters.length = 1;
       this.fields.length = 0;
-      this.activeField = -1;
-      this.selected = -2;
-      this.dragAxis = -1;
+      this.deselect();
       this.emitters[0] = { pos: [GRID3 * 0.5, GRID3 * 0.08, GRID3 * 0.5], ink: input.emitInk };
-      this.activeEmitter = 0;
       this.spherePos[0] = GRID3 * SIM3_DEFAULTS.sphereStart[0];
       this.spherePos[1] = GRID3 * SIM3_DEFAULTS.sphereStart[1];
       this.spherePos[2] = GRID3 * SIM3_DEFAULTS.sphereStart[2];
@@ -1615,17 +1621,23 @@ export class FluidSim3D {
       const px = t > 0 ? clampXZ(this.rayO[0] + t * this.rayD[0]) : GRID3 * 0.5;
       const pz = t > 0 ? clampXZ(this.rayO[2] + t * this.rayD[2]) : GRID3 * 0.5;
       this.emitters.push({ pos: [px, planeY, pz], ink: input.emitInk });
-      this.activeEmitter = this.emitters.length - 1;
       // Ce qu'on vient de poser est sélectionné : ses poignées sont là tout de
       // suite, précisément quand on veut le relever du plan où il a atterri.
-      this.selected = this.activeEmitter;
+      this.selected = this.emitters.length - 1;
     }
     if (input.removeEmitter && this.emitters.length > 1) {
-      this.emitters.pop();
-      this.activeEmitter = Math.min(this.activeEmitter, this.emitters.length - 1);
-      if (this.selected >= this.emitters.length && this.selected < FluidSim3D.FIELD_TAG) {
-        this.selected = -2;
-      }
+      // Celui qu'on a DÉSIGNÉ, pas le dernier posé. Retirer toujours le dernier
+      // rendait un émetteur du milieu impossible à effacer sans effacer les
+      // autres. Repli sur le dernier quand rien n'est sélectionné.
+      const i =
+        this.selected >= 0 && this.selected < this.emitters.length
+          ? this.selected
+          : this.emitters.length - 1;
+      this.emitters.splice(i, 1);
+      // Les index au-delà glissent d'un cran : toute référence par index doit
+      // tomber, sinon on manipulerait le voisin sans s'en rendre compte.
+      this.deselect();
+      this.grabbed = -2;
     }
     // CHAMPS DE FORCE : posés à mi-hauteur, là où le panache passe.
     if (input.addField && this.fields.length < SIM3_DEFAULTS.maxFields) {
@@ -1644,15 +1656,14 @@ export class FluidSim3D {
         strength: input.fieldStrength,
         radius: input.fieldRadius,
       });
-      this.activeField = this.fields.length - 1;
-      this.selected = FluidSim3D.FIELD_TAG + this.activeField;
+      this.selected = FluidSim3D.FIELD_TAG + this.fields.length - 1;
     }
     if (input.removeField && this.fields.length > 0) {
-      this.fields.pop();
-      this.activeField = this.fields.length - 1;
-      if (this.selected - FluidSim3D.FIELD_TAG >= this.fields.length) {
-        this.selected = -2;
-      }
+      const tagged = this.selected - FluidSim3D.FIELD_TAG;
+      const i = tagged >= 0 && tagged < this.fields.length ? tagged : this.fields.length - 1;
+      this.fields.splice(i, 1);
+      this.deselect();
+      this.grabbed = -2;
     }
     // Les réglages s'appliquent aux FUTURS champs et à celui qu'on TIENT — jamais
     // à un champ posé et lâché (même piège que l'encre des émetteurs, qui
@@ -1703,11 +1714,6 @@ export class FluidSim3D {
           this.dragAxis = -1;
           if (this.grabbed !== -2) {
             this.selected = this.grabbed;
-          }
-          if (this.heldEmitter >= 0) {
-            this.activeEmitter = this.heldEmitter;
-          } else if (this.heldField >= 0) {
-            this.activeField = this.heldField;
           }
         }
       }
@@ -2060,7 +2066,8 @@ export class FluidSim3D {
       d[o + 4] = f?.axis[0] ?? 0;
       d[o + 5] = f?.axis[1] ?? 1;
       d[o + 6] = f?.axis[2] ?? 0;
-      d[o + 7] = f === undefined ? 0 : (f.type < 0.5 ? 0 : 1) + (i === this.activeField ? 2 : 0);
+      const fieldSel = i === this.selected - FluidSim3D.FIELD_TAG;
+      d[o + 7] = f === undefined ? 0 : (f.type < 0.5 ? 0 : 1) + (fieldSel ? 2 : 0);
     }
     // Gizmos des ÉMETTEURS : un vec4 chacun — (centre monde, w = −1 si le slot
     // est vide, sinon numéro d'encre + 4 si c'est l'émetteur actif). Un émetteur
@@ -2072,7 +2079,7 @@ export class FluidSim3D {
       d[o] = (e?.pos[0] ?? 0) / GRID3 - 0.5;
       d[o + 1] = (e?.pos[1] ?? 0) / GRID3 - 0.5;
       d[o + 2] = (e?.pos[2] ?? 0) / GRID3 - 0.5;
-      d[o + 3] = e === undefined ? -1 : e.ink + (i === this.activeEmitter ? 4 : 0);
+      d[o + 3] = e === undefined ? -1 : e.ink + (i === this.selected ? 4 : 0);
     }
     // Options des gizmos : rayon d'émission (le monde EST le cube unité, donc la
     // fraction de grille est déjà le rayon monde) et boîte visible.

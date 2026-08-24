@@ -440,6 +440,26 @@ particules. Quand une limite n'apparaît qu'en WARNING console, écouter
   (`cross(axe, rel)` pour le tourbillon, `axe · force` pour le vent local).
   Vérifié CDP : axe (1,0,0) → (0,822 · −0,273 · −0,500), norme 1,00000, position
   inchangée, et l'axe survit à une nouvelle saisie du champ.
+- **La sélection devient le modèle d'interaction (2026-08-25)** — elle n'était
+  qu'un détail de dessin ; elle est maintenant la seule notion d'« objet
+  courant ». Trois conséquences :
+   1. **Une seule surbrillance.** `activeEmitter` et `activeField` (deux
+      curseurs séparés, un par famille) ne servaient QUE ça, et donnaient trois
+      objets en évidence pour une seule idée. Supprimés — la mise en évidence
+      vient de `selected`. Les accesseurs `fieldCount`/`activeFieldIndex`
+      étaient morts, partis avec eux.
+   2. **X supprime ce qu'on a DÉSIGNÉ**, pas le dernier posé : un émetteur ou un
+      champ du milieu était jusqu'ici impossible à effacer sans effacer ses
+      voisins. Repli sur le dernier quand rien n'est sélectionné, ce qui garde
+      l'ancien enchaînement A/X. Après un `splice`, les index au-delà glissent
+      d'un cran : la sélection ET `grabbed` doivent tomber, sinon on manipule le
+      voisin sans le savoir. La touche est routée vers la bonne famille par
+      `selectedIsField`, et refuse honnêtement de retirer la flamme pilote.
+   3. **Échap désélectionne** (`deselect()`). Cliquer dans le vide ne le fait
+      PAS : le clic gauche dans le vide sert à orbiter, on perdrait les poignées
+      à chaque coup d'œil autour de l'objet.
+  Vérifié CDP : trois émetteurs d'encres [0,1,2], le MILIEU désigné à la souris
+  puis supprimé → [0,2] (un « pop » du dernier aurait laissé [0,1]).
 - **Vent horizontal (2026-08-24)** : force DIFFÉRENTIELLE proportionnelle à la
   matière, ajoutée dans `forces3d.wgsl` à côté de la poussée, avec un cap qui
   OSCILLE (uniform `wind` = force / amplitude / période / cap, slots 60-63).

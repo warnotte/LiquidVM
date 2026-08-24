@@ -448,8 +448,20 @@ async function boot(): Promise<void> {
       input.addEmitter = true;
       say(`➕ émetteur : ${INK_NAMES[input.emitInk] ?? '?'}`);
     } else if (k === 'x') {
-      input.removeEmitter = true;
-      say('➖ émetteur');
+      // Une seule touche « supprimer », routée vers la famille de l'objet
+      // désigné : c'est ce qu'on VOIT en surbrillance qui disparaît.
+      if (sim.selectedIsField) {
+        input.removeField = true;
+        say('➖ champ de force');
+      } else if (sim.emitterCount > 1) {
+        input.removeEmitter = true;
+        say('➖ émetteur');
+      } else {
+        say('la flamme pilote ne se retire pas');
+      }
+    } else if (e.code === 'Escape') {
+      sim.deselect();
+      say('rien de sélectionné');
     } else if (k === 'o') {
       input.sphereActive = !input.sphereActive;
       say(input.sphereActive ? 'boule : présente' : 'boule : retirée');
@@ -585,7 +597,7 @@ async function boot(): Promise<void> {
       ],
       buttons: [
         { label: '＋ poser un champ', action: () => (input.addField = true) },
-        { label: '－ retirer le dernier', action: () => (input.removeField = true) },
+        { label: '－ retirer', action: () => (input.removeField = true) },
       ],
     },
     {
@@ -613,7 +625,16 @@ async function boot(): Promise<void> {
     })),
     [
       { label: '➕ émetteur', action: () => (input.addEmitter = true) },
-      { label: '➖', action: () => (input.removeEmitter = true) },
+      {
+        label: '➖',
+        action: () => {
+          if (sim.selectedIsField) {
+            input.removeField = true;
+          } else {
+            input.removeEmitter = true;
+          }
+        },
+      },
       { label: '⚪ boule', isActive: () => input.sphereActive, action: () => (input.sphereActive = !input.sphereActive) },
     ],
     [
@@ -676,7 +697,7 @@ async function boot(): Promise<void> {
         `<b>LiquidVM 3D</b> · ${GRID3}³ · encre : ${INK_NAMES[input.emitInk] ?? '?'} · ${solver} · ${Math.round(fps)} FPS` +
         `${renderScale < 1 ? ` · rendu ${Math.round(renderScale * 100)} %` : ''}` +
         `${input.paused ? ' · ⏸ pause' : ''}${demoOn ? ' · <b>DÉMO</b> (D : reprendre la main)' : ' · D : démo'}<br>` +
-        '1/2/3 : encre · glisser un objet : déplacer · ses poignées : un seul axe · son bouton violet : orienter · A : + émetteur · X : − émetteur · O : boule · B : braises · F : repères<br>' +
+        '1/2/3 : encre · glisser un objet : déplacer · ses poignées : un seul axe · son bouton violet : orienter · A : + émetteur · X : supprimer · Échap : désélectionner · O : boule · B : braises · F : repères<br>' +
         'glisser : orbiter · clic droit : souffler · molette : zoom · espace : pause · R : reset · E : export .vdb';
     }
     if (selftest && frames === SELFTEST_FRAMES) {
