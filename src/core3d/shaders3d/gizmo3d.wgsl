@@ -12,10 +12,26 @@
 //  3. Pas de tampon de profondeur : les gizmos passent devant le volume, comme
 //     les repères de Blender. Un repère à moitié caché ne repère plus rien.
 //
-// Géométrie par champ : trois cercles orthogonaux (la « sphère vide » de
-// Blender, qui donne le rayon d'action et se lit sous tous les angles) et un axe
-// fléché qui donne l'ORIENTATION — axe de rotation pour un tourbillon, sens du
-// courant pour un vent.
+// Trois familles de repères, dans cet ordre le long de `vertex_index` :
+//
+//  CHAMPS DE FORCE — trois cercles orthogonaux (la « sphère vide » de Blender,
+//  qui donne le rayon d'action et se lit sous tous les angles) et un axe fléché
+//  qui donne l'ORIENTATION : axe de rotation pour un tourbillon, sens du
+//  courant pour un vent.
+//
+//  ÉMETTEURS — un anneau posé à plat au rayon d'émission (la surface qui
+//  souffle) et une tige fléchée vers le haut (le sens du panache), à la couleur
+//  de l'encre émise. Sans lui, un émetteur posé hors de la flamme est INVISIBLE
+//  tant qu'il n'a pas allumé quelque chose ; et rien ne disait lequel des
+//  quatre les touches 1/2/3 allaient repeindre.
+//
+//  BOÎTE — les 12 arêtes du cube unité, très pâles. Les parois sont le seul
+//  élément de la scène qu'on ne voit qu'à ses effets (le panache qui s'écrase
+//  au plafond, la fumée qui revient) ; les tracer situe tout le reste.
+//
+// Les têtes de flèche sont BILLBOARDÉES (perpendiculaire prise dans le plan de
+// l'écran) : une flèche vue dans l'axe de son propre plan se réduisait à un
+// trait, précisément quand on l'orientait vers la caméra.
 
 struct RenderParams {
   cam_pos: vec4f,   // xyz: caméra (monde), w: tan(fov/2)
@@ -35,6 +51,14 @@ struct RenderParams {
   giz1_b: vec4f,
   giz2_a: vec4f,
   giz2_b: vec4f,
+  // Un vec4 par émetteur : (xyz centre monde, w = −1 aucun, sinon numéro
+  // d'encre + 4 si l'émetteur est actif).
+  emit0: vec4f,
+  emit1: vec4f,
+  emit2: vec4f,
+  emit3: vec4f,
+  // x: rayon d'émission (monde) · y: boîte visible (0/1) · zw: libres.
+  opts: vec4f,
 }
 
 @group(0) @binding(0) var<uniform> R: RenderParams;
@@ -42,10 +66,25 @@ struct RenderParams {
 const SEG: u32 = 64u;
 const CIRCLE_VERTS: u32 = SEG * 2u;
 const RING_VERTS: u32 = CIRCLE_VERTS * 3u;
-const AXIS_VERTS: u32 = 6u;
-const FIELD_VERTS: u32 = RING_VERTS + AXIS_VERTS;
-/** Sommets à dessiner : 3 champs. */
-const TOTAL_VERTS: u32 = FIELD_VERTS * 3u;
+const ARROW_VERTS: u32 = 6u;
+const FIELD_VERTS: u32 = RING_VERTS + ARROW_VERTS;
+const FIELDS_TOTAL: u32 = FIELD_VERTS * 3u;
+
+const ESEG: u32 = 32u;
+const EMIT_RING: u32 = ESEG * 2u;
+const EMIT_VERTS: u32 = EMIT_RING + ARROW_VERTS;
+const EMITS_TOTAL: u32 = EMIT_VERTS * 4u;
+
+const BOX_VERTS: u32 = 24u;
+
+/** Sommets à dessiner : 3 champs + 4 émetteurs + la boîte. */
+const TOTAL_VERTS: u32 = FIELDS_TOTAL + EMITS_TOTAL + BOX_VERTS;
+
+// Palette des trois matières (canaux xyz) — dupliquée depuis config3d.ts, comme
+// dans raymarch.wgsl : fumée grise, encre magenta, vapeur de carburant ambrée.
+const INK0 = vec3f(0.55, 0.60, 0.68);
+const INK1 = vec3f(1.00, 0.30, 0.80);
+const INK2 = vec3f(1.00, 0.80, 0.45);
 
 struct VSOut {
   @builtin(position) pos: vec4f,
@@ -68,6 +107,31 @@ fn giz_b(i: u32) -> vec4f {
   }
 }
 
+fn emit_slot(i: u32) -> vec4f {
+  switch i {
+    case 0u: { return R.emit0; }
+    case 1u: { return R.emit1; }
+    case 2u: { return R.emit2; }
+    default: { return R.emit3; }
+  }
+}
+
+fn ink_color(i: u32) -> vec3f {
+  switch i {
+    case 0u: { return INK0; }
+    case 1u: { return INK1; }
+    default: { return INK2; }
+  }
+}
+
+/** Sommet dégénéré, hors du volume de clip : aucun pixel rasterisé. */
+fn hidden() -> VSOut {
+  var out: VSOut;
+  out.pos = vec4f(0.0, 0.0, 2.0, 1.0);
+  out.color = vec4f(0.0);
+  return out;
+}
+
 // Projection : l'INVERSE de la construction des rayons du raymarch — ce moteur
 // n'a pas de matrice (même convention que les braises).
 fn project(p: vec3f) -> vec4f {
@@ -85,70 +149,146 @@ fn project(p: vec3f) -> vec4f {
   );
 }
 
+/** Perpendiculaire à `axis` prise dans le PLAN DE L'ÉCRAN : la tête de flèche
+ *  garde sa largeur sous tout angle. Repli sur la verticale caméra quand l'axe
+ *  pointe vers l'objectif — là, la flèche est de toute façon un point. */
+fn billboard_perp(axis: vec3f) -> vec3f {
+  var cp = cross(axis, R.cam_fwd.xyz);
+  if (length(cp) < 1e-3) {
+    cp = cross(axis, R.cam_up.xyz);
+  }
+  if (length(cp) < 1e-3) {
+    return vec3f(1.0, 0.0, 0.0);
+  }
+  return normalize(cp);
+}
+
+/** Un des 6 sommets de la flèche : tige `origin`→`origin + axis*len`, plus deux
+ *  barbes ramenées vers l'arrière. `k` ∈ [0,6). */
+fn arrow_point(k: u32, origin: vec3f, axis: vec3f, len: f32) -> vec3f {
+  let tip = origin + axis * len;
+  let perp = billboard_perp(axis) * (len * 0.07);
+  let back = tip - axis * (len * 0.125);
+  switch k {
+    case 0u: { return origin; }
+    case 1u: { return tip; }
+    case 2u: { return tip; }
+    case 3u: { return back + perp; }
+    case 4u: { return tip; }
+    default: { return back - perp; }
+  }
+}
+
+/** Un des 12 côtés du cube unité : `k` ∈ [0,24), deux sommets par arête. */
+fn box_point(k: u32) -> vec3f {
+  let e = k / 2u;
+  let t = f32(k % 2u);
+  let axis_i = e / 4u;
+  let c = e % 4u;
+  let b0 = f32(c & 1u);
+  let b1 = f32((c >> 1u) & 1u);
+  var p = vec3f(b0, b1, t);
+  if (axis_i == 0u) {
+    p = vec3f(t, b0, b1);
+  } else if (axis_i == 1u) {
+    p = vec3f(b0, t, b1);
+  }
+  return p - 0.5;
+}
+
 @vertex
 fn vs_gizmo(@builtin(vertex_index) vi: u32) -> VSOut {
   var out: VSOut;
-  let fi = vi / FIELD_VERTS;
-  let li = vi % FIELD_VERTS;
-  let a = giz_a(fi);
-  let b = giz_b(fi);
-  if (a.w <= 0.0) {
-    // Champ absent : sommet dégénéré, aucun pixel rasterisé.
-    out.pos = vec4f(0.0, 0.0, 2.0, 1.0);
-    out.color = vec4f(0.0);
+
+  // ---- CHAMPS DE FORCE ----
+  if (vi < FIELDS_TOTAL) {
+    let fi = vi / FIELD_VERTS;
+    let li = vi % FIELD_VERTS;
+    let a = giz_a(fi);
+    let b = giz_b(fi);
+    if (a.w <= 0.0) {
+      return hidden();
+    }
+
+    var p: vec3f;
+    if (li < RING_VERTS) {
+      // Trois cercles orthogonaux : le rayon d'action, lisible sous tout angle.
+      let ring = li / CIRCLE_VERTS;
+      let k = li % CIRCLE_VERTS;
+      let ang = (f32(k / 2u) + f32(k % 2u)) * 6.2831853 / f32(SEG);
+      let c = cos(ang) * a.w;
+      let s = sin(ang) * a.w;
+      if (ring == 0u) {
+        p = a.xyz + vec3f(c, s, 0.0);
+      } else if (ring == 1u) {
+        p = a.xyz + vec3f(0.0, c, s);
+      } else {
+        p = a.xyz + vec3f(c, 0.0, s);
+      }
+    } else {
+      // Axe fléché : orientation du champ (axe de rotation ou sens du courant),
+      // tracé de part et d'autre du centre.
+      let axis = normalize(b.xyz);
+      p = arrow_point(li - RING_VERTS, a.xyz - axis * (a.w * 1.3), axis, a.w * 2.6);
+    }
+
+    // Bleu froid pour un tourbillon, ambre pour un vent ; le champ ACTIF passe
+    // en blanc chaud et opaque — la sélection se voit sans avoir à la deviner.
+    // « ref » et « active » sont des mots RÉSERVÉS WGSL (famille from / target /
+    // move / smooth) : d'où is_active.
+    let kind = b.w - select(0.0, 2.0, b.w >= 2.0);
+    let is_active = b.w >= 2.0;
+    var col = select(vec3f(0.42, 0.72, 1.0), vec3f(1.0, 0.70, 0.28), kind > 0.5);
+    var alpha = 0.55;
+    if (is_active) {
+      col = mix(col, vec3f(1.0), 0.55);
+      alpha = 0.95;
+    }
+    out.pos = project(p);
+    out.color = vec4f(col, alpha);
     return out;
   }
 
-  var p: vec3f;
-  if (li < RING_VERTS) {
-    // Trois cercles orthogonaux : le rayon d'action, lisible sous tout angle.
-    let ring = li / CIRCLE_VERTS;
-    let k = li % CIRCLE_VERTS;
-    let ang = (f32(k / 2u) + f32(k % 2u)) * 6.2831853 / f32(SEG);
-    let c = cos(ang) * a.w;
-    let s = sin(ang) * a.w;
-    if (ring == 0u) {
-      p = a.xyz + vec3f(c, s, 0.0);
-    } else if (ring == 1u) {
-      p = a.xyz + vec3f(0.0, c, s);
+  // ---- ÉMETTEURS ----
+  if (vi < FIELDS_TOTAL + EMITS_TOTAL) {
+    let vk = vi - FIELDS_TOTAL;
+    let ei = vk / EMIT_VERTS;
+    let li = vk % EMIT_VERTS;
+    let e = emit_slot(ei);
+    let r = R.opts.x;
+    if (e.w < 0.0 || r <= 0.0) {
+      return hidden();
+    }
+
+    var p: vec3f;
+    if (li < EMIT_RING) {
+      // Anneau posé à plat : la surface qui souffle, à son vrai rayon.
+      let ang = (f32(li / 2u) + f32(li % 2u)) * 6.2831853 / f32(ESEG);
+      p = e.xyz + vec3f(cos(ang) * r, 0.0, sin(ang) * r);
     } else {
-      p = a.xyz + vec3f(c, 0.0, s);
+      // Tige fléchée vers le haut : le sens du panache.
+      p = arrow_point(li - EMIT_RING, e.xyz, vec3f(0.0, 1.0, 0.0), r * 2.6);
     }
-  } else {
-    // Axe fléché : orientation du champ (axe de rotation ou sens du courant).
-    let axis = normalize(b.xyz);
-    let tip = a.xyz + axis * (a.w * 1.3);
-    let tail = a.xyz - axis * (a.w * 1.3);
-    // « ref » et « active » sont des mots RÉSERVÉS WGSL (famille from / target /
-    // move / smooth) : d'où up_ref et is_active.
-    var up_ref = vec3f(0.0, 0.0, 1.0);
-    if (abs(axis.z) > 0.9) {
-      up_ref = vec3f(1.0, 0.0, 0.0);
+
+    let is_active = e.w >= 4.0;
+    let ink = u32(e.w - select(0.0, 4.0, is_active));
+    var col = ink_color(ink);
+    var alpha = 0.5;
+    if (is_active) {
+      col = mix(col, vec3f(1.0), 0.5);
+      alpha = 0.9;
     }
-    let perp = normalize(cross(axis, up_ref)) * (a.w * 0.18);
-    let back = tip - axis * (a.w * 0.32);
-    switch (li - RING_VERTS) {
-      case 0u: { p = tail; }
-      case 1u: { p = tip; }
-      case 2u: { p = tip; }
-      case 3u: { p = back + perp; }
-      case 4u: { p = tip; }
-      default: { p = back - perp; }
-    }
+    out.pos = project(p);
+    out.color = vec4f(col, alpha);
+    return out;
   }
 
-  // Bleu froid pour un tourbillon, ambre pour un vent ; le champ ACTIF passe en
-  // blanc chaud et opaque — la sélection se voit sans avoir à la deviner.
-  let kind = b.w - select(0.0, 2.0, b.w >= 2.0);
-  let is_active = b.w >= 2.0;
-  var col = select(vec3f(0.42, 0.72, 1.0), vec3f(1.0, 0.70, 0.28), kind > 0.5);
-  var alpha = 0.55;
-  if (is_active) {
-    col = mix(col, vec3f(1.0), 0.55);
-    alpha = 0.95;
+  // ---- BOÎTE ----
+  if (R.opts.y < 0.5) {
+    return hidden();
   }
-  out.pos = project(p);
-  out.color = vec4f(col, alpha);
+  out.pos = project(box_point(vi - FIELDS_TOTAL - EMITS_TOTAL));
+  out.color = vec4f(0.62, 0.68, 0.78, 0.22);
   return out;
 }
 

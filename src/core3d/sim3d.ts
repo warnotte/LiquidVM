@@ -85,9 +85,11 @@ export interface Frame3DInput {
   emberStrength: number;
 }
 
-/** Sommets de la passe de gizmos : 3 champs × (3 cercles de 64 segments + un
- *  axe fléché de 3 segments) — doit rester d'accord avec gizmo3d.wgsl. */
-const GIZMO_VERTS = 3 * (64 * 2 * 3 + 6);
+/** Sommets de la passe de gizmos — doit rester d'accord avec gizmo3d.wgsl, dans
+ *  le MÊME ORDRE : 3 champs (3 cercles de 64 segments + un axe fléché), puis
+ *  4 émetteurs (un anneau de 32 segments + une tige fléchée), puis les 12 arêtes
+ *  de la boîte. */
+const GIZMO_VERTS = 3 * (64 * 2 * 3 + 6) + 4 * (32 * 2 + 6) + 24;
 
 const COMPUTE = GPUShaderStage.COMPUTE;
 const FRAGMENT = GPUShaderStage.FRAGMENT;
@@ -168,8 +170,9 @@ export class FluidSim3D {
   private needSpeciesInit = true;
 
   private readonly simData = new Float32Array(96);
-  private readonly renderData = new Float32Array(60);
-  private lastRender = new Float32Array(60).fill(Number.NaN);
+  // 80 floats utilisés (20 vec4) depuis les gizmos d'émetteurs et de boîte.
+  private readonly renderData = new Float32Array(80);
+  private lastRender = new Float32Array(80).fill(Number.NaN);
 
   /** Émetteurs (positions en voxels) — le premier est l'émetteur historique. */
   private readonly emitters: { pos: [number, number, number]; ink: number }[] = [
@@ -378,7 +381,8 @@ export class FluidSim3D {
       });
       const renderUniforms = device.createBuffer({
         label: 'render3d-uniforms',
-        size: 256,
+        // 512 o depuis les gizmos d'émetteurs et de boîte (80 floats utilisés).
+        size: 512,
         usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
       });
 
@@ -1821,6 +1825,22 @@ export class FluidSim3D {
       d[o + 6] = f?.axis[2] ?? 0;
       d[o + 7] = f === undefined ? 0 : (f.type < 0.5 ? 0 : 1) + (i === this.activeField ? 2 : 0);
     }
+    // Gizmos des ÉMETTEURS : un vec4 chacun — (centre monde, w = −1 si le slot
+    // est vide, sinon numéro d'encre + 4 si c'est l'émetteur actif). Un émetteur
+    // posé loin de la flamme n'a AUCUNE trace visible tant qu'il n'a rien
+    // allumé ; et rien ne disait lequel des quatre les touches 1/2/3 repeignent.
+    for (let i = 0; i < 4; i++) {
+      const e = input.feedback ? this.emitters[i] : undefined;
+      const o = 60 + i * 4;
+      d[o] = (e?.pos[0] ?? 0) / GRID3 - 0.5;
+      d[o + 1] = (e?.pos[1] ?? 0) / GRID3 - 0.5;
+      d[o + 2] = (e?.pos[2] ?? 0) / GRID3 - 0.5;
+      d[o + 3] = e === undefined ? -1 : e.ink + (i === this.activeEmitter ? 4 : 0);
+    }
+    // Options des gizmos : rayon d'émission (le monde EST le cube unité, donc la
+    // fraction de grille est déjà le rayon monde) et boîte visible.
+    d[76] = SIM3_DEFAULTS.emitterRadius;
+    d[77] = input.feedback ? 1 : 0;
     let dirty = false;
     for (let i = 0; i < d.length; i++) {
       if (d[i] !== this.lastRender[i]) {
