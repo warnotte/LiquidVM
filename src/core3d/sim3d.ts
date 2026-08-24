@@ -16,6 +16,7 @@ import multigridWGSL from './shaders3d/multigrid3d.wgsl?raw';
 import raymarchWGSL from './shaders3d/raymarch.wgsl?raw';
 import glowWGSL from './shaders3d/glow3d.wgsl?raw';
 import postWGSL from './shaders3d/post3d.wgsl?raw';
+import gizmoWGSL from './shaders3d/gizmo3d.wgsl?raw';
 import embersWGSL from './shaders3d/embers3d.wgsl?raw';
 import embersDrawWGSL from './shaders3d/embers_draw.wgsl?raw';
 import clearWGSL from './shaders3d/clear3d.wgsl?raw';
@@ -83,6 +84,10 @@ export interface Frame3DInput {
   embersOn: boolean;
   emberStrength: number;
 }
+
+/** Sommets de la passe de gizmos : 3 champs × (3 cercles de 64 segments + un
+ *  axe fléché de 3 segments) — doit rester d'accord avec gizmo3d.wgsl. */
+const GIZMO_VERTS = 3 * (64 * 2 * 3 + 6);
 
 const COMPUTE = GPUShaderStage.COMPUTE;
 const FRAGMENT = GPUShaderStage.FRAGMENT;
@@ -163,8 +168,8 @@ export class FluidSim3D {
   private needSpeciesInit = true;
 
   private readonly simData = new Float32Array(96);
-  private readonly renderData = new Float32Array(48);
-  private lastRender = new Float32Array(48).fill(Number.NaN);
+  private readonly renderData = new Float32Array(60);
+  private lastRender = new Float32Array(60).fill(Number.NaN);
 
   /** Émetteurs (positions en voxels) — le premier est l'émetteur historique. */
   private readonly emitters: { pos: [number, number, number]; ink: number }[] = [
@@ -244,6 +249,7 @@ export class FluidSim3D {
       bloomH: GPUComputePipeline;
       bloomV: GPUComputePipeline;
       present: GPURenderPipeline;
+      gizmo: GPURenderPipeline;
       embersUpdate: GPUComputePipeline;
       embersDraw: GPURenderPipeline;
     },
@@ -277,6 +283,7 @@ export class FluidSim3D {
     private readonly post: {
       readonly post2dLayout: GPUBindGroupLayout;
       readonly presentLayout: GPUBindGroupLayout;
+      readonly gizmoBind: GPUBindGroup;
       readonly sampler: GPUSampler;
       readonly bloomA: GPUTextureView;
       readonly bloomW: number;
@@ -471,6 +478,10 @@ export class FluidSim3D {
           ],
         }),
         // Présentation : scène HDR + bloom → canvas (tone-mapping).
+        gizmo: device.createBindGroupLayout({
+          label: 'gizmo-3d',
+          entries: [{ binding: 0, visibility: GPUShaderStage.VERTEX, buffer: { type: 'uniform' } }],
+        }),
         present: device.createBindGroupLayout({
           label: 'present-3d',
           entries: [
@@ -514,9 +525,10 @@ export class FluidSim3D {
           createShaderModule(device, 'post3d.wgsl', postWGSL),
           createShaderModule(device, 'clear3d.wgsl', clearWGSL),
         ]);
-      const [embersM, embersDrawM] = await Promise.all([
+      const [embersM, embersDrawM, gizmoM] = await Promise.all([
         createShaderModule(device, 'embers3d.wgsl', embersWGSL),
         createShaderModule(device, 'embers_draw.wgsl', embersDrawWGSL),
+        createShaderModule(device, 'gizmo3d.wgsl', gizmoWGSL),
       ]);
       const multigridM = await createShaderModule(device, 'multigrid3d.wgsl', multigridWGSL);
       const speciesM = await createShaderModule(device, 'species3d.wgsl', speciesWGSL);
@@ -536,7 +548,7 @@ export class FluidSim3D {
           compute: { module, entryPoint },
         });
 
-      const [velPredict, velCorrect, forces, curlPipe, blurCurlPipe, confine, denPredict, denCorrect, divergencePipe, jacobi, gradient, mgSmooth, mgResidual, mgRestrictPipe, mgProlongPipe, speciesPipe, clearOne, clearRgba, clearScalar, render, glowInjectPipe, glowBlurPipe, bloomDownPipe, bloomHPipe, bloomVPipe, presentPipe, embersUpdatePipe, embersDrawPipe] =
+      const [velPredict, velCorrect, forces, curlPipe, blurCurlPipe, confine, denPredict, denCorrect, divergencePipe, jacobi, gradient, mgSmooth, mgResidual, mgRestrictPipe, mgProlongPipe, speciesPipe, clearOne, clearRgba, clearScalar, render, glowInjectPipe, glowBlurPipe, bloomDownPipe, bloomHPipe, bloomVPipe, presentPipe, gizmoPipe, embersUpdatePipe, embersDrawPipe] =
         await Promise.all([
           compute('vel-predict-3d', L.velPredict, advectVelM, 'predict'),
           compute('vel-correct-3d', L.velCorrect, advectVelM, 'correct'),
@@ -590,7 +602,25 @@ export class FluidSim3D {
             layout: device.createPipelineLayout({ label: 'present-3d-pl', bindGroupLayouts: [L.present] }),
             vertex: { module: postM, entryPoint: 'vs_present' },
             fragment: { module: postM, entryPoint: 'fs_present', targets: [{ format: targetFormat }] },
-            primitive: { topology: 'triangle-list' },
+          }),
+          device.createRenderPipelineAsync({
+            label: 'gizmo-3d',
+            layout: device.createPipelineLayout({ label: 'gizmo-3d-pl', bindGroupLayouts: [L.gizmo] }),
+            vertex: { module: gizmoM, entryPoint: 'vs_gizmo' },
+            fragment: {
+              module: gizmoM,
+              entryPoint: 'fs_gizmo',
+              targets: [
+                {
+                  format: targetFormat,
+                  blend: {
+                    color: { srcFactor: 'src-alpha', dstFactor: 'one-minus-src-alpha', operation: 'add' },
+                    alpha: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha', operation: 'add' },
+                  },
+                },
+              ],
+            },
+            primitive: { topology: 'line-list' },
           }),
           compute('embers-update-3d', L.embersSim, embersM, 'update'),
           // Braises : billboards ADDITIFS dans la passe HDR (avant le bloom).
@@ -1007,6 +1037,7 @@ export class FluidSim3D {
           bloomH: bloomHPipe,
           bloomV: bloomVPipe,
           present: presentPipe,
+          gizmo: gizmoPipe,
           embersUpdate: embersUpdatePipe,
           embersDraw: embersDrawPipe,
         },
@@ -1016,6 +1047,11 @@ export class FluidSim3D {
         {
           post2dLayout: L.post2d,
           presentLayout: L.present,
+          gizmoBind: device.createBindGroup({
+            label: 'gizmo-3d',
+            layout: L.gizmo,
+            entries: [{ binding: 0, resource: { buffer: renderUniforms } }],
+          }),
           sampler,
           bloomA,
           bloomW: BLOOM_W,
@@ -1253,6 +1289,11 @@ export class FluidSim3D {
     pp.setPipeline(this.pipelines.present);
     pp.setBindGroup(0, this.presentBind!);
     pp.draw(3);
+    // GIZMOS : lignes tracées APRÈS le tone-mapping, sur la même cible — elles
+    // gardent leur couleur exacte et passent devant le volume (voir gizmo3d.wgsl).
+    pp.setPipeline(this.pipelines.gizmo);
+    pp.setBindGroup(0, this.post.gizmoBind);
+    pp.draw(GIZMO_VERTS);
     pp.end();
 
     this.submitList[0] = encoder.finish();
@@ -1764,16 +1805,21 @@ export class FluidSim3D {
     d[33] = input.bloomStrength;
     d[34] = input.embersOn ? input.emberStrength : 0;
     d[35] = GRID3;
-    // Gizmos des champs de force : centre en MONDE et rayon SIGNÉ (positif =
-    // tourbillon, négatif = vent local, 0 = pas de champ). Coupés avec les
-    // retours visuels, comme le fuseau du souffle.
+    // Gizmos des champs de force : deux vec4 par champ — (centre monde, rayon
+    // monde) et (axe unitaire, type + 2 si actif). La boîte étant le cube
+    // unité, le rayon en fraction de grille EST le rayon monde. Coupés avec les
+    // retours visuels (F), comme le fuseau du souffle.
     for (let i = 0; i < 3; i++) {
       const f = input.feedback ? this.fields[i] : undefined;
-      const o = 36 + i * 4;
+      const o = 36 + i * 8;
       d[o] = (f?.pos[0] ?? 0) / GRID3 - 0.5;
       d[o + 1] = (f?.pos[1] ?? 0) / GRID3 - 0.5;
       d[o + 2] = (f?.pos[2] ?? 0) / GRID3 - 0.5;
-      d[o + 3] = f === undefined ? 0 : f.radius * (f.type < 0.5 ? 1 : -1);
+      d[o + 3] = f?.radius ?? 0;
+      d[o + 4] = f?.axis[0] ?? 0;
+      d[o + 5] = f?.axis[1] ?? 1;
+      d[o + 6] = f?.axis[2] ?? 0;
+      d[o + 7] = f === undefined ? 0 : (f.type < 0.5 ? 0 : 1) + (i === this.activeField ? 2 : 0);
     }
     let dirty = false;
     for (let i = 0; i < d.length; i++) {

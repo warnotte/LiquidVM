@@ -17,11 +17,9 @@ struct RenderParams {
   blow_a: vec4f,    // retour visuel du souffle : xyz origine (monde), w rayon
   blow_b: vec4f,    // xyz direction, w actif (0/1)
   style: vec4f,     // x: lueur du feu, y: bloom (présentation), zw: libres
-  // Gizmos des champs de force : xyz centre (monde), w rayon SIGNÉ — positif
-  // pour un tourbillon, négatif pour un vent local, nul si le champ est absent.
-  field0: vec4f,
-  field1: vec4f,
-  field2: vec4f,
+  // Suivent les gizmos des champs de force (2 vec4 par champ) — dessinés par
+  // gizmo3d.wgsl en LIGNES après la présentation, pas ici : un repère doit être
+  // net, pas un halo noyé dans le volume.
 }
 
 @group(0) @binding(0) var<uniform> R: RenderParams;
@@ -203,23 +201,6 @@ fn fs_main(frag: VSOut) -> @location(0) vec4f {
         if (bt > 0.0) {
           let bd = distance(pos, R.blow_a.xyz + R.blow_b.xyz * bt) / max(R.blow_a.w, 1e-4);
           acc += transmit * exp(-bd * bd * 2.0) * vec3f(0.05, 0.08, 0.13) * adv * 22.0;
-        }
-      }
-      // Gizmos des CHAMPS DE FORCE : coque lumineuse à la frontière du champ.
-      // Un modificateur qu'on ne voit pas est un modificateur qu'on ne sait pas
-      // placer — d'où ce halo, coupé avec les retours visuels (F).
-      for (var gi = 0u; gi < 3u; gi++) {
-        var g = R.field0;
-        if (gi == 1u) {
-          g = R.field1;
-        } else if (gi == 2u) {
-          g = R.field2;
-        }
-        if (abs(g.w) > 1e-4) {
-          let gd = distance(pos, g.xyz) / abs(g.w) - 1.0;
-          let shell = exp(-gd * gd * 70.0);
-          let tint = select(vec3f(0.10, 0.05, 0.02), vec3f(0.03, 0.07, 0.12), g.w > 0.0);
-          acc += transmit * shell * tint * adv * 7.0;
         }
       }
       if (ext > 0.005) {

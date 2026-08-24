@@ -340,8 +340,7 @@ particules. Quand une limite n'apparaît qu'en WARNING console, écouter
   TIENT, jamais à distance — le même piège que l'encre des émetteurs, qui
   éteignait la flamme pilote. GIZMOS : coque lumineuse à la frontière du champ
   dans le raymarch (bleu = tourbillon, ambre = vent), coupée avec les retours
-  visuels (F) — un modificateur invisible est un modificateur qu'on ne sait pas
-  placer. La zone de SAISIE suit le rayon visible du champ (même bonus que la
+  visuels (F). La zone de SAISIE suit le rayon visible du champ (même bonus que la
   boule) : sans ça on cliquait sur le gizmo sans rien attraper. Étendre à un
   nouveau type = un cas dans `field_force` (forces3d.wgsl) et une entrée dans
   FIELD_NAMES.
@@ -352,6 +351,28 @@ particules. Quand une limite n'apparaît qu'en WARNING console, écouter
   présenté, symptôme parfaitement muet. Passer par `heldEmitter` / `heldField`,
   jamais par un test brut. Et depuis, une exception dans la frame est ATTRAPÉE
   et affichée par l'overlay au lieu de noircir l'écran (les deux pages 3D).
+- **Couche de GIZMOS (`gizmo3d.wgsl`, 2026-08-24)** — la base d'outillage : une
+  passe de LIGNES 3D dessinée après la présentation, directement sur le canvas.
+  Dès qu'on sait tracer des segments dans le monde, tout repère se dessine
+  (champs de force aujourd'hui ; émetteurs, boîte, manipulateurs demain).
+  Trois choix la rendent solide :
+   1. AUCUN tampon de géométrie — tout vient de `vertex_index` et de l'uniforme
+      de rendu, comme les braises et les points d'eau : la doctrine zéro-alloc
+      tient sans effort. Le compte `GIZMO_VERTS` (sim3d.ts) doit rester d'accord
+      avec les constantes du shader.
+   2. APRÈS le tone-mapping, pas dedans : les lignes gardent exactement leur
+      couleur, sans être délavées par l'exposition ni bavées par le bloom. C'est
+      ce qui sépare un repère d'un halo — la première version, une coque
+      lumineuse dans le raymarch, ne ressemblait à rien.
+   3. Pas de tampon de profondeur : les gizmos passent devant le volume, comme
+      les repères de Blender. Un repère à moitié caché ne repère plus rien.
+  Géométrie par champ : trois cercles orthogonaux (la « sphère vide » de
+  Blender — donne le rayon d'action et se lit sous tout angle) et un axe fléché
+  qui donne l'ORIENTATION. Le champ ACTIF passe en blanc opaque : la sélection
+  se voit. Uniforme : deux vec4 par champ à partir du slot 36 de `renderData`
+  (centre monde + rayon monde ; axe unitaire + type, +2 si actif).
+  Mots réservés WGSL rencontrés ici : **`ref`** et **`active`** — la famille
+  compte maintenant `from`, `target`, `move`, `smooth`, `ref`, `active`.
 - **Vent horizontal (2026-08-24)** : force DIFFÉRENTIELLE proportionnelle à la
   matière, ajoutée dans `forces3d.wgsl` à côté de la poussée, avec un cap qui
   OSCILLE (uniform `wind` = force / amplitude / période / cap, slots 60-63).
