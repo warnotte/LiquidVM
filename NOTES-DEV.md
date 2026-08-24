@@ -40,6 +40,8 @@ typecheck strict + bundle. Aucune dépendance runtime.
   SELFTEST-OK/FAIL. Options : `&hold=0|1|2` (fige le mode de frontières), `&nowall`.
   Hook de debug CDP : `window.__frame` (muter les réglages en plein vol).
 - `node .selftest/cdp-check.mjs 9333` : attend le rapport, capture les 5 vues.
+  `cdp-gizmos.mjs 9333` (page 3D) : repères + poignées, avec de VRAIS événements
+  souris — vérifie qu'un geste diagonal sur une poignée ne bouge qu'un axe.
   `cdp-timeline.mjs 9333 [action] [index] [ms] [n] [tag] [urlFilter]` : captures
   périodiques — l'outil pour localiser une mort dans le temps.
 - Chrome de test : `--remote-debugging-port=9333 --user-data-dir=<tmp>
@@ -354,7 +356,7 @@ particules. Quand une limite n'apparaît qu'en WARNING console, écouter
 - **Couche de GIZMOS (`gizmo3d.wgsl`, 2026-08-24)** — la base d'outillage : une
   passe de LIGNES 3D dessinée après la présentation, directement sur le canvas.
   Dès qu'on sait tracer des segments dans le monde, tout repère se dessine
-  (champs de force aujourd'hui ; émetteurs, boîte, manipulateurs demain).
+  (champs de force, émetteurs, boîte et manipulateurs y vivent tous).
   Trois choix la rendent solide :
    1. AUCUN tampon de géométrie — tout vient de `vertex_index` et de l'uniforme
       de rendu, comme les braises et les points d'eau : la doctrine zéro-alloc
@@ -373,6 +375,47 @@ particules. Quand une limite n'apparaît qu'en WARNING console, écouter
   (centre monde + rayon monde ; axe unitaire + type, +2 si actif).
   Mots réservés WGSL rencontrés ici : **`ref`** et **`active`** — la famille
   compte maintenant `from`, `target`, `move`, `smooth`, `ref`, `active`.
+  **Trois familles de repères (2026-08-25)**, dans cet ordre le long de
+  `vertex_index` — l'ordre est la seule chose qui les sépare, et `GIZMO_VERTS`
+  doit rester d'accord avec les constantes du shader :
+   - CHAMPS DE FORCE : ci-dessus. Slots 36-59 de `renderData`.
+   - ÉMETTEURS : un anneau posé à plat AU VRAI RAYON D'ÉMISSION et une tige
+     fléchée vers le haut, à la couleur de l'encre ; l'actif passe en clair.
+     Deux trous bouchés : un émetteur posé loin de la flamme n'avait aucune
+     trace visible tant qu'il n'avait rien allumé, et rien ne disait lequel des
+     quatre les touches 1/2/3 allaient repeindre. Slots 60-75.
+   - BOÎTE : les 12 arêtes du cube unité, très pâles. Les parois n'étaient
+     visibles qu'à leurs effets. Slot 77.
+   - POIGNÉES (manipulateurs) : trois flèches d'axe portées par l'objet
+     SÉLECTIONNÉ. Slots 78-83.
+  Têtes de flèche BILLBOARDÉES (perpendiculaire prise dans le plan de l'écran) :
+  une flèche vue dans l'axe de son propre plan se réduisait à un trait,
+  précisément quand on l'orientait vers la caméra.
+  `renderData` : 60 → 84 floats, tampon de rendu 256 → 512 o. Les autres shaders
+  déclarent un `RenderParams` PLUS COURT (ils s'arrêtent à `style`) — c'est
+  légal, un préfixe suffit tant que le tampon lié est au moins aussi grand.
+- **Manipulateurs (poignées d'axe, 2026-08-25)** — glisser un objet le déplaçait
+  sur le plan face caméra : trois degrés de liberté d'un coup, impossible de le
+  monter sans le décaler. Saisir une flèche contraint le geste à SON axe. Quatre
+  points qui ne s'improvisent pas :
+   1. **La droite de contrainte est FIGÉE à la saisie** (`dragOrigin`). La
+      recalculer depuis l'objet qui bouge fait boucler la mesure sur elle-même
+      et l'objet dérive tout seul. Le point de prise est mémorisé aussi
+      (`dragGrip`) : rien ne saute sous le curseur au premier pas.
+   2. **Le centre reste libre** (`handleInner`, 30 % de la longueur). Sans ce
+      vide, cliquer au milieu d'un objet tombe dans la zone de saisie des TROIS
+      poignées à la fois et donne un déplacement contraint là où on voulait le
+      libre. Le vide est transmis au shader (`opts.w`), pas recopié.
+   3. **Longueur constante à l'ÉCRAN** (elle grandit avec la distance) : une
+      poignée de taille fixe dans le monde est invisible de loin et démesurée de
+      près. Calculée côté CPU et transmise (`sel.w`), pour que le dessin et la
+      saisie partagent exactement le même nombre.
+   4. `selected` (le porteur des poignées, toutes familles confondues) n'est PAS
+      `activeEmitter`/`activeField` (deux curseurs par famille, cibles des
+      réglages). Trois notions voisines : ne pas les fusionner à la légère.
+  Vérifié par vrais événements souris CDP (`.selftest/cdp-gizmos.mjs`, scène en
+  pause) : geste diagonal sur la poignée Y → seul Y bouge (Δ = 0 · 0,2306 · 0) ;
+  même geste sur le corps → les trois axes bougent.
 - **Vent horizontal (2026-08-24)** : force DIFFÉRENTIELLE proportionnelle à la
   matière, ajoutée dans `forces3d.wgsl` à côté de la poussée, avec un cap qui
   OSCILLE (uniform `wind` = force / amplitude / période / cap, slots 60-63).
