@@ -57,8 +57,14 @@ struct RenderParams {
   emit1: vec4f,
   emit2: vec4f,
   emit3: vec4f,
-  // x: rayon d'émission (monde) · y: boîte visible (0/1) · zw: libres.
+  // x: rayon d'émission (monde) · y: boîte visible (0/1) · z: axe en cours de
+  // traînée (−1 aucun, 0/1/2) · w: départ des flèches de poignée, en fraction de
+  // leur longueur (le centre reste libre pour le déplacement non contraint).
   opts: vec4f,
+  // Poignées de l'objet sélectionné : xyz centre monde, w longueur monde
+  // (0 = rien de sélectionné). La longueur vient du CPU pour que le dessin et
+  // la saisie partagent exactement le même nombre.
+  sel: vec4f,
 }
 
 @group(0) @binding(0) var<uniform> R: RenderParams;
@@ -76,9 +82,10 @@ const EMIT_VERTS: u32 = EMIT_RING + ARROW_VERTS;
 const EMITS_TOTAL: u32 = EMIT_VERTS * 4u;
 
 const BOX_VERTS: u32 = 24u;
+const HANDLE_VERTS: u32 = ARROW_VERTS * 3u;
 
-/** Sommets à dessiner : 3 champs + 4 émetteurs + la boîte. */
-const TOTAL_VERTS: u32 = FIELDS_TOTAL + EMITS_TOTAL + BOX_VERTS;
+/** Sommets à dessiner : 3 champs + 4 émetteurs + la boîte + les 3 poignées. */
+const TOTAL_VERTS: u32 = FIELDS_TOTAL + EMITS_TOTAL + BOX_VERTS + HANDLE_VERTS;
 
 // Palette des trois matières (canaux xyz) — dupliquée depuis config3d.ts, comme
 // dans raymarch.wgsl : fumée grise, encre magenta, vapeur de carburant ambrée.
@@ -284,11 +291,42 @@ fn vs_gizmo(@builtin(vertex_index) vi: u32) -> VSOut {
   }
 
   // ---- BOÎTE ----
-  if (R.opts.y < 0.5) {
+  if (vi < FIELDS_TOTAL + EMITS_TOTAL + BOX_VERTS) {
+    if (R.opts.y < 0.5) {
+      return hidden();
+    }
+    out.pos = project(box_point(vi - FIELDS_TOTAL - EMITS_TOTAL));
+    out.color = vec4f(0.62, 0.68, 0.78, 0.22);
+    return out;
+  }
+
+  // ---- POIGNÉES DE MANIPULATION ----
+  // Trois flèches aux couleurs d'axe (X rouge, Y vert, Z bleu, la convention
+  // que tout le monde connaît), portées par l'objet sélectionné. Attraper une
+  // flèche contraint le déplacement à SON axe : la traînée libre sur le plan
+  // face caméra reste au corps de l'objet.
+  if (R.sel.w <= 0.0) {
     return hidden();
   }
-  out.pos = project(box_point(vi - FIELDS_TOTAL - EMITS_TOTAL));
-  out.color = vec4f(0.62, 0.68, 0.78, 0.22);
+  let hk = vi - FIELDS_TOTAL - EMITS_TOTAL - BOX_VERTS;
+  let ai = hk / ARROW_VERTS;
+  var axis = vec3f(1.0, 0.0, 0.0);
+  var col = vec3f(0.95, 0.36, 0.36);
+  if (ai == 1u) {
+    axis = vec3f(0.0, 1.0, 0.0);
+    col = vec3f(0.48, 0.90, 0.42);
+  } else if (ai == 2u) {
+    axis = vec3f(0.0, 0.0, 1.0);
+    col = vec3f(0.38, 0.60, 1.00);
+  }
+  var alpha = 0.8;
+  if (u32(max(R.opts.z, 0.0)) == ai && R.opts.z >= 0.0) {
+    col = mix(col, vec3f(1.0), 0.5);
+    alpha = 1.0;
+  }
+  let inner = R.sel.w * R.opts.w;
+  out.pos = project(arrow_point(hk % ARROW_VERTS, R.sel.xyz + axis * inner, axis, R.sel.w - inner));
+  out.color = vec4f(col, alpha);
   return out;
 }
 

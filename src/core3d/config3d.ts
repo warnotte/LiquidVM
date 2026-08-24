@@ -147,6 +147,19 @@ export const SIM3_DEFAULTS = {
   blowForce: 260,
   /** Saisie au pointeur : distance rayon-objet maximale pour attraper (monde). */
   grabRadius: 0.11,
+  /** MANIPULATEURS (poignées d'axe de l'objet sélectionné) : longueur en fraction
+   *  de la demi-hauteur de l'écran — donc CONSTANTE à l'écran, elle grandit avec
+   *  la distance à la caméra. Une poignée de taille fixe dans le monde devient
+   *  invisible de loin et démesurée de près. `handleGrip` : rayon de saisie, en
+   *  fraction de cette longueur (constant à l'écran lui aussi). */
+  handleScreen: 0.24,
+  handleGrip: 0.2,
+  /** Départ des flèches, en fraction de leur longueur : elles laissent le CENTRE
+   *  libre. Sans ce vide, cliquer au milieu de l'objet tombait dans la zone de
+   *  saisie des trois poignées à la fois et donnait un déplacement contraint là
+   *  où on voulait le déplacement libre. Transmis au shader (opts.w) plutôt que
+   *  recopié : une seule source pour le dessin et pour la saisie. */
+  handleInner: 0.3,
   /** Sphère-obstacle : rayon (fraction du monde), position de départ. */
   sphereRadius: 0.085,
   sphereStart: [0.5, 0.45, 0.5],

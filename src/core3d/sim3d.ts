@@ -88,8 +88,8 @@ export interface Frame3DInput {
 /** Sommets de la passe de gizmos — doit rester d'accord avec gizmo3d.wgsl, dans
  *  le MÊME ORDRE : 3 champs (3 cercles de 64 segments + un axe fléché), puis
  *  4 émetteurs (un anneau de 32 segments + une tige fléchée), puis les 12 arêtes
- *  de la boîte. */
-const GIZMO_VERTS = 3 * (64 * 2 * 3 + 6) + 4 * (32 * 2 + 6) + 24;
+ *  de la boîte, puis les 3 poignées d'axe de l'objet sélectionné. */
+const GIZMO_VERTS = 3 * (64 * 2 * 3 + 6) + 4 * (32 * 2 + 6) + 24 + 3 * 6;
 
 const COMPUTE = GPUShaderStage.COMPUTE;
 const FRAGMENT = GPUShaderStage.FRAGMENT;
@@ -170,9 +170,9 @@ export class FluidSim3D {
   private needSpeciesInit = true;
 
   private readonly simData = new Float32Array(96);
-  // 80 floats utilisés (20 vec4) depuis les gizmos d'émetteurs et de boîte.
-  private readonly renderData = new Float32Array(80);
-  private lastRender = new Float32Array(80).fill(Number.NaN);
+  // 84 floats utilisés (21 vec4) depuis les poignées de manipulation.
+  private readonly renderData = new Float32Array(84);
+  private lastRender = new Float32Array(84).fill(Number.NaN);
 
   /** Émetteurs (positions en voxels) — le premier est l'émetteur historique. */
   private readonly emitters: { pos: [number, number, number]; ink: number }[] = [
@@ -214,8 +214,21 @@ export class FluidSim3D {
   private sphereOn = true;
   /** Vitesse de la sphère (voxels/s) — condition de bord mobile, lissée EMA. */
   private readonly sphereVel: [number, number, number] = [0, 0, 0];
-  /** Cible saisie : -2 = aucune, -1 = sphère, ≥0 = index d'émetteur. */
+  /** Cible saisie : même encodage que `selected` (-2 = aucune). */
   private grabbed = -2;
+  /** OBJET SÉLECTIONNÉ (même encodage que `grabbed`) : le dernier posé ou saisi,
+   *  toutes familles confondues. C'est lui, et lui seul, qui porte les poignées
+   *  d'axe — à ne pas confondre avec `activeEmitter` / `activeField`, qui sont
+   *  deux curseurs SÉPARÉS, un par famille, et désignent la cible des réglages
+   *  (encre, type/force/rayon de champ). */
+  private selected = -2;
+  /** Traînée le long d'une poignée : axe du monde (0/1/2) ou −1 pour le
+   *  déplacement libre sur le plan face caméra. La DROITE de contrainte est figée
+   *  à la saisie (`dragOrigin`) : la recalculer depuis l'objet qui bouge ferait
+   *  boucler la mesure sur elle-même et l'objet dériverait. */
+  private dragAxis = -1;
+  private readonly dragOrigin: [number, number, number] = [0, 0, 0];
+  private dragGrip = 0;
   private readonly rayO: [number, number, number] = [0, 0, 0];
   private readonly rayD: [number, number, number] = [0, 0, 0];
   private readonly submitList: GPUCommandBuffer[] = [new Uint8Array(0) as unknown as GPUCommandBuffer];
@@ -1369,6 +1382,86 @@ export class FluidSim3D {
     return best;
   }
 
+  /** Position (voxels) de l'objet SÉLECTIONNÉ, ou `undefined` si rien n'est
+   *  sélectionné (ou si c'est la boule et qu'elle a été retirée). */
+  private selectedPos(): [number, number, number] | undefined {
+    if (this.selected === -1) {
+      return this.sphereOn ? this.spherePos : undefined;
+    }
+    if (this.selected >= FluidSim3D.FIELD_TAG) {
+      return this.fields[this.selected - FluidSim3D.FIELD_TAG]?.pos;
+    }
+    if (this.selected >= 0) {
+      return this.emitters[this.selected]?.pos;
+    }
+    return undefined;
+  }
+
+  /** Longueur des poignées EN VOXELS. Constante à l'écran : elle grandit avec la
+   *  distance à la caméra (voir handleScreen). */
+  private handleLength(p: readonly number[]): number {
+    const r = this.renderData;
+    const dx = p[0]! / GRID3 - 0.5 - r[0]!;
+    const dy = p[1]! / GRID3 - 0.5 - r[1]!;
+    const dz = p[2]! / GRID3 - 0.5 - r[2]!;
+    return SIM3_DEFAULTS.handleScreen * Math.hypot(dx, dy, dz) * r[3]! * GRID3;
+  }
+
+  /** Paramètre s du point de la droite `dragOrigin + s·axe` le plus proche du
+   *  rayon courant — la mathématique de toute poignée de translation. NaN quand
+   *  le rayon est PARALLÈLE à l'axe : le point le plus proche est alors
+   *  indéterminé, et le geste n'a de toute façon plus de sens à l'écran. */
+  private axisParam(origin: readonly number[], axis: number): number {
+    const wx = origin[0]! - this.rayO[0];
+    const wy = origin[1]! - this.rayO[1];
+    const wz = origin[2]! - this.rayO[2];
+    const b = this.rayD[axis]!;
+    const along = axis === 0 ? wx : axis === 1 ? wy : wz;
+    const e = wx * this.rayD[0] + wy * this.rayD[1] + wz * this.rayD[2];
+    const denom = 1 - b * b;
+    if (Math.abs(denom) < 1e-4) {
+      return Number.NaN;
+    }
+    return (b * e - along) / denom;
+  }
+
+  /** Distance (voxels) du rayon courant au segment de poignée — qui ne commence
+   *  PAS au centre de l'objet (voir handleInner). */
+  private handleDistance(p: readonly number[], axis: number, len: number): number {
+    const inner = len * SIM3_DEFAULTS.handleInner;
+    const raw = this.axisParam(p, axis);
+    const s = Number.isFinite(raw) ? Math.min(Math.max(raw, inner), len) : inner;
+    const vx = p[0]! - this.rayO[0] + (axis === 0 ? s : 0);
+    const vy = p[1]! - this.rayO[1] + (axis === 1 ? s : 0);
+    const vz = p[2]! - this.rayO[2] + (axis === 2 ? s : 0);
+    const t = vx * this.rayD[0] + vy * this.rayD[1] + vz * this.rayD[2];
+    if (t <= 0) {
+      return Number.POSITIVE_INFINITY;
+    }
+    return Math.hypot(vx - t * this.rayD[0], vy - t * this.rayD[1], vz - t * this.rayD[2]);
+  }
+
+  /** L'axe de poignée sous le rayon (0/1/2), ou −1. Testé AVANT les objets : les
+   *  poignées se DESSINENT par-dessus tout, elles doivent aussi s'attraper par-
+   *  dessus tout — sinon viser la poignée d'un objet revient à saisir l'objet. */
+  private pickHandle(): number {
+    const p = this.selectedPos();
+    if (p === undefined) {
+      return -1;
+    }
+    const len = this.handleLength(p);
+    let best = -1;
+    let bestDist = len * SIM3_DEFAULTS.handleGrip;
+    for (let a = 0; a < 3; a++) {
+      const d = this.handleDistance(p, a, len);
+      if (d < bestDist) {
+        best = a;
+        bestDist = d;
+      }
+    }
+    return best;
+  }
+
   /** Nombre de champs de force posés (affiché au HUD, borné par maxFields). */
   get fieldCount(): number {
     return this.fields.length;
@@ -1379,10 +1472,11 @@ export class FluidSim3D {
     return this.activeField;
   }
 
-  /** Y a-t-il un objet saisissable sous ce point NDC ? (décide saisie vs orbite) */
+  /** Y a-t-il quelque chose à saisir sous ce point NDC — poignée d'axe ou objet ?
+   *  (décide saisie vs orbite) */
   hitTest(ndcX: number, ndcY: number): boolean {
     this.computeRay(ndcX, ndcY);
-    return this.pickTarget() !== -2;
+    return this.pickHandle() >= 0 || this.pickTarget() !== -2;
   }
 
   /** Pilotage scripté (mode démo) : déplace la sphère vers (nx,ny,nz) ∈ [0,1]³,
@@ -1416,6 +1510,8 @@ export class FluidSim3D {
       this.emitters.length = 1;
       this.fields.length = 0;
       this.activeField = -1;
+      this.selected = -2;
+      this.dragAxis = -1;
       this.emitters[0] = { pos: [GRID3 * 0.5, GRID3 * 0.08, GRID3 * 0.5], ink: input.emitInk };
       this.activeEmitter = 0;
       this.spherePos[0] = GRID3 * SIM3_DEFAULTS.sphereStart[0];
@@ -1440,10 +1536,16 @@ export class FluidSim3D {
       const pz = t > 0 ? clampXZ(this.rayO[2] + t * this.rayD[2]) : GRID3 * 0.5;
       this.emitters.push({ pos: [px, planeY, pz], ink: input.emitInk });
       this.activeEmitter = this.emitters.length - 1;
+      // Ce qu'on vient de poser est sélectionné : ses poignées sont là tout de
+      // suite, précisément quand on veut le relever du plan où il a atterri.
+      this.selected = this.activeEmitter;
     }
     if (input.removeEmitter && this.emitters.length > 1) {
       this.emitters.pop();
       this.activeEmitter = Math.min(this.activeEmitter, this.emitters.length - 1);
+      if (this.selected >= this.emitters.length && this.selected < FluidSim3D.FIELD_TAG) {
+        this.selected = -2;
+      }
     }
     // CHAMPS DE FORCE : posés à mi-hauteur, là où le panache passe.
     if (input.addField && this.fields.length < SIM3_DEFAULTS.maxFields) {
@@ -1463,10 +1565,14 @@ export class FluidSim3D {
         radius: input.fieldRadius,
       });
       this.activeField = this.fields.length - 1;
+      this.selected = FluidSim3D.FIELD_TAG + this.activeField;
     }
     if (input.removeField && this.fields.length > 0) {
       this.fields.pop();
       this.activeField = this.fields.length - 1;
+      if (this.selected - FluidSim3D.FIELD_TAG >= this.fields.length) {
+        this.selected = -2;
+      }
     }
     // Les réglages s'appliquent aux FUTURS champs et à celui qu'on TIENT — jamais
     // à un champ posé et lâché (même piège que l'encre des émetteurs, qui
@@ -1484,11 +1590,29 @@ export class FluidSim3D {
     if (input.grab.active) {
       this.computeRay(input.pointer.ndcX, input.pointer.ndcY);
       if (this.grabbed === -2) {
-        this.grabbed = this.pickTarget();
-        if (this.heldEmitter >= 0) {
-          this.activeEmitter = this.heldEmitter;
-        } else if (this.heldField >= 0) {
-          this.activeField = this.heldField;
+        const axis = this.pickHandle();
+        const held = this.selectedPos();
+        if (axis >= 0 && held !== undefined) {
+          // Traînée CONTRAINTE : on fige la droite de contrainte et le point de
+          // prise, pour que l'objet ne saute pas sous le curseur au premier pas.
+          this.grabbed = this.selected;
+          this.dragAxis = axis;
+          this.dragOrigin[0] = held[0];
+          this.dragOrigin[1] = held[1];
+          this.dragOrigin[2] = held[2];
+          const s = this.axisParam(this.dragOrigin, axis);
+          this.dragGrip = Number.isFinite(s) ? s : 0;
+        } else {
+          this.grabbed = this.pickTarget();
+          this.dragAxis = -1;
+          if (this.grabbed !== -2) {
+            this.selected = this.grabbed;
+          }
+          if (this.heldEmitter >= 0) {
+            this.activeEmitter = this.heldEmitter;
+          } else if (this.heldField >= 0) {
+            this.activeField = this.heldField;
+          }
         }
       }
       if (this.grabbed !== -2) {
@@ -1503,6 +1627,20 @@ export class FluidSim3D {
         const py = target[1];
         const pz = target[2];
         const r = this.renderData;
+        const lo = GRID3 * 0.05;
+        const hi = GRID3 * 0.95;
+        if (this.dragAxis >= 0) {
+          // Poignée : un seul degré de liberté, mesuré sur la droite figée.
+          const a = this.dragAxis;
+          const s = this.axisParam(this.dragOrigin, a);
+          if (Number.isFinite(s)) {
+            const floor = a === 1 ? GRID3 * 0.04 : lo;
+            target[a] = Math.min(
+              Math.max(this.dragOrigin[a]! + (s - this.dragGrip), floor),
+              hi,
+            );
+          }
+        } else {
         const denom =
           r[12]! * this.rayD[0] + r[13]! * this.rayD[1] + r[14]! * this.rayD[2];
         if (Math.abs(denom) > 1e-5) {
@@ -1512,18 +1650,18 @@ export class FluidSim3D {
               r[14]! * (target[2] - this.rayO[2])) /
             denom;
           if (t > 0) {
-            const lo = GRID3 * 0.05;
-            const hi = GRID3 * 0.95;
             target[0] = Math.min(Math.max(this.rayO[0] + t * this.rayD[0], lo), hi);
             target[1] = Math.min(Math.max(this.rayO[1] + t * this.rayD[1], GRID3 * 0.04), hi);
             target[2] = Math.min(Math.max(this.rayO[2] + t * this.rayD[2], lo), hi);
           }
         }
+        }
         // La sphère saisie communique sa vitesse au fluide (lissée, plafonnée CFL).
         if (this.grabbed === -1 && dt > 0) {
           const cap = 420 * SCALE3;
           for (let a = 0; a < 3; a++) {
-            const inst = (this.spherePos[a]! - [px, py, pz][a]!) / dt;
+            const prev = a === 0 ? px : a === 1 ? py : pz;
+            const inst = (this.spherePos[a]! - prev) / dt;
             this.sphereVel[a] = 0.55 * this.sphereVel[a]! + 0.45 * inst;
           }
           const mag = Math.hypot(this.sphereVel[0], this.sphereVel[1], this.sphereVel[2]);
@@ -1537,6 +1675,7 @@ export class FluidSim3D {
       }
     } else {
       this.grabbed = -2;
+      this.dragAxis = -1;
     }
     // Hors saisie (ou autre cible), la vitesse de la boule s'amortit vite.
     if (this.grabbed !== -1) {
@@ -1841,6 +1980,16 @@ export class FluidSim3D {
     // fraction de grille est déjà le rayon monde) et boîte visible.
     d[76] = SIM3_DEFAULTS.emitterRadius;
     d[77] = input.feedback ? 1 : 0;
+    d[78] = this.dragAxis;
+    d[79] = SIM3_DEFAULTS.handleInner;
+    // POIGNÉES de l'objet sélectionné : (centre monde, w longueur monde — ≤ 0 =
+    // pas de sélection). La longueur est calculée ICI et non dans le shader pour
+    // que le dessin et la SAISIE partagent exactement le même nombre.
+    const sel = input.feedback ? this.selectedPos() : undefined;
+    d[80] = (sel?.[0] ?? 0) / GRID3 - 0.5;
+    d[81] = (sel?.[1] ?? 0) / GRID3 - 0.5;
+    d[82] = (sel?.[2] ?? 0) / GRID3 - 0.5;
+    d[83] = sel === undefined ? 0 : this.handleLength(sel) / GRID3;
     let dirty = false;
     for (let i = 0; i < d.length; i++) {
       if (d[i] !== this.lastRender[i]) {
