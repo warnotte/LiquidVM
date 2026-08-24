@@ -488,7 +488,12 @@ particules. Quand une limite n'apparaît qu'en WARNING console, écouter
   encres colorées (canaux yz réservés dans la densité) ; qualité du confinement
   de vorticité (flouter |ω|).
 
-## Articulation des trois modes (état 2026-08-23, après le merge de l'eau)
+## Articulation des trois modes — ANALYSE, PLUS UNE FEUILLE DE ROUTE
+
+> Le chantier de l'eau est CLOS depuis le 2026-08-25. Ce qui suit garde sa
+> valeur d'analyse (ce qui se mutualise, ce qui ne doit surtout pas fusionner,
+> pourquoi le couplage a échoué) mais **aucun de ses points numérotés n'est à
+> entreprendre**. Écrit le 2026-08-23, après le merge de l'eau :
 
 Le projet a maintenant TROIS pages : `index.html` (fluide 2D), `3d.html` (feu
 volumétrique), `eau.html` (liquide APIC). Elles partagent déjà `gpu.ts`,
@@ -561,5 +566,12 @@ budget : la fumée du feu voyant la surface de l'eau comme un obstacle mobile
 
 ## Pistes suivantes
 
-Test smartphone (1024², vérifier les limites WebGPU mobiles) · J4/J5/J6 de
-PLAN-EAU · articulation des modes ci-dessus.
+Le chantier de l'EAU est **CLOS** (décision du 2026-08-25) : `eau.html` reste en
+ligne tel quel, J5 et J6 de PLAN-EAU ne seront pas faits, et l'articulation des
+modes décrite plus haut tombe avec — sa coquille 3D commune n'avait de sens que
+pour faire hériter l'eau de l'outillage du feu. La section qui la décrit reste
+comme ANALYSE (ce qui se mutualise, ce qui ne doit surtout pas fusionner), pas
+comme feuille de route.
+
+Reste, côté feu : encres colorées (canaux yz réservés dans la densité) · qualité
+du confinement de vorticité · test smartphone (1024², limites WebGPU mobiles).
