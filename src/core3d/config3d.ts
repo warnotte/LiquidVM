@@ -90,6 +90,7 @@ export interface Sim3Tuning {
   sootFade: number;
   sootDensity: number;
   sootCooling: number;
+  heatCeiling: number;
   openBand: number;
   openStrength: number;
 }
@@ -111,6 +112,7 @@ export function defaultTuning3(): Sim3Tuning {
     sootFade: SIM3_DEFAULTS.sootFade,
     sootDensity: SIM3_DEFAULTS.sootDensity,
     sootCooling: SIM3_DEFAULTS.sootCooling,
+    heatCeiling: SIM3_DEFAULTS.heatCeiling,
     openBand: SIM3_DEFAULTS.openBand,
     openStrength: SIM3_DEFAULTS.openStrength,
     oxygenRecover: SIM3_DEFAULTS.oxygenRecover,
@@ -217,6 +219,13 @@ export const SIM3_DEFAULTS = {
   dustRate: 26,
   dustRadius: 0.3,
   dustHeight: 0.045,
+  /** AMORCE en chaleur (1/s) et PLAFOND du canal de chaleur. À 2, on reste dans
+   *  le domaine des flammes et la plus grosse charge du monde reste aussi
+   *  lumineuse qu'un feu de camp. Au-delà commence le domaine des BOULES DE FEU
+   *  (voir `blackbody` dans raymarch.wgsl) : c'est ce qui sépare une détonation
+   *  d'un gros feu à l'image. La poussée, elle, sature à 2 — cette chaleur-là
+   *  rayonne, elle ne soulève pas. */
+  heatCeiling: 2,
   /** SUIE — une flamme qui manque d'air craque son carburant et noircit. Trois
    *  nombres : le rendement (par unité de carburant chaud privé d'air), son
    *  évanouissement, et sa densité AU RENDU (0 = image strictement identique à

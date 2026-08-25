@@ -649,6 +649,42 @@ particules. Quand une limite n'apparaît qu'en WARNING console, écouter
       l'était pour moitié à cause de ça. Verrou à 100 % (touche **L** ou
       `?lock`), état affiché au HUD. **À utiliser pour toute mesure d'image** —
       sans lui, deux captures ne sont pas comparables.
+- **DEUX DOMAINES D'INCANDESCENCE (2026-08-25)** — la détonation « ne ressemblait
+  pas à une bombe A », et la cause était un PLAFOND, pas un réglage : le canal de
+  chaleur était écrêté à 2 et `blackbody` saturait à 1,7. Une flamme et une bombe
+  y étaient donc **aussi lumineuses l'une que l'autre**, et aucune charge, si
+  grosse soit-elle, ne pouvait le contourner — la chaleur était coupée avant
+  d'arriver au rendu. `blackbody` a maintenant deux domaines : celui des FLAMMES
+  (inchangé au poil près jusqu'à 1,7) puis celui des BOULES DE FEU, où l'émission
+  part en loi de puissance et sature au blanc. Le plafond du canal devient
+  réglable (`heatCeiling`, 2 par défaut = comportement d'avant ; 9 pour le
+  champignon).
+  **La poussée, elle, sature à 2** : le modèle de flottabilité est une
+  linéarisation valable sur une plage étroite, et sans cette saturation ouvrir
+  le domaine d'incandescence aurait multiplié la poussée d'autant. Cette chaleur
+  RAYONNE, elle ne soulève pas.
+- **LA CHARGE DÉPENDAIT DU FRAMERATE — donc de la RÉSOLUTION (2026-08-25)** —
+  signalé par Renaud (« un problème en fonction de la résolution quand je lance
+  une détonation »), et vérifié : c'était bien un bug, avec TROIS régimes fautifs
+  selon le pas de temps.
+  La bouffée injecte un débit tant que sa fenêtre est ouverte, et la fenêtre se
+  fermait AVANT que la tranche partielle soit injectée :
+   - à 60 FPS, la dernière tranche était perdue → 0,033 s injectés sur 0,05
+     (**−33 %**) ;
+   - aux framerates intermédiaires, une tranche de trop → jusqu'à **+67 %** ;
+   - dès que `dt` atteignait la durée de la bouffée (grosses grilles, ou le
+     plafond `dt = 1/30` avec `timeScale`), la fenêtre se refermait sans AUCUNE
+     injection : **la détonation ne faisait rien du tout.**
+  Correction : la tranche vaut `min(reste, dt)`, transmise aux débits en fraction
+  de frame — la charge délivrée vaut alors exactement débit × durée, quel que
+  soit le pas de temps. La fenêtre ne s'écoule plus en PAUSE non plus (sinon la
+  charge se consume pendant qu'on regarde). Vérifié en changeant `timeScale`
+  (0,55 / 1 / 1,65), ce qui change `dt` à framerate égal exactement comme le fait
+  un changement de résolution : `.selftest/cdp-dt-ab.mjs`, même temps SIMULÉ.
+  **Règle à retenir** : toute injection à débit sur une fenêtre doit borner sa
+  tranche par ce qui reste de la fenêtre. Le symptôme est perfide — la scène ne
+  plante pas, elle rend simplement une explosion plus faible, plus forte, ou
+  absente, selon la machine.
 - **Prochaines briques** : séquences VDB animées (File System Access API) ;
   encres colorées (canaux yz réservés dans la densité) ; qualité du confinement
   de vorticité (flouter |ω|).

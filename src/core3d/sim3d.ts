@@ -78,6 +78,9 @@ export interface Frame3DInput {
   /** Hauteur de la détonation (fraction de N) et poussière soulevée au sol. */
   explosionHeight: number;
   dustRate: number;
+  /** Amorce en chaleur : c'est elle qui décide si la boule est une flamme ou
+   *  une boule de feu (avec le plafond `heatCeiling`, côté paramètres). */
+  explosionSpark: number;
   /** Sphère-obstacle présente. */
   sphereActive: boolean;
   /** Retours visuels (fuseau du souffle…) — débrayables (touche F). */
@@ -229,6 +232,10 @@ export class FluidSim3D {
   private readonly burstPos: [number, number, number] = [0, 0, 0];
   private burstRadius = 0;
   private burstLeft = 0;
+  /** Fraction de CETTE frame passée dans la fenêtre d'injection (0 à 1). Les
+   *  débits sont multipliés par elle : la charge délivrée vaut alors exactement
+   *  débit × durée, quel que soit le pas de temps. */
+  private burstFrac = 0;
   /** Graine des grumeaux de la charge : avancée à chaque détonation pour que
    *  deux explosions ne soient pas jumelles, mais AVANCÉE D'UN PAS FIXE — la
    *  même suite de détonations rejoue donc à l'identique, ce qu'on veut d'un
@@ -1164,7 +1171,7 @@ export class FluidSim3D {
     // Le rendu d'abord : la saisie et le souffle lisent la base caméra depuis
     // renderData — elle doit être celle de cette frame.
     this.writeRenderUniforms(input, aspect);
-    this.processInteraction(input, dt);
+    this.processInteraction(input, dt, running);
     if (running) {
       this.simTime += dt;
       this.writeSimUniforms(dt, input);
@@ -1621,7 +1628,7 @@ export class FluidSim3D {
   }
 
   /** Saisie, ajout/retrait d'émetteurs, sphère — tout l'état interactif. */
-  private processInteraction(input: Frame3DInput, dt: number): void {
+  private processInteraction(input: Frame3DInput, dt: number, running: boolean): void {
     if (input.reset) {
       this.emitters.length = 1;
       this.fields.length = 0;
@@ -1689,7 +1696,19 @@ export class FluidSim3D {
       this.burstLeft = SIM3_DEFAULTS.explosionTime;
       this.burstSeed = (this.burstSeed + 7.31) % 97;
     }
-    if (this.burstLeft > 0) {
+    // TRANCHE de la fenêtre d'injection couverte par cette frame. Le `min` est
+    // tout le sujet : sans lui, la charge délivrée dépend du PAS DE TEMPS, donc
+    // du framerate, donc de la RÉSOLUTION — une grille plus fine tourne moins
+    // vite. Trois régimes fautifs coexistaient : la dernière tranche était
+    // perdue (sous-injection), les framerates intermédiaires en ajoutaient une
+    // de trop (sur-injection jusqu'à +67 %), et dès que dt atteignait la durée
+    // de la bouffée la fenêtre se refermait AVANT la moindre injection — une
+    // détonation strictement sans effet, ce qui est le cas des grosses grilles.
+    // La fenêtre ne s'écoule pas non plus en PAUSE : sinon la charge se consume
+    // pendant qu'on regarde, et repartir donne une explosion amputée.
+    this.burstFrac = 0;
+    if (running && this.burstLeft > 0 && dt > 1e-6) {
+      this.burstFrac = Math.min(this.burstLeft, dt) / dt;
       this.burstLeft = Math.max(this.burstLeft - dt, 0);
     }
     // CHAMPS DE FORCE : posés à mi-hauteur, là où le panache passe.
@@ -2038,10 +2057,12 @@ export class FluidSim3D {
     d[93] = this.burstPos[1];
     d[94] = this.burstPos[2];
     d[95] = this.burstRadius;
-    const firing = this.burstLeft > 0 ? 1 : 0;
+    // Les DÉBITS portent la fraction de frame ; le drapeau reste binaire (il ne
+    // sert qu'à sauter le bloc dans le shader).
+    const firing = this.burstFrac;
     d[96] = firing * input.explosionFuel;
-    d[97] = firing * SIM3_DEFAULTS.explosionSpark;
-    d[98] = firing;
+    d[97] = firing * input.explosionSpark;
+    d[98] = firing > 0 ? 1 : 0;
     d[99] = this.burstSeed;
     // Suie : rendement et évanouissement (le rendu lit sa densité côté render).
     d[100] = p.sootYield;
@@ -2055,6 +2076,7 @@ export class FluidSim3D {
     d[108] = firing * input.dustRate;
     d[109] = SIM3_DEFAULTS.dustRadius * GRID3;
     d[110] = SIM3_DEFAULTS.dustHeight * GRID3;
+    d[111] = p.heatCeiling;
     // Oxygène : apport du souffle (blow_force.w) et récupération lente.
     d[27] = D.blowOxygen;
     d[59] = p.oxygenRecover;

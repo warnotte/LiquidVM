@@ -74,6 +74,10 @@ const TUNE_MUSHROOM: Partial<Sim3Tuning> = {
   // 0,07/26 le chapeau est une dalle ; boîte close il retrouve ses lobes ; à
   // 0,035/8 il les garde ET la boîte ne se remplit pas.
   openBand: 0.035, openStrength: 8,
+  // Le plafond de chaleur ouvre le domaine des BOULES DE FEU. La poussée sature
+  // à 2 de son côté, donc relever ce plafond n'ajoute pas de flottabilité : il
+  // n'ajoute que de la LUMIÈRE.
+  heatCeiling: 9,
 };
 
 /** Réglages de DÉTONATION d'un preset (ils vivent sur l'entrée, pas sur les
@@ -83,12 +87,14 @@ interface BoomTune {
   explosionFuel: number;
   explosionHeight: number;
   dustRate: number;
+  explosionSpark: number;
 }
 const BOOM_DEFAULT: BoomTune = {
   explosionRadius: SIM3_DEFAULTS.explosionRadius,
   explosionFuel: SIM3_DEFAULTS.explosionFuel,
   explosionHeight: SIM3_DEFAULTS.explosionHeight,
   dustRate: SIM3_DEFAULTS.dustRate,
+  explosionSpark: SIM3_DEFAULTS.explosionSpark,
 };
 // Charge PETITE, posée au ras du sol. Contre-intuitif — « atomique » n'appelle
 // pas une charge énorme : dans une boîte de taille fixe, une grosse charge
@@ -98,10 +104,15 @@ const BOOM_DEFAULT: BoomTune = {
 // C'est la POUSSIÈRE qui est poussée à fond : froide, elle n'enfle rien, elle ne
 // monte que parce que la boule l'aspire — c'est exactement ce qui fait le pied.
 const BOOM_MUSHROOM: BoomTune = {
-  explosionRadius: 0.055,
-  explosionFuel: 65,
+  explosionRadius: 0.058,
+  explosionFuel: 58,
   explosionHeight: 0.07,
   dustRate: 55,
+  // AMORCE ÉNORME : c'est elle qui fait la différence entre un gros feu et une
+  // bombe. Avec le plafond de chaleur relevé (voir TUNE_MUSHROOM), elle porte le
+  // cœur loin au-dessus du domaine des flammes, là où l'émission part en loi de
+  // puissance et sature au blanc.
+  explosionSpark: 190,
 };
 
 // PRESETS du panneau : appliqués À CHAUD par-dessus les défauts (déterministe
@@ -374,6 +385,7 @@ async function boot(): Promise<void> {
     explosionFuel: SIM3_DEFAULTS.explosionFuel,
     explosionHeight: SIM3_DEFAULTS.explosionHeight,
     dustRate: SIM3_DEFAULTS.dustRate,
+    explosionSpark: SIM3_DEFAULTS.explosionSpark,
     sphereActive: true,
     feedback: true,
     exposure: SIM3_DEFAULTS.exposure,

@@ -39,7 +39,9 @@ struct Params {
   soot: vec4f,
   // x: largeur de la bande éponge (voxels, 0 = boîte close), y: sa force.
   open_box: vec4f,
-  // POUSSIÈRE soulevée : x débit, y rayon horizontal (voxels), z épaisseur.
+  // POUSSIÈRE soulevée : x débit, y rayon horizontal (voxels), z épaisseur,
+  // w: PLAFOND du canal de chaleur — 2 pour une flamme, bien plus pour une
+  // boule de feu (voir le second domaine de `blackbody` dans raymarch.wgsl).
   dust: vec4f,
 }
 
@@ -274,7 +276,7 @@ fn correct(@builtin(global_invocation_id) gid: vec3u) {
     val.x += P.dust.x * dt * exp(-dr * dr * 1.4) * exp(-dh * dh * 2.0);
   }
 
-  val = min(val, vec4f(3.0, 3.0, 3.0, 2.0));
+  val = min(val, vec4f(3.0, 3.0, 3.0, max(P.dust.w, 2.0)));
 
   // Éponge : la matière s'éteint près des parois ouvertes au lieu de s'y empiler.
   val *= sponge3(center, dt);

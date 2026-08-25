@@ -164,7 +164,12 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
   // Boussinesq à deux voies : la chaleur pousse vers le haut, le poids propre des
   // matières tire vers le bas (l'encre lourde retombe, le carburant froid coule).
   let dn = density_at(pv);
-  vel.y += dt * (P.diss.w * dn.w - dot(P.ink_weights.xyz, dn.xyz));
+  // La poussée SATURE au plafond des flammes. Le modèle de flottabilité est une
+  // linéarisation valable sur une plage étroite ; au-delà, la chaleur d'une
+  // boule de feu RAYONNE (elle éclaire), elle ne soulève pas proportionnellement.
+  // Sans cette saturation, ouvrir le domaine d'incandescence multiplierait la
+  // poussée d'autant et enverrait la scène au plafond.
+  vel.y += dt * (P.diss.w * min(dn.w, 2.0) - dot(P.ink_weights.xyz, dn.xyz));
 
   // VENT horizontal. Force DIFFÉRENTIELLE, proportionnelle à la matière
   // présente — exactement comme la poussée. Un vent UNIFORME serait vain : dans

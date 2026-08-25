@@ -91,9 +91,19 @@ fn ink_albedo(s: vec4f) -> vec3f {
   return (INK0 * s.x + INK1 * s.y + INK2 * s.z) / max(total, 1e-4);
 }
 
+// Deux DOMAINES, pas une seule courbe. Jusqu'à 1,7 c'est celui des FLAMMES, et
+// la courbe n'y change pas d'un poil. Au-dessus commence celui des BOULES DE
+// FEU : plusieurs ordres de grandeur plus haut, où l'émission part en loi de
+// puissance et la couleur sature vers le blanc.
+// Sans ce second domaine, la plus grosse explosion imaginable reste aussi
+// lumineuse qu'un feu de camp — c'est CE plafond qui empêchait la détonation de
+// ressembler à autre chose qu'à un gros feu, et aucun réglage de charge ne
+// pouvait le contourner puisque la chaleur était écrêtée avant d'arriver ici.
 fn blackbody(heat: f32) -> vec3f {
-  let h = clamp(heat, 0.0, 1.7);
-  return vec3f(h * 1.6, h * h * 0.9, h * h * h * 0.42);
+  let h = min(heat, 1.7);
+  let flame = vec3f(h * 1.6, h * h * 0.9, h * h * h * 0.42);
+  let over = max(heat - 1.7, 0.0);
+  return flame + vec3f(1.0, 0.97, 0.92) * (over * over * 3.5);
 }
 
 // Lueur du feu diffusée (volume grossier, trilinéaire = flou voulu).
