@@ -13,6 +13,7 @@ import {
   INK_COLORS,
   INK_NAMES,
   setGrid3,
+  vcyclesFor,
   GRID3Y,
   HEIGHT3,
   FIELD_NAMES,
@@ -400,7 +401,9 @@ async function boot(): Promise<void> {
     paused: false,
     reset: false,
     multigrid: SIM3_DEFAULTS.multigrid,
-    vcycles: SIM3_DEFAULTS.vcycles,
+    // Le défaut suit la RÉSOLUTION : un seul cycle laisse la pression
+    // sous-convergée au-delà de 256³, et le panache s'y couche au sol.
+    vcycles: vcyclesFor(GRID3),
     jacobiIterations: SIM3_DEFAULTS.jacobiIterations,
     params: defaultTuning3(),
     emitInk: 0,

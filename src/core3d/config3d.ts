@@ -45,6 +45,20 @@ export function estimateVram3(n: number, stretch = HEIGHT3): number {
 }
 
 /** À appeler AVANT la création de la simulation. Valide et propage les dérivés. */
+/** V-cycles nécessaires à une résolution donnée. Le compte ne monte pas parce
+ *  que le problème est « plus dur » dans l'absolu, mais parce que notre cycle
+ *  n'est pas idéal : les masques d'obstacle se dégradent en descendant la
+ *  pyramide, et plus la grille est fine, plus elle a de niveaux. */
+export function vcyclesFor(n: number): number {
+  if (n >= 384) {
+    return 4;
+  }
+  if (n > 256) {
+    return 2;
+  }
+  return 1;
+}
+
 export function setGrid3(n: number, stretch = HEIGHT3): void {
   if ((GRID3_CHOICES as readonly number[]).includes(n)) {
     GRID3 = n;
@@ -164,6 +178,12 @@ export const SIM3_DEFAULTS = {
   /** Solveur de pression : multigrid par défaut, Jacobi en repli comparatif.
    *  1 V-cycle warm-starté suffit pour le visuel — 2 coûtent ~6 balayages de plus. */
   multigrid: true,
+  /** V-cycles de pression. UN SEUL suffit jusqu'à 256³, pas au-delà : mesuré à
+   *  384³, la pression sous-convergée laisse un écoulement latéral parasite qui
+   *  couche le panache au ras du sol au lieu de le laisser monter — le symptôme
+   *  ressemble à s'y méprendre à un obstacle qui « attire » la fumée, alors
+   *  qu'aucun obstacle n'est en cause (vérifié boule retirée). Voir
+   *  `vcyclesFor()`, qui donne le défaut en fonction de la résolution. */
   vcycles: 1,
   /** Itérations de Jacobi quand le multigrid est coupé. */
   jacobiIterations: 36,

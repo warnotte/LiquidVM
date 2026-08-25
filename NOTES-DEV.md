@@ -68,6 +68,26 @@ typecheck strict + bundle. Aucune dépendance runtime.
 
 ## Pièges durement payés — ne pas re-tomber dedans
 
+- **SOUS-CONVERGENCE DE LA PRESSION À HAUTE RÉSOLUTION (2026-08-26)** — signalé
+  par Renaud comme « la sphère semble attirer la fumée », et « comme si le mode
+  démo était activé ». Ce n'était NI la sphère NI le mode démo.
+  Mesuré, page fraîche, scène par défaut à 384³ (`.selftest/cdp-sphere.mjs`) :
+   - multigrid ×1 → le panache est couché au ras du sol et étalé ;
+   - **boule RETIRÉE, même symptôme** — donc l'obstacle n'est pas en cause ;
+   - **Jacobi 60 itérations → propre** ; c'est donc le solveur de pression ;
+   - multigrid ×4 → le panache remonte.
+  Un seul V-cycle suffit jusqu'à 256³ et plus au-delà : la pression
+  sous-convergée laisse un écoulement latéral parasite. Le défaut suit désormais
+  la résolution (`vcyclesFor()` : 1 jusqu'à 256, 2 au-delà, 4 à partir de 384).
+  **Leçon de diagnostic** : un symptôme qui DÉSIGNE un objet (« c'est la
+  sphère ») doit être vérifié en RETIRANT l'objet. Ici l'obstacle ne faisait que
+  rendre visible un écoulement parasite qui existait sans lui.
+  **RESTE OUVERT** : à ×4 une dérive latérale résiduelle subsiste à 384³. La
+  piste la plus probable est la dégradation des masques d'obstacle en descendant
+  la pyramide (plus la grille est fine, plus elle a de niveaux) — c'est
+  exactement la famille de bugs décrite dans le journal J4 de PLAN-EAU. Coût
+  mesuré du passage à ×4 : 384³ tombe à 20 FPS.
+
 - **TESTER CE QUE L'UTILISATEUR PEUT FAIRE (2026-08-26)** — le piège le plus
   coûteux de la session, et il n'était pas dans le moteur. Mes harnais CDP
   préparaient TOUJOURS la scène avant un tir : flamme pilote coupée, boule
