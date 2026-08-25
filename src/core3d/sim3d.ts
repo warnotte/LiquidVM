@@ -78,6 +78,8 @@ export interface Frame3DInput {
   /** Hauteur de la détonation (fraction de N) et poussière soulevée au sol. */
   explosionHeight: number;
   dustRate: number;
+  /** Durée d'arrachement du sol — distincte de celle de la charge. */
+  dustTime: number;
   /** Amorce en chaleur : c'est elle qui décide si la boule est une flamme ou
    *  une boule de feu (avec le plafond `heatCeiling`, côté paramètres). */
   explosionSpark: number;
@@ -236,6 +238,10 @@ export class FluidSim3D {
    *  débits sont multipliés par elle : la charge délivrée vaut alors exactement
    *  débit × durée, quel que soit le pas de temps. */
   private burstFrac = 0;
+  /** Même mécanique pour la POUSSIÈRE, mais sur sa propre fenêtre : le sol
+   *  s'arrache tant que le courant monte, pas seulement pendant la détonation. */
+  private dustLeft = 0;
+  private dustFrac = 0;
   /** Graine des grumeaux de la charge : avancée à chaque détonation pour que
    *  deux explosions ne soient pas jumelles, mais AVANCÉE D'UN PAS FIXE — la
    *  même suite de détonations rejoue donc à l'identique, ce qu'on veut d'un
@@ -1694,6 +1700,7 @@ export class FluidSim3D {
       this.burstPos[2] = inside ? clampXZ(rawZ) : GRID3 * 0.5;
       this.burstRadius = input.explosionRadius * GRID3;
       this.burstLeft = SIM3_DEFAULTS.explosionTime;
+      this.dustLeft = input.dustTime;
       this.burstSeed = (this.burstSeed + 7.31) % 97;
     }
     // TRANCHE de la fenêtre d'injection couverte par cette frame. Le `min` est
@@ -1707,9 +1714,16 @@ export class FluidSim3D {
     // La fenêtre ne s'écoule pas non plus en PAUSE : sinon la charge se consume
     // pendant qu'on regarde, et repartir donne une explosion amputée.
     this.burstFrac = 0;
-    if (running && this.burstLeft > 0 && dt > 1e-6) {
-      this.burstFrac = Math.min(this.burstLeft, dt) / dt;
-      this.burstLeft = Math.max(this.burstLeft - dt, 0);
+    this.dustFrac = 0;
+    if (running && dt > 1e-6) {
+      if (this.burstLeft > 0) {
+        this.burstFrac = Math.min(this.burstLeft, dt) / dt;
+        this.burstLeft = Math.max(this.burstLeft - dt, 0);
+      }
+      if (this.dustLeft > 0) {
+        this.dustFrac = Math.min(this.dustLeft, dt) / dt;
+        this.dustLeft = Math.max(this.dustLeft - dt, 0);
+      }
     }
     // CHAMPS DE FORCE : posés à mi-hauteur, là où le panache passe.
     if (input.addField && this.fields.length < SIM3_DEFAULTS.maxFields) {
@@ -2071,9 +2085,11 @@ export class FluidSim3D {
     // Ciel ouvert : la bande est donnée en VOXELS au shader (fraction × N).
     d[104] = p.openBand * GRID3;
     d[105] = p.openStrength;
+    d[106] = p.openCeilBand * GRID3;
+    d[107] = p.openCeilStrength;
     // Poussière soulevée : débit, puis rayon et épaisseur EN VOXELS. Le débit ne
     // vaut que pendant la fenêtre d'injection, comme la charge elle-même.
-    d[108] = firing * input.dustRate;
+    d[108] = this.dustFrac * input.dustRate;
     d[109] = SIM3_DEFAULTS.dustRadius * GRID3;
     d[110] = SIM3_DEFAULTS.dustHeight * GRID3;
     d[111] = p.heatCeiling;

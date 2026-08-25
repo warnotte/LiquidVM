@@ -685,6 +685,30 @@ particules. Quand une limite n'apparaît qu'en WARNING console, écouter
   tranche par ce qui reste de la fenêtre. Le symptôme est perfide — la scène ne
   plante pas, elle rend simplement une explosion plus faible, plus forte, ou
   absente, selon la machine.
+- **CE QUI SÉPARE UN GROS FEU D'UNE BOMBE (2026-08-25)** — trois manques, tous
+  identifiés en regardant ce qu'une bombe fait et que le moteur ne faisait pas.
+   1. **Le PIED doit être ALIMENTÉ, pas injecté d'un coup.** La poussière avait
+      la durée de la charge (50 ms) : la colonne était donc un paquet FINI que la
+      montée étirait puis rompait — chapeau et pied finissaient en deux nuages
+      séparés. Le courant ascendant, lui, continue d'arracher le sol tant qu'il
+      monte. Fenêtre d'arrachement SÉPARÉE (`dustTime`, 5 s pour le champignon
+      contre 50 ms par défaut) : le pied devient continu.
+   2. **Deux parois, deux rôles OPPOSÉS.** La nappe qui s'étale au sol TRAVERSE
+      les parois latérales ; le chapeau, lui, SE GARE au plafond. Les traiter
+      avec la même sévérité obligeait à choisir entre un chapeau laminé et une
+      boîte qui s'empâte. Bandes séparées : parois franches (elles évacuent la
+      nappe, plus rien d'intéressant ne s'y gare), plafond très doux.
+   3. **La silhouette est HAUTE et étroite.** Le rapport ne s'obtient qu'en
+      laissant au nuage beaucoup de hauteur devant lui par rapport à son propre
+      diamètre : charge deux fois plus petite (rayon 0,042), poussée montée à
+      430. Une charge plus grosse donne un chou-fleur trapu qui touche le
+      plafond avant d'avoir formé un pied — la forme d'une explosion ordinaire.
+  **Limite de fond, non contournée** : le domaine est un CUBE, alors qu'un vrai
+  champignon est bien plus haut que large. Le rapport d'aspect est donc plafonné
+  à ~1:1 ; on en tire une silhouette juste, pas la démesure d'une photo d'essai.
+  Aller plus loin demanderait un domaine anisotrope (grille plus haute que
+  large), donc un pas de grille différent selon l'axe — dans l'advection, le
+  laplacien et le rendu. Chantier réel, non entrepris.
 - **Prochaines briques** : séquences VDB animées (File System Access API) ;
   encres colorées (canaux yz réservés dans la densité) ; qualité du confinement
   de vorticité (flouter |ω|).

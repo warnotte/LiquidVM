@@ -62,10 +62,10 @@ const TUNE_WIND: Partial<Sim3Tuning> = {
 //  · bande éponge RESSERRÉE : le chapeau doit pouvoir s'étaler près du plafond
 //    au lieu d'y être mangé avant d'avoir pris sa forme.
 const TUNE_MUSHROOM: Partial<Sim3Tuning> = {
-  timeScale: 0.55, buoyancy: 330, velocityDissipation: 0.008, vorticityStrength: 22,
-  heatCooling: 0.5, inkDissipation: 0.02, burnRate: 7, heatYield: 1.3,
+  timeScale: 0.55, buoyancy: 430, velocityDissipation: 0.008, vorticityStrength: 22,
+  heatCooling: 0.42, inkDissipation: 0.02, burnRate: 7, heatYield: 1.3,
   expansion: 12, oxygenRecover: 0.02,
-  sootYield: 20, sootCooling: 3.2,
+  sootYield: 28, sootCooling: 3.2,
   // Éponge RESSERRÉE ET ADOUCIE — le réglage le plus contre-intuitif du preset.
   // Le chapeau d'un champignon ne TRAVERSE pas la bande, il s'y GARE : il monte
   // au plafond et y reste. Une éponge calibrée pour absorber un panache de
@@ -73,7 +73,11 @@ const TUNE_MUSHROOM: Partial<Sim3Tuning> = {
   // d'un chapeau à lobes. Mesuré en rejouant le tir entier (cdp-nuke-ab) : à
   // 0,07/26 le chapeau est une dalle ; boîte close il retrouve ses lobes ; à
   // 0,035/8 il les garde ET la boîte ne se remplit pas.
-  openBand: 0.035, openStrength: 8,
+  // Parois FRANCHES pour évacuer la nappe qui s'étale au sol (c'est elle qui
+  // empâtait le bas de la boîte et qu'il fallait attendre), plafond DOUX pour
+  // que le chapeau garde ses lobes.
+  openBand: 0.09, openStrength: 24,
+  openCeilBand: 0.035, openCeilStrength: 6,
   // Le plafond de chaleur ouvre le domaine des BOULES DE FEU. La poussée sature
   // à 2 de son côté, donc relever ce plafond n'ajoute pas de flottabilité : il
   // n'ajoute que de la LUMIÈRE.
@@ -87,6 +91,7 @@ interface BoomTune {
   explosionFuel: number;
   explosionHeight: number;
   dustRate: number;
+  dustTime: number;
   explosionSpark: number;
 }
 const BOOM_DEFAULT: BoomTune = {
@@ -94,6 +99,7 @@ const BOOM_DEFAULT: BoomTune = {
   explosionFuel: SIM3_DEFAULTS.explosionFuel,
   explosionHeight: SIM3_DEFAULTS.explosionHeight,
   dustRate: SIM3_DEFAULTS.dustRate,
+  dustTime: SIM3_DEFAULTS.dustTime,
   explosionSpark: SIM3_DEFAULTS.explosionSpark,
 };
 // Charge PETITE, posée au ras du sol. Contre-intuitif — « atomique » n'appelle
@@ -104,10 +110,18 @@ const BOOM_DEFAULT: BoomTune = {
 // C'est la POUSSIÈRE qui est poussée à fond : froide, elle n'enfle rien, elle ne
 // monte que parce que la boule l'aspire — c'est exactement ce qui fait le pied.
 const BOOM_MUSHROOM: BoomTune = {
-  explosionRadius: 0.058,
-  explosionFuel: 58,
+  // Charge PETITE : la silhouette d'un champignon atomique est HAUTE et étroite,
+  // et ce rapport ne s'obtient qu'en laissant au nuage beaucoup de hauteur
+  // devant lui par rapport à son propre diamètre. Une charge deux fois plus
+  // grosse donne un chou-fleur trapu qui touche le plafond avant d'avoir formé
+  // un pied — la forme d'une explosion ordinaire, pas d'une bombe.
+  explosionRadius: 0.042,
+  explosionFuel: 64,
   explosionHeight: 0.07,
-  dustRate: 55,
+  // Arrachement LONG et doux : c'est lui qui fait un pied CONTINU. En une seule
+  // bouffée, la colonne est un paquet fini que la montée étire puis rompt.
+  dustRate: 11,
+  dustTime: 5.0,
   // AMORCE ÉNORME : c'est elle qui fait la différence entre un gros feu et une
   // bombe. Avec le plafond de chaleur relevé (voir TUNE_MUSHROOM), elle porte le
   // cœur loin au-dessus du domaine des flammes, là où l'émission part en loi de
@@ -385,6 +399,7 @@ async function boot(): Promise<void> {
     explosionFuel: SIM3_DEFAULTS.explosionFuel,
     explosionHeight: SIM3_DEFAULTS.explosionHeight,
     dustRate: SIM3_DEFAULTS.dustRate,
+    dustTime: SIM3_DEFAULTS.dustTime,
     explosionSpark: SIM3_DEFAULTS.explosionSpark,
     sphereActive: true,
     feedback: true,
@@ -689,6 +704,8 @@ async function boot(): Promise<void> {
         { label: 'suie : rayonnement', min: 0, max: 8, step: 0.1, get: () => p.sootCooling, set: (x) => (p.sootCooling = x) },
         { label: 'ciel ouvert', min: 0, max: 0.25, step: 0.005, get: () => p.openBand, set: (x) => (p.openBand = x), format: (x) => (x <= 0 ? 'boîte close' : x.toFixed(3)) },
         { label: 'ciel : absorption', min: 2, max: 90, step: 1, get: () => p.openStrength, set: (x) => (p.openStrength = x), format: (x) => x.toFixed(0) },
+        { label: 'plafond : bande', min: 0, max: 0.25, step: 0.005, get: () => p.openCeilBand, set: (x) => (p.openCeilBand = x), format: (x) => (x <= 0 ? 'fermé' : x.toFixed(3)) },
+        { label: 'plafond : absorption', min: 1, max: 90, step: 1, get: () => p.openCeilStrength, set: (x) => (p.openCeilStrength = x), format: (x) => x.toFixed(0) },
       ],
       buttons: [{ label: '💥 détoner (G)', action: () => (input.explode = true) }],
     },

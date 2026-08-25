@@ -30,7 +30,8 @@ struct Params {
   field2_a: vec4f, field2_b: vec4f,
   burst_a: vec4f, burst_b: vec4f,
   soot: vec4f,
-  // x: largeur de la bande éponge (voxels, 0 = boîte close), y: sa force.
+  // x: bande LATÉRALE (voxels, 0 = parois closes), y: sa force,
+  // z: bande de PLAFOND, w: sa force. Deux réglages parce que deux rôles.
   open_box: vec4f,
 }
 
@@ -49,17 +50,27 @@ struct Params {
 // (le raymarch l'éclaire et y projette les ombres). Une explosion doit rebondir
 // dessus, pas s'y dissoudre.
 fn sponge3(p: vec3f, dt: f32) -> f32 {
-  let band = P.open_box.x;
-  if (band <= 0.0) {
-    return 1.0;
-  }
   let n = P.misc.z;
-  let d = min(
-    min(min(p.x, n - p.x), min(p.z, n - p.z)),
-    n - p.y, // plafond seulement — le sol reste dur
-  );
-  let s = 1.0 - clamp(d / band, 0.0, 1.0);
-  return 1.0 / (1.0 + P.open_box.y * s * s * dt);
+  var f = 1.0;
+  // PAROIS LATÉRALES : c'est par elles que doit s'évacuer la nappe qui s'étale
+  // au sol. Rien d'intéressant ne s'y gare, on peut donc y être franc.
+  if (P.open_box.x > 0.0) {
+    let ds = min(min(p.x, n - p.x), min(p.z, n - p.z));
+    let s = 1.0 - clamp(ds / P.open_box.x, 0.0, 1.0);
+    f /= 1.0 + P.open_box.y * s * s * dt;
+  }
+  // PLAFOND : réglage SÉPARÉ, et bien plus doux. Un panache TRAVERSE la bande ;
+  // le chapeau d'un champignon, lui, monte au plafond et s'y GARE. Une
+  // absorption calibrée pour un passage le lamine alors sur place — c'est ce qui
+  // transformait le chapeau en dalle diffuse. Deux parois, deux rôles opposés :
+  // les traiter avec la même sévérité était l'erreur.
+  if (P.open_box.z > 0.0) {
+    let s = 1.0 - clamp((n - p.y) / P.open_box.z, 0.0, 1.0);
+    f /= 1.0 + P.open_box.w * s * s * dt;
+  }
+  // Le SOL n'est jamais absorbant : c'est la seule paroi qui soit un objet de la
+  // scène, et une explosion doit rebondir dessus.
+  return f;
 }
 
 

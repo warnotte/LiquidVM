@@ -93,6 +93,8 @@ export interface Sim3Tuning {
   heatCeiling: number;
   openBand: number;
   openStrength: number;
+  openCeilBand: number;
+  openCeilStrength: number;
 }
 
 export function defaultTuning3(): Sim3Tuning {
@@ -115,6 +117,8 @@ export function defaultTuning3(): Sim3Tuning {
     heatCeiling: SIM3_DEFAULTS.heatCeiling,
     openBand: SIM3_DEFAULTS.openBand,
     openStrength: SIM3_DEFAULTS.openStrength,
+    openCeilBand: SIM3_DEFAULTS.openCeilBand,
+    openCeilStrength: SIM3_DEFAULTS.openCeilStrength,
     oxygenRecover: SIM3_DEFAULTS.oxygenRecover,
     blowForce: SIM3_DEFAULTS.blowForce,
     windStrength: SIM3_DEFAULTS.windStrength,
@@ -216,8 +220,14 @@ export const SIM3_DEFAULTS = {
    *  Le pied d'un champignon n'est PAS fait de la charge — il est fait du sol
    *  arraché par le souffle, que le courant ascendant aspire ensuite derrière la
    *  boule. Sans ce terme, on obtient un chapeau qui flotte sans colonne. */
+  /** DURÉE d'arrachement du sol. Elle n'a aucune raison d'être celle de la
+   *  charge : la charge est une bouffée, alors que le courant ascendant continue
+   *  d'aspirer le sol tant qu'il monte. Injectée une seule fois, la poussière
+   *  forme un paquet FINI que la montée étire puis rompt — le pied se détache du
+   *  chapeau et on obtient deux nuages séparés au lieu d'un champignon. */
+  dustTime: 0.05,
   dustRate: 26,
-  dustRadius: 0.3,
+  dustRadius: 0.22,
   dustHeight: 0.045,
   /** AMORCE en chaleur (1/s) et PLAFOND du canal de chaleur. À 2, on reste dans
    *  le domaine des flammes et la plus grosse charge du monde reste aussi
@@ -250,6 +260,11 @@ export const SIM3_DEFAULTS = {
    *  exactement le comportement d'avant. */
   openBand: 0.11,
   openStrength: 26,
+  /** Bande de PLAFOND, réglée séparément des parois : un panache TRAVERSE la
+   *  bande latérale, alors qu'un chapeau de champignon se GARE au plafond. Une
+   *  absorption calibrée pour un passage le lamine sur place. */
+  openCeilBand: 0.11,
+  openCeilStrength: 26,
   /** Combustion (modèle Feldman/Fedkiw simplifié) : taux de réaction (1/s au-dessus
    *  de l'ignition), chaleur dégagée par unité de carburant, expansion volumique au
    *  front de flamme (source de divergence, voxels/s — remise à l'échelle SCALE3). */
