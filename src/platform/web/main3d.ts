@@ -85,7 +85,10 @@ const TUNE_MUSHROOM: Partial<Sim3Tuning> = {
   // lui-même, au lieu de monter jusqu'à s'écraser au plafond. C'est la vraie
   // mécanique du chapeau d'un champignon — dans un cube, le « chapeau » était en
   // réalité le plafond, et on ne s'en apercevait pas.
-  stratStrength: 2.2, stratBase: 0.25,
+  // Inversion BASSE et FRANCHE : le chapeau s'arrête aux deux tiers et laisse du
+  // ciel au-dessus. C'est ce qui distingue un nuage LIBRE d'un nuage étouffé —
+  // tant qu'il touche le plafond, la boîte est encore ce qui l'arrête.
+  stratStrength: 3.2, stratBase: 0.16,
   // Le plafond de chaleur ouvre le domaine des BOULES DE FEU. La poussée sature
   // à 2 de son côté, donc relever ce plafond n'ajoute pas de flottabilité : il
   // n'ajoute que de la LUMIÈRE.
