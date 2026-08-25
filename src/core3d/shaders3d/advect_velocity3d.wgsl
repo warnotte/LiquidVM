@@ -50,12 +50,13 @@ struct Params {
 // (le raymarch l'éclaire et y projette les ombres). Une explosion doit rebondir
 // dessus, pas s'y dissoudre.
 fn sponge3(p: vec3f, dt: f32) -> f32 {
-  let n = P.misc.z;
+  // Per-axe : le plafond n'est plus à la même hauteur que la largeur.
+  let nv = n_sizef();
   var f = 1.0;
   // PAROIS LATÉRALES : c'est par elles que doit s'évacuer la nappe qui s'étale
   // au sol. Rien d'intéressant ne s'y gare, on peut donc y être franc.
   if (P.open_box.x > 0.0) {
-    let ds = min(min(p.x, n - p.x), min(p.z, n - p.z));
+    let ds = min(min(p.x, nv.x - p.x), min(p.z, nv.z - p.z));
     let s = 1.0 - clamp(ds / P.open_box.x, 0.0, 1.0);
     f /= 1.0 + P.open_box.y * s * s * dt;
   }
@@ -65,7 +66,7 @@ fn sponge3(p: vec3f, dt: f32) -> f32 {
   // transformait le chapeau en dalle diffuse. Deux parois, deux rôles opposés :
   // les traiter avec la même sévérité était l'erreur.
   if (P.open_box.z > 0.0) {
-    let s = 1.0 - clamp((n - p.y) / P.open_box.z, 0.0, 1.0);
+    let s = 1.0 - clamp((nv.y - p.y) / P.open_box.z, 0.0, 1.0);
     f /= 1.0 + P.open_box.w * s * s * dt;
   }
   // Le SOL n'est jamais absorbant : c'est la seule paroi qui soit un objet de la
@@ -88,6 +89,17 @@ fn face_blocked(c: vec3i, axis: vec3i) -> bool {
 }
 
 @group(0) @binding(0) var<uniform> P: Params;
+
+// TAILLE DE LA GRILLE, par axe. Le domaine n'est plus forcément cubique :
+// Nx = Nz = misc.z, Ny = misc.z × misc.w. Les CELLULES, elles, restent cubiques
+// — c'est ce qui permet de ne rien changer à l'opérateur ni à l'advection.
+fn n_size() -> vec3i {
+  return vec3i(i32(P.misc.z), i32(P.misc.z * P.misc.w), i32(P.misc.z));
+}
+
+fn n_sizef() -> vec3f {
+  return vec3f(P.misc.z, P.misc.z * P.misc.w, P.misc.z);
+}
 @group(0) @binding(1) var lin: sampler;
 @group(1) @binding(0) var vel_src: texture_3d<f32>;
 @group(1) @binding(1) var aux: texture_3d<f32>;
@@ -97,11 +109,8 @@ const OFF_U = vec3f(0.5, 0.0, 0.0);
 const OFF_V = vec3f(0.0, 0.5, 0.0);
 const OFF_W = vec3f(0.0, 0.0, 0.5);
 
-fn n_size() -> i32 {
-  return i32(P.misc.z);
-}
 fn inv_n() -> vec3f {
-  return vec3f(1.0) / vec3f(P.misc.z);
+  return vec3f(1.0) / n_sizef();
 }
 
 fn src_u(p: vec3f) -> f32 {
@@ -147,7 +156,7 @@ fn stencil_minmax(pos: vec3f, off: vec3f, comp: i32) -> vec2f {
   var hi = -1e30;
   for (var i = 0; i < 8; i++) {
     let corner = vec3i(i & 1, (i >> 1) & 1, (i >> 2) & 1);
-    let c = clamp(base + corner, vec3i(0), vec3i(n_size() - 1));
+    let c = clamp(base + corner, vec3i(0), n_size() - vec3i(1));
     let v4 = textureLoad(vel_src, c, 0);
     let v = select(select(v4.z, v4.y, comp == 1), v4.x, comp == 0);
     lo = min(lo, v);
@@ -160,7 +169,7 @@ fn stencil_minmax(pos: vec3f, off: vec3f, comp: i32) -> vec2f {
 fn predict(@builtin(global_invocation_id) gid: vec3u) {
   let n = n_size();
   let c = vec3i(gid);
-  if (c.x >= n || c.y >= n || c.z >= n) {
+  if (any(c >= n)) {
     return;
   }
   let dt = P.misc.x;
@@ -178,7 +187,7 @@ fn predict(@builtin(global_invocation_id) gid: vec3u) {
 fn correct(@builtin(global_invocation_id) gid: vec3u) {
   let n = n_size();
   let c = vec3i(gid);
-  if (c.x >= n || c.y >= n || c.z >= n) {
+  if (any(c >= n)) {
     return;
   }
   let dt = P.misc.x;

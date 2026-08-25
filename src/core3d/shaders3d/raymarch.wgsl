@@ -27,7 +27,8 @@ struct RenderParams {
   opts: vec4f,
   sel: vec4f,
   aim: vec4f,
-  soot: vec4f,      // z: densité de suie au rendu (0 = comme avant)
+  soot: vec4f,      // z: densité de suie au rendu (0 = comme avant),
+                    // w: HAUTEUR MONDE du domaine (1 = cube)
   // Suivent les gizmos des champs de force (2 vec4 par champ) — dessinés par
   // gizmo3d.wgsl en LIGNES après la présentation, pas ici : un repère doit être
   // net, pas un halo noyé dans le volume.
@@ -56,10 +57,24 @@ fn vs_main(@builtin(vertex_index) vi: u32) -> VSOut {
 }
 
 // Intersection rayon / boîte centrée (slab). Retourne (t_entrée, t_sortie).
+// HAUTEUR MONDE du domaine (1 = le cube d'avant). Le sol reste à y = −0,5 : la
+// boîte pousse vers le HAUT, ce qui laisse intacts le plancher, la boule et
+// tous les repères posés au sol.
+fn box_top() -> f32 {
+  return -0.5 + max(R.soot.w, 1e-3);
+}
+
+// Coordonnée de TEXTURE d'un point monde. Elle n'est plus symétrique : le
+// volume compte HEIGHT × plus de voxels en hauteur, donc y se normalise par la
+// hauteur du domaine. Les cellules restant CUBIQUES, x et z sont inchangés.
+fn tex_uvw(p: vec3f) -> vec3f {
+  return vec3f(p.x + 0.5, (p.y + 0.5) / max(R.soot.w, 1e-3), p.z + 0.5);
+}
+
 fn box_hit(ro: vec3f, rd: vec3f) -> vec2f {
   let inv = 1.0 / rd;
   let t0 = (vec3f(-0.5) - ro) * inv;
-  let t1 = (vec3f(0.5) - ro) * inv;
+  let t1 = (vec3f(0.5, box_top(), 0.5) - ro) * inv;
   let tmin = min(t0, t1);
   let tmax = max(t0, t1);
   return vec2f(max(max(tmin.x, tmin.y), tmin.z), min(min(tmax.x, tmax.y), tmax.z));
@@ -82,7 +97,7 @@ fn extinction(s: vec4f) -> f32 {
 }
 
 fn soot_at(pos: vec3f) -> f32 {
-  return textureSampleLevel(species_tex, lin, pos + vec3f(0.5), 0.0).y;
+  return textureSampleLevel(species_tex, lin, tex_uvw(pos), 0.0).y;
 }
 
 // Albédo du voxel : mélange des couleurs d'encres pondéré par leurs concentrations.
@@ -108,7 +123,7 @@ fn blackbody(heat: f32) -> vec3f {
 
 // Lueur du feu diffusée (volume grossier, trilinéaire = flou voulu).
 fn glow_at(pos: vec3f) -> vec3f {
-  return textureSampleLevel(glow_tex, lin, pos + vec3f(0.5), 0.0).rgb * R.style.x;
+  return textureSampleLevel(glow_tex, lin, tex_uvw(pos), 0.0).rgb * R.style.x;
 }
 
 // Phase Henyey-Greenstein (g = 0.45), ~0.85 à 90°, ~2.7 plein contre-jour :
@@ -155,7 +170,7 @@ fn floor_shade(fp: vec3f, bg: vec3f, ldir: vec3f) -> vec3f {
     let step_len = (bh.y - s0) / 12.0;
     for (var j = 0u; j < 12u; j++) {
       let sp = fp + ldir * (s0 + (f32(j) + 0.5) * step_len);
-      occ += extinction(textureSampleLevel(density_tex, lin, sp + vec3f(0.5), 0.0)) * step_len;
+      occ += extinction(textureSampleLevel(density_tex, lin, tex_uvw(sp), 0.0)) * step_len;
     }
   }
   if (sphere_hit(fp, ldir) < 1e8) {
@@ -224,7 +239,7 @@ fn fs_main(frag: VSOut) -> @location(0) vec4f {
         break;
       }
       let pos = ro + rd * t;
-      let s = textureSampleLevel(density_tex, lin, pos + vec3f(0.5), 0.0);
+      let s = textureSampleLevel(density_tex, lin, tex_uvw(pos), 0.0);
       // Suie : lue au même point, elle s'ajoute à l'extinction et TIRE L'ALBÉDO
       // VERS LE NOIR. Le pas adaptatif ci-dessous doit en tenir compte, sinon un
       // nuage de suie sans fumée serait traversé à double enjambée.
@@ -251,7 +266,7 @@ fn fs_main(frag: VSOut) -> @location(0) vec4f {
         var occ = 0.0;
         for (var j = 1u; j <= 6u; j++) {
           let sp = pos + ldir * (f32(j) * shadow_step);
-          let ss = textureSampleLevel(density_tex, lin, sp + vec3f(0.5), 0.0);
+          let ss = textureSampleLevel(density_tex, lin, tex_uvw(sp), 0.0);
           // La suie compte AUSSI dans l'ombre interne : c'est elle qui rend un
           // panache d'explosion sombre en son cœur. L'ignorer ici donnerait un
           // nuage noir de face et translucide de dos.
@@ -290,7 +305,7 @@ fn fs_main(frag: VSOut) -> @location(0) vec4f {
       let nrm = normalize(sp - R.sphere.xyz);
       let diff = max(dot(nrm, R.light.xyz), 0.0);
       let rim = pow(1.0 - max(dot(nrm, -rd), 0.0), 3.0);
-      let heat_here = textureSampleLevel(density_tex, lin, sp + nrm * 0.012 + vec3f(0.5), 0.0).w;
+      let heat_here = textureSampleLevel(density_tex, lin, tex_uvw(sp + nrm * 0.012), 0.0).w;
       var sphere_col = vec3f(0.30, 0.32, 0.38) * (0.30 + 0.70 * diff) + vec3f(0.10) * rim;
       sphere_col += blackbody(heat_here) * 0.9;
       // La lueur du feu éclaire aussi la boule (lumière de zone diffusée).

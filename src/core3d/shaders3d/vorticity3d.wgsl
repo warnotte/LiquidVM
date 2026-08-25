@@ -10,7 +10,7 @@
 // Chaque composante de force est évaluée à SA position de face MAC.
 
 struct Params {
-  misc: vec4f,      // x: dt, y: temps, z: N, w: force de vorticité ε
+  misc: vec4f,      // x: dt, y: temps, z: Nx (= Nz), w: HAUTEUR du domaine (Ny/Nx)
   emitter: vec4f,
   emit_vals: vec4f,
   diss: vec4f,
@@ -23,7 +23,11 @@ struct Params {
   emitter2: vec4f,
   emitter3: vec4f,
   emit_inks: vec4f,
-  sphere_vel: vec4f, // xyz: vitesse de la sphère (voxels/s)
+  sphere_vel: vec4f, // xyz: vitesse de la sphère (voxels/s), w: force de vorticité ε
+                     // (elle a déménagé ici : `misc.w` porte désormais la
+                     //  hauteur du domaine, seul slot déclaré par TOUS les
+                     //  shaders — c'est ce qui a permis de rendre la grille non
+                     //  cubique sans rallonger le préfixe d'uniforme de chacun.)
 }
 
 fn solid_cell(c: vec3i) -> bool {
@@ -38,28 +42,36 @@ fn face_blocked(c: vec3i, axis: vec3i) -> bool {
 }
 
 @group(0) @binding(0) var<uniform> P: Params;
+
+// TAILLE DE LA GRILLE, par axe. Le domaine n'est plus forcément cubique :
+// Nx = Nz = misc.z, Ny = misc.z × misc.w. Les CELLULES, elles, restent cubiques
+// — c'est ce qui permet de ne rien changer à l'opérateur ni à l'advection.
+fn n_size() -> vec3i {
+  return vec3i(i32(P.misc.z), i32(P.misc.z * P.misc.w), i32(P.misc.z));
+}
+
+fn n_sizef() -> vec3f {
+  return vec3f(P.misc.z, P.misc.z * P.misc.w, P.misc.z);
+}
 @group(0) @binding(1) var lin: sampler;
 @group(1) @binding(0) var vel_src: texture_3d<f32>;
 @group(1) @binding(1) var curl_dst: texture_storage_3d<rgba16float, write>;
 @group(1) @binding(2) var curl_src: texture_3d<f32>;
 @group(1) @binding(3) var vel_dst: texture_storage_3d<rgba16float, write>;
 
-fn n_size() -> i32 {
-  return i32(P.misc.z);
-}
 fn inv_n() -> vec3f {
-  return vec3f(1.0) / vec3f(P.misc.z);
+  return vec3f(1.0) / n_sizef();
 }
 
 // Vitesse au centre de la cellule c (moyenne des deux faces de chaque axe ;
 // coordonnées clampées : au bord, la face manquante est un mur → biais négligeable).
 fn center_vel(c: vec3i) -> vec3f {
   let n = n_size();
-  let cc = clamp(c, vec3i(0), vec3i(n - 1));
+  let cc = clamp(c, vec3i(0), n - vec3i(1));
   let v0 = textureLoad(vel_src, cc, 0).xyz;
-  let ux = select(0.0, textureLoad(vel_src, clamp(cc + vec3i(1, 0, 0), vec3i(0), vec3i(n - 1)), 0).x, cc.x + 1 < n);
-  let vy = select(0.0, textureLoad(vel_src, clamp(cc + vec3i(0, 1, 0), vec3i(0), vec3i(n - 1)), 0).y, cc.y + 1 < n);
-  let wz = select(0.0, textureLoad(vel_src, clamp(cc + vec3i(0, 0, 1), vec3i(0), vec3i(n - 1)), 0).z, cc.z + 1 < n);
+  let ux = select(0.0, textureLoad(vel_src, clamp(cc + vec3i(1, 0, 0), vec3i(0), n - vec3i(1)), 0).x, cc.x + 1 < n.x);
+  let vy = select(0.0, textureLoad(vel_src, clamp(cc + vec3i(0, 1, 0), vec3i(0), n - vec3i(1)), 0).y, cc.y + 1 < n.y);
+  let wz = select(0.0, textureLoad(vel_src, clamp(cc + vec3i(0, 0, 1), vec3i(0), n - vec3i(1)), 0).z, cc.z + 1 < n.z);
   return 0.5 * vec3f(v0.x + ux, v0.y + vy, v0.z + wz);
 }
 
@@ -67,7 +79,7 @@ fn center_vel(c: vec3i) -> vec3f {
 fn curl(@builtin(global_invocation_id) gid: vec3u) {
   let n = n_size();
   let c = vec3i(gid);
-  if (c.x >= n || c.y >= n || c.z >= n) {
+  if (any(c >= n)) {
     return;
   }
   // Différences centrées des vitesses centrées voisines.
@@ -92,14 +104,14 @@ fn curl(@builtin(global_invocation_id) gid: vec3u) {
 fn blur_curl(@builtin(global_invocation_id) gid: vec3u) {
   let n = n_size();
   let c = vec3i(gid);
-  if (c.x >= n || c.y >= n || c.z >= n) {
+  if (any(c >= n)) {
     return;
   }
   var sum = 0.0;
   for (var dz = -1; dz <= 1; dz++) {
     for (var dy = -1; dy <= 1; dy++) {
       for (var dx = -1; dx <= 1; dx++) {
-        let q = clamp(c + vec3i(dx, dy, dz), vec3i(0), vec3i(n - 1));
+        let q = clamp(c + vec3i(dx, dy, dz), vec3i(0), n - vec3i(1));
         sum += textureLoad(vel_src, q, 0).w;
       }
     }
@@ -125,14 +137,14 @@ fn confine_force(p: vec3f) -> vec3f {
     omega_len(p + vec3f(0.0, 0.0, 1.0)) - omega_len(p - vec3f(0.0, 0.0, 1.0)),
   );
   let nrm = grad / max(length(grad), 1e-5);
-  return P.misc.w * cross(nrm, omega_at(p));
+  return P.sphere_vel.w * cross(nrm, omega_at(p));
 }
 
 @compute @workgroup_size(4, 4, 4)
 fn confine(@builtin(global_invocation_id) gid: vec3u) {
   let n = n_size();
   let c = vec3i(gid);
-  if (c.x >= n || c.y >= n || c.z >= n) {
+  if (any(c >= n)) {
     return;
   }
   let dt = P.misc.x;

@@ -69,6 +69,7 @@ struct RenderParams {
   // monde du bouton (0 = l'objet n'a pas d'orientation). Un seul nombre sert de
   // drapeau ET de position.
   aim: vec4f,
+  soot: vec4f,      // w: HAUTEUR monde du domaine (1 = cube)
 }
 
 @group(0) @binding(0) var<uniform> R: RenderParams;
@@ -210,7 +211,9 @@ fn box_point(k: u32) -> vec3f {
   } else if (axis_i == 1u) {
     p = vec3f(b0, t, b1);
   }
-  return p - 0.5;
+  // Le domaine n'est plus forcément cubique : le sol reste à −0,5 et la boîte
+  // pousse vers le HAUT. Un cube (hauteur 1) redonne exactement l'ancien tracé.
+  return vec3f(p.x - 0.5, p.y * max(R.soot.w, 1e-3) - 0.5, p.z - 0.5);
 }
 
 @vertex

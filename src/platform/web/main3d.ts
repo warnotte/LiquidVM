@@ -92,6 +92,7 @@ interface BoomTune {
   explosionHeight: number;
   dustRate: number;
   dustTime: number;
+  dustRadius: number;
   explosionSpark: number;
 }
 const BOOM_DEFAULT: BoomTune = {
@@ -100,6 +101,7 @@ const BOOM_DEFAULT: BoomTune = {
   explosionHeight: SIM3_DEFAULTS.explosionHeight,
   dustRate: SIM3_DEFAULTS.dustRate,
   dustTime: SIM3_DEFAULTS.dustTime,
+  dustRadius: SIM3_DEFAULTS.dustRadius,
   explosionSpark: SIM3_DEFAULTS.explosionSpark,
 };
 // Charge PETITE, posée au ras du sol. Contre-intuitif — « atomique » n'appelle
@@ -122,6 +124,7 @@ const BOOM_MUSHROOM: BoomTune = {
   // bouffée, la colonne est un paquet fini que la montée étire puis rompt.
   dustRate: 11,
   dustTime: 5.0,
+  dustRadius: 0.22,
   // AMORCE ÉNORME : c'est elle qui fait la différence entre un gros feu et une
   // bombe. Avec le plafond de chaleur relevé (voir TUNE_MUSHROOM), elle porte le
   // cœur loin au-dessus du domaine des flammes, là où l'émission part en loi de
@@ -310,7 +313,10 @@ async function boot(): Promise<void> {
   let demoOn = urlParams.has('demo');
   // Résolution à la demande : ?grid=128|256|320 (défaut 256 ; 320 = le plafond
   // mesuré de la machine de référence, toujours à 60 FPS).
-  setGrid3(Number(urlParams.get('grid') ?? 256));
+  // `?tall=2|3` : domaine plus HAUT que large, à cellules toujours cubiques. Le
+  // défaut (1) rend exactement le cube. Une boîte deux fois plus haute coûte
+  // deux fois plus de cellules — d'où le tableau de VRAM du sélecteur.
+  setGrid3(Number(urlParams.get('grid') ?? 256), Number(urlParams.get('tall') ?? 1));
   const canvas = document.getElementById('canvas3d') as HTMLCanvasElement;
   const hud = document.getElementById('hud3d') as HTMLDivElement;
 
@@ -400,6 +406,7 @@ async function boot(): Promise<void> {
     explosionHeight: SIM3_DEFAULTS.explosionHeight,
     dustRate: SIM3_DEFAULTS.dustRate,
     dustTime: SIM3_DEFAULTS.dustTime,
+    dustRadius: SIM3_DEFAULTS.dustRadius,
     explosionSpark: SIM3_DEFAULTS.explosionSpark,
     sphereActive: true,
     feedback: true,

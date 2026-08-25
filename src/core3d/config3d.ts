@@ -16,23 +16,46 @@
 export let GRID3 = 256;
 export let SCALE3 = GRID3 / 128;
 
+/** HAUTEUR de la grille, en voxels. Le domaine n'est plus forcément un cube :
+ *  la grille devient Nx × Ny × Nz avec Nx = Nz = GRID3 et Ny = GRID3Y.
+ *
+ *  LES CELLULES RESTENT CUBIQUES, et c'est tout le point. Un domaine à cellules
+ *  ANISOTROPES (un cube de voxels étiré) aurait exigé un pas de grille par axe
+ *  dans le laplacien, la divergence, le gradient et l'advection — donc rouvrir
+ *  un solveur mesuré et juste. Ici, l'opérateur de pression, le multigrid et
+ *  l'advection ne changent PAS D'UNE LIGNE : seuls le bornage et la taille des
+ *  textures deviennent per-axe. Une boîte deux fois plus haute, c'est deux fois
+ *  plus de cellules, pas une nouvelle numérique.
+ *
+ *  Le monde suit : le domaine mesure 1 × HEIGHT3 × 1, centré en x et z, et posé
+ *  sur le sol en y. HEIGHT3 = 1 rend exactement le cube d'avant. */
+export let GRID3Y = GRID3;
+export let HEIGHT3 = 1;
+
 export const GRID3_CHOICES = [128, 256, 320, 384, 512] as const;
+/** Hauteurs proposées : ×1 (le cube), ×2, ×3. */
+export const STRETCH3_CHOICES = [1, 2, 3] as const;
 
 /** Estimation VRAM du volume (octets) : ~88 o/voxel plein format (2× vélocité
  *  + 2× densités + 2× espèces + scratchs + rotationnel en rgba16float, pression
  *  ×2 + divergence + résidu en r32float) + pyramide multigrid (~16 o/voxel
  *  répartis sur les niveaux ≥ 1, somme des 1/8^k ≈ ×0,143). */
-export function estimateVram3(n: number): number {
-  return n * n * n * (88 + 16 * 0.143);
+export function estimateVram3(n: number, stretch = HEIGHT3): number {
+  return n * n * n * stretch * (88 + 16 * 0.143);
 }
 
 /** À appeler AVANT la création de la simulation. Valide et propage les dérivés. */
-export function setGrid3(n: number): void {
+export function setGrid3(n: number, stretch = HEIGHT3): void {
   if ((GRID3_CHOICES as readonly number[]).includes(n)) {
     GRID3 = n;
     SCALE3 = n / 128;
     DISPATCH3 = Math.ceil(n / WG3);
   }
+  if ((STRETCH3_CHOICES as readonly number[]).includes(stretch)) {
+    HEIGHT3 = stretch;
+  }
+  GRID3Y = GRID3 * HEIGHT3;
+  DISPATCH3Y = Math.ceil(GRID3Y / WG3);
 }
 
 /** Braises : nombre de particules (buffer fixe 32 o/particule ≈ 1 Mo).
@@ -42,6 +65,7 @@ export const EMBERS3 = 32768;
 /** Workgroups 4×4×4 = 64 threads ; dispatch cubique. */
 export const WG3 = 4;
 export let DISPATCH3 = Math.ceil(GRID3 / WG3);
+export let DISPATCH3Y = Math.ceil(GRID3Y / WG3);
 
 /** Multigrid 3D : pyramide GRID3 → 8³, lissages du V-cycle. */
 export const MG3_COARSEST_SIZE = 8;

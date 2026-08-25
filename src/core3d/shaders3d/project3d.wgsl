@@ -31,6 +31,17 @@ fn solid_cell(c: vec3i) -> bool {
 }
 
 @group(0) @binding(0) var<uniform> P: Params;
+
+// TAILLE DE LA GRILLE, par axe. Le domaine n'est plus forcément cubique :
+// Nx = Nz = misc.z, Ny = misc.z × misc.w. Les CELLULES, elles, restent cubiques
+// — c'est ce qui permet de ne rien changer à l'opérateur ni à l'advection.
+fn n_size() -> vec3i {
+  return vec3i(i32(P.misc.z), i32(P.misc.z * P.misc.w), i32(P.misc.z));
+}
+
+fn n_sizef() -> vec3f {
+  return vec3f(P.misc.z, P.misc.z * P.misc.w, P.misc.z);
+}
 @group(0) @binding(1) var lin: sampler;
 @group(1) @binding(0) var vel_src: texture_3d<f32>;
 @group(1) @binding(1) var pressure_src: texture_3d<f32>;
@@ -40,13 +51,10 @@ fn solid_cell(c: vec3i) -> bool {
 @group(1) @binding(5) var den_src: texture_3d<f32>;
 @group(1) @binding(6) var oxy_src: texture_3d<f32>;
 
-fn n_size() -> i32 {
-  return i32(P.misc.z);
-}
 
 fn in_bounds(c: vec3i) -> bool {
   let n = n_size();
-  return c.x < n && c.y < n && c.z < n;
+  return all(c < n);
 }
 
 @compute @workgroup_size(4, 4, 4)
@@ -58,9 +66,9 @@ fn divergence(@builtin(global_invocation_id) gid: vec3u) {
   let n = n_size();
   let v0 = textureLoad(vel_src, c, 0).xyz;
   // Faces opposées : hors grille = mur (0), schéma compact.
-  let ux = select(0.0, textureLoad(vel_src, c + vec3i(1, 0, 0), 0).x, c.x + 1 < n);
-  let vy = select(0.0, textureLoad(vel_src, c + vec3i(0, 1, 0), 0).y, c.y + 1 < n);
-  let wz = select(0.0, textureLoad(vel_src, c + vec3i(0, 0, 1), 0).z, c.z + 1 < n);
+  let ux = select(0.0, textureLoad(vel_src, c + vec3i(1, 0, 0), 0).x, c.x + 1 < n.x);
+  let vy = select(0.0, textureLoad(vel_src, c + vec3i(0, 1, 0), 0).y, c.y + 1 < n.y);
+  let wz = select(0.0, textureLoad(vel_src, c + vec3i(0, 0, 1), 0).z, c.z + 1 < n.z);
   var div = ux - v0.x + vy - v0.y + wz - v0.z;
   // EXPANSION de combustion : source de divergence au front de flamme (le gaz
   // brûlé gonfle) — mêmes critères que la réaction, oxygène compris.
@@ -74,7 +82,7 @@ fn divergence(@builtin(global_invocation_id) gid: vec3u) {
 fn p_at(c: vec3i) -> f32 {
   // Clamp = condition de Neumann (le voisin hors boîte vaut la valeur du bord).
   let n = n_size();
-  return textureLoad(pressure_src, clamp(c, vec3i(0), vec3i(n - 1)), 0).x;
+  return textureLoad(pressure_src, clamp(c, vec3i(0), n - vec3i(1)), 0).x;
 }
 
 // Voisin pour le lisseur : un voisin solide (sphère) contribue la valeur du centre —

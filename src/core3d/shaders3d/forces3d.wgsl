@@ -75,13 +75,24 @@ fn face_blocked(c: vec3i, axis: vec3i) -> bool {
 }
 
 @group(0) @binding(0) var<uniform> P: Params;
+
+// TAILLE DE LA GRILLE, par axe. Le domaine n'est plus forcément cubique :
+// Nx = Nz = misc.z, Ny = misc.z × misc.w. Les CELLULES, elles, restent cubiques
+// — c'est ce qui permet de ne rien changer à l'opérateur ni à l'advection.
+fn n_size() -> vec3i {
+  return vec3i(i32(P.misc.z), i32(P.misc.z * P.misc.w), i32(P.misc.z));
+}
+
+fn n_sizef() -> vec3f {
+  return vec3f(P.misc.z, P.misc.z * P.misc.w, P.misc.z);
+}
 @group(0) @binding(1) var lin: sampler;
 @group(1) @binding(0) var vel_src: texture_3d<f32>;
 @group(1) @binding(1) var den_src: texture_3d<f32>;
 @group(1) @binding(2) var vel_dst: texture_storage_3d<rgba16float, write>;
 
 fn inv_n() -> vec3f {
-  return vec3f(1.0) / vec3f(f32(P.misc.z));
+  return vec3f(1.0) / n_sizef();
 }
 
 fn density_at(p: vec3f) -> vec4f {
@@ -147,9 +158,9 @@ fn field_force(p: vec3f, matter: f32) -> vec3f {
 
 @compute @workgroup_size(4, 4, 4)
 fn main(@builtin(global_invocation_id) gid: vec3u) {
-  let n = i32(P.misc.z);
+  let n = n_size();
   let c = vec3i(gid);
-  if (c.x >= n || c.y >= n || c.z >= n) {
+  if (any(c >= n)) {
     return;
   }
   let dt = P.misc.x;
