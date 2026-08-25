@@ -599,6 +599,8 @@ async function boot(): Promise<void> {
     } else if (e.code === 'Escape') {
       sim.deselect();
       say('rien de sélectionné');
+    } else if (k === 'm') {
+      runMushroom();
     } else if (k === 'l') {
       lockScale = !lockScale;
       say(lockScale ? 'rendu verrouillé à 100 %' : 'rendu adaptatif (60-100 %)');
@@ -622,6 +624,29 @@ async function boot(): Promise<void> {
       say(`encre : ${INK_NAMES[input.emitInk] ?? '?'}`);
     }
   });
+
+  // SCÉNARIO EN UN CLIC. Un preset seul ne suffit pas à faire découvrir un
+  // scénario : l'utilisateur clique le bouton qui ressemble à ce qu'il veut —
+  // ici « boum » — et il obtient la détonation ordinaire, pas le champignon. Le
+  // preset était donc caché derrière une étape que personne ne devine.
+  // La détonation est DIFFÉRÉE de quelques frames : le nettoyage de la scène
+  // occupe la frame courante, et tirer dedans donnerait une boule amputée.
+  let boomIn = 0;
+  const runMushroom = (): void => {
+    const preset = PRESETS.find((x) => x.boom !== undefined);
+    if (preset === undefined) {
+      return;
+    }
+    Object.assign(p, defaultTuning3(), preset.values);
+    Object.assign(input, preset.boom ?? BOOM_DEFAULT);
+    input.reset = true;
+    input.sphereActive = false; // elle se tiendrait en plein dans le souffle
+    panel.refresh();
+    boomIn = 4;
+    if (input.feedback) {
+      toast('🍄 champignon : scène nettoyée, détonation au sol…');
+    }
+  };
 
   const demoDriver = new DemoDriver(input, sim, (text) => {
     if (input.feedback) {
@@ -824,6 +849,7 @@ async function boot(): Promise<void> {
     ],
     [
       { label: '💥 boum', action: () => (input.explode = true) },
+      { label: '🍄 champignon', action: runMushroom },
       {
         label: '🏞 extérieur',
         isActive: () => p.outdoor,
@@ -873,6 +899,9 @@ async function boot(): Promise<void> {
     input.addField = false;
     input.removeField = false;
     input.explode = false;
+    if (boomIn > 0 && --boomIn === 0) {
+      input.explode = true;
+    }
     input.removeEmitter = false;
     frames++;
 
@@ -898,7 +927,7 @@ async function boot(): Promise<void> {
         `<b>LiquidVM 3D</b> · ${GRID3}³ · encre : ${INK_NAMES[input.emitInk] ?? '?'} · ${solver} · ${Math.round(fps)} FPS` +
         `${lockScale ? ' · rendu 100 % 🔒' : renderScale < 1 ? ` · rendu ${Math.round(renderScale * 100)} %` : ''}` +
         `${input.paused ? ' · ⏸ pause' : ''}${demoOn ? ' · <b>DÉMO</b> (D : reprendre la main)' : ' · D : démo'}<br>` +
-        '1/2/3 : encre · glisser un objet : déplacer · ses poignées : un seul axe · son bouton violet : orienter · A : + émetteur · X : supprimer · G : 💥 · L : rendu 100 % · O : boule · B : braises · F : repères<br>' +
+        '1/2/3 : encre · glisser un objet : déplacer · ses poignées : un seul axe · son bouton violet : orienter · A : + émetteur · X : supprimer · G : 💥 · M : 🍄 champignon · L : rendu 100 % · O : boule · B : braises · F : repères<br>' +
         'glisser : orbiter · clic droit : souffler · molette : zoom · Échap : désélectionner · espace : pause · R : reset · E : export .vdb';
     }
     if (selftest && frames === SELFTEST_FRAMES) {
