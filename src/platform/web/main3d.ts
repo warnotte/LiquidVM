@@ -30,12 +30,12 @@ const SELFTEST_FRAMES = 240;
 /** Jeux de réglages nommés — partagés par les presets du panneau ET la démo. */
 const TUNE_CANDLE: Partial<Sim3Tuning> = {
   buoyancy: 80, velocityDissipation: 0.05, emitHeat: 1.6, emitInkRate: 0.7,
-  heatCooling: 1.5, inkDissipation: 0.3, burnRate: 2, heatYield: 0.5, expansion: 4,
+  heatCooling: 1.5, inkDissipation: 0.3, burnRate: 2, heatYield: 0.5, expansion: 8,
 };
 const TUNE_FURNACE: Partial<Sim3Tuning> = {
   buoyancy: 280, velocityDissipation: 0.02, emitHeat: 6.5, emitInkRate: 3.5,
   heatCooling: 0.55, inkDissipation: 0.15, burnRate: 6, heatYield: 1.05,
-  expansion: 24, oxygenRecover: 0.05, blowForce: 320,
+  expansion: 48, oxygenRecover: 0.05, blowForce: 320,
 };
 const TUNE_SMOKE: Partial<Sim3Tuning> = {
   buoyancy: 110, emitHeat: 1.2, emitInkRate: 5.5,
@@ -45,7 +45,7 @@ const TUNE_SMOKE: Partial<Sim3Tuning> = {
 // qu'on puisse le voir d'un clic sans qu'il change quoi que ce soit par défaut.
 const TUNE_WIND: Partial<Sim3Tuning> = {
   buoyancy: 160, emitHeat: 2.6, emitInkRate: 3.0, heatCooling: 1.0,
-  inkDissipation: 0.10, vorticityStrength: 16,
+  inkDissipation: 0.10, vorticityStrength: 8,
   // 35 CALIBRÉ par captures : à 55 le panache commence à se disperser, à 95 le
   // vent l'écrase au ras de l'émetteur. À 35 il monte haut, penche, et traîne.
   windStrength: 35, windSwing: 40, windPeriod: 8, windHeading: 20,
@@ -64,9 +64,9 @@ const TUNE_WIND: Partial<Sim3Tuning> = {
 //  · bande éponge RESSERRÉE : le chapeau doit pouvoir s'étaler près du plafond
 //    au lieu d'y être mangé avant d'avoir pris sa forme.
 const TUNE_MUSHROOM: Partial<Sim3Tuning> = {
-  timeScale: 0.55, buoyancy: 430, velocityDissipation: 0.008, vorticityStrength: 22,
+  timeScale: 0.55, buoyancy: 430, velocityDissipation: 0.008, vorticityStrength: 11,
   heatCooling: 0.42, inkDissipation: 0.02, burnRate: 7, heatYield: 1.3,
-  expansion: 12, oxygenRecover: 0.02,
+  expansion: 24, oxygenRecover: 0.02,
   sootYield: 28, sootCooling: 3.2,
   // Éponge RESSERRÉE ET ADOUCIE — le réglage le plus contre-intuitif du preset.
   // Le chapeau d'un champignon ne TRAVERSE pas la bande, il s'y GARE : il monte
@@ -680,7 +680,7 @@ async function boot(): Promise<void> {
       sliders: [
         { label: 'taux de réaction', min: 0, max: 8, step: 0.1, get: () => p.burnRate, set: (x) => (p.burnRate = x) },
         { label: 'chaleur dégagée', min: 0, max: 1.5, step: 0.05, get: () => p.heatYield, set: (x) => (p.heatYield = x) },
-        { label: 'expansion', min: 0, max: 40, step: 1, get: () => p.expansion, set: (x) => (p.expansion = x), format: (x) => x.toFixed(0) },
+        { label: 'expansion', min: 0, max: 60, step: 1, get: () => p.expansion, set: (x) => (p.expansion = x), format: (x) => x.toFixed(0) },
         { label: 'retour d’oxygène', min: 0, max: 0.08, step: 0.002, get: () => p.oxygenRecover, set: (x) => (p.oxygenRecover = x), format: (x) => x.toFixed(3) },
       ],
     },

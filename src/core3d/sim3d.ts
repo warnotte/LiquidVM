@@ -2005,7 +2005,11 @@ export class FluidSim3D {
     // lisible partout sans rallonger le préfixe d'uniforme de chacun. La force
     // de vorticité, qui l'occupait, a déménagé en sphere_vel.w.
     d[3] = HEIGHT3;
-    d[55] = p.vorticityStrength;
+    // VORTICITÉ : le confinement produit une ACCÉLÉRATION (ε × rotationnel, le
+    // rotationnel étant en 1/s), donc ε est une vitesse — en voxels/s, soit
+    // N fois sa valeur monde. Il manquait sa mise à l'échelle : le confinement
+    // s'affaiblissait relativement à mesure qu'on montait en résolution.
+    d[55] = p.vorticityStrength * SCALE3;
     // Émetteurs : position d'état + petit balancement propre à chacun (déphasé).
     const emitterSlot = (slot: number, i: number): void => {
       const e = this.emitters[i]!;
@@ -2054,7 +2058,17 @@ export class FluidSim3D {
     d[32] = this.emitters.length;
     d[33] = p.burnRate;
     d[34] = p.heatYield;
-    d[35] = p.expansion * SCALE3;
+    // EXPANSION : une source de DIVERGENCE, donc en 1/s — surtout pas ×SCALE3.
+    // La divergence discrète est la somme des écarts de vitesse d'une face à
+    // l'autre, en voxels/s par voxel : c'est DÉJÀ une grandeur en 1/s,
+    // indépendante de la résolution. La multiplier par SCALE3 rendait le souffle
+    // proportionnel à N — mesuré : à temps simulé égal, la même détonation
+    // donnait une colonnette à 128³ et un nuage massif à 384³. C'est ce qui
+    // faisait « empirer » les hautes résolutions.
+    // (Les accélérations, elles, se mettent bien à l'échelle : une accélération
+    //  en monde/s² vaut N fois plus en voxels/s². D'où la poussée, le vent, le
+    //  poids des matières et la force des champs, tous ×SCALE3 à juste titre.)
+    d[35] = p.expansion;
     for (let i = 1; i < 4; i++) {
       if (i < this.emitters.length) {
         emitterSlot(32 + i * 4, i);

@@ -173,7 +173,9 @@ export const SIM3_DEFAULTS = {
    *  0). Calibré par captures EPS2-0/8/16/24 à 256³ : 8 = subtil, 16 = riche
    *  encore cohérent, 24 = panache déchiqueté (sans grain — l'échec est devenu
    *  « trop chaotique », plus jamais granuleux). Défaut 12 = vivant avec marge. */
-  vorticityStrength: 12,
+  // Rebasée pour 256³ après correction d'échelle (elle était appliquée sans
+  // SCALE3, donc ce 12 valait l'ancien 24 à cette résolution).
+  vorticityStrength: 6,
   /** Dissipations (1/s) : vélocité, fumée, refroidissement de la chaleur. */
   velocityDissipation: 0.03,
   smokeDissipation: 0.20,
@@ -318,7 +320,7 @@ export const SIM3_DEFAULTS = {
    *  front de flamme (source de divergence, voxels/s — remise à l'échelle SCALE3). */
   burnRate: 3.0,
   heatYield: 0.7,
-  expansion: 10,
+  expansion: 20,
   /** OXYGÈNE (canal x de la texture d'espèces, initialisé à 1 partout) : la
    *  combustion le consomme (stœchiométrie dans le shader), il revient lentement
    *  (la boîte « fuit ») et le SOUFFLE en apporte — le soufflet de forge. */

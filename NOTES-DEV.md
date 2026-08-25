@@ -68,6 +68,30 @@ typecheck strict + bundle. Aucune dépendance runtime.
 
 ## Pièges durement payés — ne pas re-tomber dedans
 
+- **UNITÉS ET RÉSOLUTION (3D, 2026-08-26)** — signalé par Renaud (« si j'augmente
+  la résolution, ça devient encore pire »), et c'était un vrai bug d'unités.
+  La règle, à appliquer à CHAQUE nouvelle grandeur :
+   - une **ACCÉLÉRATION** (monde/s²) vaut N fois plus en voxels/s² → **×SCALE3**.
+     Poussée, vent, poids des matières, force des champs : correctement traités.
+   - une **VITESSE** (monde/s) vaut aussi N fois plus en voxels/s → **×SCALE3**.
+     C'est le cas du ε de vorticité, qui multiplie un rotationnel (1/s) pour
+     donner une accélération : il lui manquait sa mise à l'échelle.
+   - une **DIVERGENCE** est en 1/s et ne se met **PAS** à l'échelle. La
+     divergence discrète est la somme des écarts de vitesse d'une face à
+     l'autre, en voxels/s par voxel : c'est déjà du 1/s. L'expansion de
+     combustion était multipliée par SCALE3 à tort.
+  **Symptôme** : à temps SIMULÉ égal, la même détonation donnait une colonnette
+  à 128³ et un nuage massif à 384³ — la haute résolution paraissait « pire »
+  parce qu'elle explosait plus fort, pas parce qu'elle simulait moins bien.
+  **Méthode qui l'a montré** : `.selftest/cdp-res.mjs` — une passe par
+  résolution, page fraîche, capture au même temps SIMULÉ. Comparer à la montre
+  n'aurait rien donné : une grille fine tourne moins vite, on aurait comparé
+  deux ÂGES différents du même nuage.
+  Après correction, 128³ et 384³ donnent la même taille et la même forme, la
+  finesse en plus. Les défauts et presets ont été REBASÉS pour que l'image
+  réglée à 256³ ne bouge pas (vorticité ÷2, expansion ×2).
+
+
 - **Grille MAC** : texel (i,j) .x = face u gauche (position (i, j+½)), .y = face v
   haute ((i+½, j)). Chaque composante s'échantillonne avec SON décalage d'un demi-texel.
 - **Le lisseur de pression doit être l'adjoint exact du couple divergence/gradient.**
