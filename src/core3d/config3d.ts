@@ -121,6 +121,8 @@ export interface Sim3Tuning {
   openCeilStrength: number;
   stratStrength: number;
   stratBase: number;
+  outdoor: boolean;
+  sunHeight: number;
 }
 
 export function defaultTuning3(): Sim3Tuning {
@@ -147,6 +149,8 @@ export function defaultTuning3(): Sim3Tuning {
     openCeilStrength: SIM3_DEFAULTS.openCeilStrength,
     stratStrength: SIM3_DEFAULTS.stratStrength,
     stratBase: SIM3_DEFAULTS.stratBase,
+    outdoor: SIM3_DEFAULTS.outdoor,
+    sunHeight: SIM3_DEFAULTS.sunHeight,
     oxygenRecover: SIM3_DEFAULTS.oxygenRecover,
     blowForce: SIM3_DEFAULTS.blowForce,
     windStrength: SIM3_DEFAULTS.windStrength,
@@ -302,6 +306,13 @@ export const SIM3_DEFAULTS = {
    *  le PLAFOND. L'illusion n'a pas survécu à une boîte haute. */
   stratStrength: 0,
   stratBase: 0.3,
+  /** PRISE DE VUE. `outdoor` remplace l'atelier (boîte de verre, fond gris) par
+   *  un ciel, un sol jusqu'à l'horizon et un soleil rasant. Rien n'y touche à la
+   *  simulation — mais c'est ce qui donne l'ÉCHELLE, et sans échelle le plus beau
+   *  champignon reste une bouffée de fumée dans une boîte. `sunHeight` est la
+   *  hauteur du soleil : bas, il sculpte les volutes ; haut, il les aplatit. */
+  outdoor: false,
+  sunHeight: 0.18,
   /** Combustion (modèle Feldman/Fedkiw simplifié) : taux de réaction (1/s au-dessus
    *  de l'ignition), chaleur dégagée par unité de carburant, expansion volumique au
    *  front de flamme (source de divergence, voxels/s — remise à l'échelle SCALE3). */

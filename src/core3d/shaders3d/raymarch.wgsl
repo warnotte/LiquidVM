@@ -27,7 +27,8 @@ struct RenderParams {
   opts: vec4f,
   sel: vec4f,
   aim: vec4f,
-  soot: vec4f,      // z: densité de suie au rendu (0 = comme avant),
+  soot: vec4f,      // x: MODE PRISE DE VUE (0 = atelier, 1 = extérieur),
+                    // y: hauteur du soleil, z: densité de suie au rendu,
                     // w: HAUTEUR MONDE du domaine (1 = cube)
   // Suivent les gizmos des champs de force (2 vec4 par champ) — dessinés par
   // gizmo3d.wgsl en LIGNES après la présentation, pas ici : un repère doit être
@@ -156,6 +157,67 @@ fn hash12(p: vec2f) -> f32 {
   return fract(q.x * q.y);
 }
 
+// PRISE DE VUE EXTÉRIEURE. Une simulation parfaite dans une boîte de verre sur
+// fond gris ressemble à une bouffée de fumée dans une boîte de verre : rien n'y
+// dit l'ÉCHELLE. Ce qui rend une photo d'essai reconnaissable, c'est d'abord
+// qu'elle est immense — et l'échelle se lit sur un horizon, un ciel, un soleil
+// rasant, une silhouette à contre-jour. C'est du cadrage, pas de la physique,
+// et c'est ce qui manquait le plus.
+fn is_outdoor() -> bool {
+  return R.soot.x > 0.5;
+}
+
+fn sun_dir() -> vec3f {
+  // Soleil BAS : un éclairage rasant sculpte les volutes et creuse les
+  // dessous, là où un éclairage zénithal les aplatit.
+  let h = max(R.soot.y, 0.02);
+  return normalize(vec3f(0.62, h, 0.42));
+}
+
+/** Ciel : bleu profond au zénith, blanchi et chaud près de l'horizon, avec le
+ *  halo du soleil. C'est le fond CLAIR qui fait lire un nuage sombre comme une
+ *  masse, au lieu d'un voile gris sur du gris. */
+fn sky(rd: vec3f) -> vec3f {
+  let up = clamp(rd.y * 0.5 + 0.5, 0.0, 1.0);
+  let zenith = vec3f(0.20, 0.34, 0.62);
+  let horizon = vec3f(0.72, 0.74, 0.76);
+  var c = mix(horizon, zenith, pow(up, 0.65));
+  let mu = clamp(dot(rd, sun_dir()), 0.0, 1.0);
+  c += vec3f(1.0, 0.86, 0.62) * pow(mu, 220.0) * 6.0;   // le disque
+  c += vec3f(1.0, 0.88, 0.70) * pow(mu, 6.0) * 0.28;    // le halo
+  return c;
+}
+
+/** Sol vu de l'extérieur : plan qui court jusqu'à l'horizon, avec une brume de
+ *  distance. C'est LUI qui donne l'échelle — sans horizon, aucune taille n'est
+ *  lisible. */
+/** Bruit de valeur 2D pour le moucheté du terrain (haché, sans périodicité). */
+fn mottle(q: vec2f) -> f32 {
+  let i = floor(q);
+  let f = q - i;
+  let u = f * f * (3.0 - 2.0 * f);
+  let a = hash12(i);
+  let b = hash12(i + vec2f(1.0, 0.0));
+  let c = hash12(i + vec2f(0.0, 1.0));
+  let e = hash12(i + vec2f(1.0, 1.0));
+  return mix(mix(a, b, u.x), mix(c, e, u.x), u.y);
+}
+
+fn ground(p: vec3f, rd: vec3f) -> vec3f {
+  let d = length(p.xz);
+  // Terrain SOMBRE : contre un ciel clair, un sol clair aplatit tout. C'est le
+  // contraste sol/ciel qui donne sa masse au nuage.
+  var tint = mix(vec3f(0.115, 0.100, 0.082), vec3f(0.075, 0.070, 0.065), clamp(d * 0.05, 0.0, 1.0));
+  // Moucheté IRRÉGULIER. Sans aucun détail au sol l'œil n'a pas de référence de
+  // taille et le nuage flotte hors d'échelle — mais un motif RÉGULIER (une
+  // grille) est pire : il crie « scène de test » et détruit l'illusion. Deux
+  // échelles de bruit haché, aucune périodicité visible.
+  let m = mottle(p.xz * 1.7) * 0.6 + mottle(p.xz * 7.3) * 0.4;
+  tint *= mix(0.62, 1.18, m);
+  // Brume de distance : le sol se fond dans l'horizon, ce qui creuse la profondeur.
+  return mix(tint, sky(vec3f(rd.x, 0.03, rd.z)), clamp(d / 26.0, 0.0, 1.0));
+}
+
 // Ombrage du sol sous la boîte : tapis sombre qui reçoit l'ombre volumétrique de
 // la fumée (marche courte vers la lumière à travers la boîte) et celle de la boule.
 fn floor_shade(fp: vec3f, bg: vec3f, ldir: vec3f) -> vec3f {
@@ -194,11 +256,18 @@ fn fs_main(frag: VSOut) -> @location(0) vec4f {
   );
   let ro = R.cam_pos.xyz;
 
-  // Fond : dégradé sombre vertical, remplacé par le sol si le rayon le touche.
+  // Fond : atelier (dégradé sombre + tapis) ou EXTÉRIEUR (ciel + sol à
+  // l'horizon). Le second ne change rien à la simulation — seulement ce qui
+  // permet de lire une échelle.
   var bg = mix(vec3f(0.045, 0.05, 0.065), vec3f(0.10, 0.105, 0.13), frag.uv.y * 0.5 + 0.5);
+  if (is_outdoor()) {
+    bg = sky(rd);
+  }
   if (rd.y < -1e-4) {
     let t_floor = (-0.502 - ro.y) / rd.y;
-    if (t_floor > 0.0) {
+    if (t_floor > 0.0 && is_outdoor()) {
+      bg = ground(ro + rd * t_floor, rd);
+    } else if (t_floor > 0.0) {
       bg = floor_shade(ro + rd * t_floor, bg, R.light.xyz);
     }
   }
@@ -229,9 +298,9 @@ fn fs_main(frag: VSOut) -> @location(0) vec4f {
     let half = vec3f(0.5, max(R.soot.w, 1e-3) * 0.5, 0.5);
     let e = abs(entry - vec3f(0.0, -0.5 + half.y, 0.0)) / half * 0.5;
     let edge = smoothstep(0.485, 0.499, max(min(e.x, e.y), min(max(e.x, e.y), e.z)));
-    acc += vec3f(0.10, 0.11, 0.14) * edge * 0.5;
+    acc += vec3f(0.10, 0.11, 0.14) * edge * 0.5 * select(1.0, 0.0, is_outdoor());
 
-    let ldir = R.light.xyz;
+    let ldir = select(R.light.xyz, sun_dir(), is_outdoor());
     let shadow_step = 0.5 / 6.0;
     // Phase directionnelle : constante par rayon (mu = angle vue/lumière).
     let phase = phase_hg(dot(rd, ldir));

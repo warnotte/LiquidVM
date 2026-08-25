@@ -730,6 +730,7 @@ async function boot(): Promise<void> {
         { label: 'plafond : absorption', min: 1, max: 90, step: 1, get: () => p.openCeilStrength, set: (x) => (p.openCeilStrength = x), format: (x) => x.toFixed(0) },
         { label: 'inversion', min: 0, max: 5, step: 0.05, get: () => p.stratStrength, set: (x) => (p.stratStrength = x), format: (x) => (x <= 0 ? 'air neutre' : x.toFixed(2)) },
         { label: 'inversion : base', min: 0.05, max: 0.9, step: 0.01, get: () => p.stratBase, set: (x) => (p.stratBase = x), format: (x) => x.toFixed(2) },
+        { label: 'soleil : hauteur', min: 0.02, max: 0.9, step: 0.01, get: () => p.sunHeight, set: (x) => (p.sunHeight = x), format: (x) => x.toFixed(2) },
       ],
       buttons: [{ label: '💥 détoner (G)', action: () => (input.explode = true) }],
     },
@@ -799,6 +800,15 @@ async function boot(): Promise<void> {
     ],
     [
       { label: '💥 boum', action: () => (input.explode = true) },
+      {
+        label: '🏞 extérieur',
+        isActive: () => p.outdoor,
+        action: () => {
+          p.outdoor = !p.outdoor;
+          // Les repères et la boîte de verre n'ont plus de sens en extérieur.
+          input.feedback = !p.outdoor;
+        },
+      },
       { label: '🎬 démo', isActive: () => demoOn, action: toggleDemo },
       { label: '⚙ réglages', action: () => panel.toggle() },
       // Autres pages (URL relatives : valides en dev et sous /LiquidVM/ sur Pages).
