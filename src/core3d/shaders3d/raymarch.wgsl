@@ -220,7 +220,14 @@ fn fs_main(frag: VSOut) -> @location(0) vec4f {
 
     // Liseré des arêtes de la boîte au point d'entrée : ancre la « boîte de verre ».
     let entry = ro + rd * hit.x;
-    let e = abs(entry);
+    // Distance aux parois NORMALISÉE par les demi-côtés : le domaine n'est plus
+    // un cube, donc y ne se mesure plus contre 0,5.
+    // Sans cette normalisation, TOUT point au-dessus de l'ancien plafond du cube
+    // a |y| > 0,5, le liseré sature, et il peint la partie haute entière — un
+    // bloc gris uniforme qu'on lit à tort comme « la simulation remplit la
+    // boîte ». Le solveur n'y était pour rien.
+    let half = vec3f(0.5, max(R.soot.w, 1e-3) * 0.5, 0.5);
+    let e = abs(entry - vec3f(0.0, -0.5 + half.y, 0.0)) / half * 0.5;
     let edge = smoothstep(0.485, 0.499, max(min(e.x, e.y), min(max(e.x, e.y), e.z)));
     acc += vec3f(0.10, 0.11, 0.14) * edge * 0.5;
 
