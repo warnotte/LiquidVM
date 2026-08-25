@@ -119,6 +119,8 @@ export interface Sim3Tuning {
   openStrength: number;
   openCeilBand: number;
   openCeilStrength: number;
+  stratStrength: number;
+  stratBase: number;
 }
 
 export function defaultTuning3(): Sim3Tuning {
@@ -143,6 +145,8 @@ export function defaultTuning3(): Sim3Tuning {
     openStrength: SIM3_DEFAULTS.openStrength,
     openCeilBand: SIM3_DEFAULTS.openCeilBand,
     openCeilStrength: SIM3_DEFAULTS.openCeilStrength,
+    stratStrength: SIM3_DEFAULTS.stratStrength,
+    stratBase: SIM3_DEFAULTS.stratBase,
     oxygenRecover: SIM3_DEFAULTS.oxygenRecover,
     blowForce: SIM3_DEFAULTS.blowForce,
     windStrength: SIM3_DEFAULTS.windStrength,
@@ -289,6 +293,15 @@ export const SIM3_DEFAULTS = {
    *  absorption calibrée pour un passage le lamine sur place. */
   openCeilBand: 0.11,
   openCeilStrength: 26,
+  /** STRATIFICATION de l'air ambiant : chaleur qu'il gagne entre l'altitude de
+   *  base et le plafond, et cette altitude (fraction de la HAUTEUR du domaine).
+   *  0 = atmosphère neutre, strictement le comportement d'avant.
+   *  C'est ce qui donne son CHAPEAU à un champignon : le panache s'arrête à
+   *  l'altitude où sa chaleur rejoint celle du milieu, et s'y étale. Dans une
+   *  boîte cubique on s'en passait sans le savoir — le chapeau y était en fait
+   *  le PLAFOND. L'illusion n'a pas survécu à une boîte haute. */
+  stratStrength: 0,
+  stratBase: 0.3,
   /** Combustion (modèle Feldman/Fedkiw simplifié) : taux de réaction (1/s au-dessus
    *  de l'ignition), chaleur dégagée par unité de carburant, expansion volumique au
    *  front de flamme (source de divergence, voxels/s — remise à l'échelle SCALE3). */

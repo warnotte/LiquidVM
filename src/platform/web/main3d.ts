@@ -13,6 +13,8 @@ import {
   INK_COLORS,
   INK_NAMES,
   setGrid3,
+  GRID3Y,
+  HEIGHT3,
   FIELD_NAMES,
   SIM3_DEFAULTS,
   type Sim3Tuning,
@@ -78,6 +80,12 @@ const TUNE_MUSHROOM: Partial<Sim3Tuning> = {
   // que le chapeau garde ses lobes.
   openBand: 0.09, openStrength: 24,
   openCeilBand: 0.035, openCeilStrength: 6,
+  // INVERSION : au-dessus du quart bas, l'air ambiant se réchauffe avec
+  // l'altitude. Le nuage cesse d'être flottant à mi-hauteur et s'y ÉTALE de
+  // lui-même, au lieu de monter jusqu'à s'écraser au plafond. C'est la vraie
+  // mécanique du chapeau d'un champignon — dans un cube, le « chapeau » était en
+  // réalité le plafond, et on ne s'en apercevait pas.
+  stratStrength: 2.2, stratBase: 0.25,
   // Le plafond de chaleur ouvre le domaine des BOULES DE FEU. La poussée sature
   // à 2 de son côté, donc relever ce plafond n'ajoute pas de flottabilité : il
   // n'ajoute que de la LUMIÈRE.
@@ -424,6 +432,13 @@ async function boot(): Promise<void> {
     // vérifier « le champignon » recopierait leurs valeurs et vérifierait donc
     // sa propre copie plutôt que ce que voit l'utilisateur.
     (window as unknown as Record<string, unknown>)['__presets3d'] = PRESETS;
+    // Forme de la grille, pour le harnais : sans ça, un problème de domaine non
+    // cubique ne se diagnostique qu'à l'œil.
+    (window as unknown as Record<string, unknown>)['__grid3'] = {
+      x: GRID3,
+      y: GRID3Y,
+      height: HEIGHT3,
+    };
   }
 
   // Caméra orbitale : glisser (gauche) pour tourner — SAUF si le clic attrape un
@@ -713,6 +728,8 @@ async function boot(): Promise<void> {
         { label: 'ciel : absorption', min: 2, max: 90, step: 1, get: () => p.openStrength, set: (x) => (p.openStrength = x), format: (x) => x.toFixed(0) },
         { label: 'plafond : bande', min: 0, max: 0.25, step: 0.005, get: () => p.openCeilBand, set: (x) => (p.openCeilBand = x), format: (x) => (x <= 0 ? 'fermé' : x.toFixed(3)) },
         { label: 'plafond : absorption', min: 1, max: 90, step: 1, get: () => p.openCeilStrength, set: (x) => (p.openCeilStrength = x), format: (x) => x.toFixed(0) },
+        { label: 'inversion', min: 0, max: 5, step: 0.05, get: () => p.stratStrength, set: (x) => (p.stratStrength = x), format: (x) => (x <= 0 ? 'air neutre' : x.toFixed(2)) },
+        { label: 'inversion : base', min: 0.05, max: 0.9, step: 0.01, get: () => p.stratBase, set: (x) => (p.stratBase = x), format: (x) => x.toFixed(2) },
       ],
       buttons: [{ label: '💥 détoner (G)', action: () => (input.explode = true) }],
     },

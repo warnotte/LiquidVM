@@ -194,8 +194,8 @@ export class FluidSim3D {
   /** Première frame : initialiser la texture d'espèces (O₂ = 1 partout). */
   private needSpeciesInit = true;
 
-  // 112 floats utilisés (28 vec4) depuis la poussière soulevée.
-  private readonly simData = new Float32Array(112);
+  // 116 floats utilisés (29 vec4) depuis la stratification.
+  private readonly simData = new Float32Array(116);
   // 92 floats utilisés (23 vec4) depuis la suie.
   private readonly renderData = new Float32Array(92);
   private lastRender = new Float32Array(92).fill(Number.NaN);
@@ -2121,6 +2121,9 @@ export class FluidSim3D {
     d[109] = input.dustRadius * GRID3;
     d[110] = SIM3_DEFAULTS.dustHeight * GRID3;
     d[111] = p.heatCeiling;
+    // Stratification : la base est donnée en VOXELS (fraction × hauteur).
+    d[112] = p.stratStrength;
+    d[113] = p.stratBase * GRID3Y;
     // Oxygène : apport du souffle (blow_force.w) et récupération lente.
     d[27] = D.blowOxygen;
     d[59] = p.oxygenRecover;
