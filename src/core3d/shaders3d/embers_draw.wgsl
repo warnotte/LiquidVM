@@ -16,6 +16,22 @@ struct RenderParams {
   blow_a: vec4f,
   blow_b: vec4f,
   style: vec4f,     // z: débit des braises, w: N (voxels → monde)
+  // Traversée jusqu'à la hauteur du domaine (la disposition de l'uniforme est
+  // commune ; voir raymarch.wgsl).
+  giz0_a: vec4f, giz0_b: vec4f,
+  giz1_a: vec4f, giz1_b: vec4f,
+  giz2_a: vec4f, giz2_b: vec4f,
+  emit0: vec4f, emit1: vec4f, emit2: vec4f, emit3: vec4f,
+  opts: vec4f,
+  sel: vec4f,
+  aim: vec4f,
+  soot: vec4f,      // w: hauteur monde du domaine
+}
+
+/** Coordonnée de texture d'un point monde — y normalisé par la hauteur du
+ *  domaine, qui n'est plus forcément 1 (voir raymarch.wgsl). */
+fn tex_uvw(p: vec3f) -> vec3f {
+  return vec3f(p.x + 0.5, (p.y + 0.5) / max(R.soot.w, 1e-3), p.z + 0.5);
 }
 
 struct Ember {
@@ -78,7 +94,7 @@ fn vs_embers(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -
   var tau = 0.0;
   for (var j = 1u; j <= 4u; j++) {
     let sp = world + dir * (f32(j) / 4.0) * span;
-    tau += extinction(textureSampleLevel(density_tex, lin, sp + vec3f(0.5), 0.0));
+    tau += extinction(textureSampleLevel(density_tex, lin, tex_uvw(sp), 0.0));
   }
   var brightness = (1.0 - t) * (1.0 - t) * exp(-tau * span * 0.25);
   // Boule devant la braise : occultée.

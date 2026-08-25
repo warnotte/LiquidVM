@@ -9,7 +9,7 @@
 //    niveau le plus grossier (8³), directement dans le lisseur. NE PAS RETIRER.
 
 struct Params {
-  misc: vec4f,      // z: N (grille fine — sert à remonter aux voxels fins)
+  misc: vec4f,      // z: Nx fin (remonte aux voxels fins), w: hauteur du domaine
   emitter: vec4f,
   emit_vals: vec4f,
   diss: vec4f,
@@ -32,22 +32,25 @@ struct Params {
 const COARSEST_LIMIT = 16;
 const OMEGA = 0.8;
 
-fn p_at(c: vec3i, n: i32) -> f32 {
-  return textureLoad(p_src, clamp(c, vec3i(0), vec3i(n - 1)), 0).x;
+fn p_at(c: vec3i, n: vec3i) -> f32 {
+  return textureLoad(p_src, clamp(c, vec3i(0), n - vec3i(1)), 0).x;
 }
 
 // Sphère-obstacle vue depuis un niveau grossier : le centre de la cellule du niveau
 // est remonté en voxels fins (même approximation « centre » qu'au niveau 0 — un
 // obstacle plus fin que la cellule grossière peut fuir, comme la restriction 2D).
-fn solid_cell(c: vec3i, n: i32) -> bool {
+fn solid_cell(c: vec3i, n: vec3i) -> bool {
   if (P.sphere.w <= 0.0) {
     return false;
   }
-  let scale = P.misc.z / f32(n);
+  // Les CELLULES sont cubiques et tous les axes se divisent par deux à chaque
+  // niveau : un seul facteur d'échelle suffit, quelle que soit la forme du
+  // domaine.
+  let scale = P.misc.z / f32(n.x);
   return distance((vec3f(c) + vec3f(0.5)) * scale, P.sphere.xyz) < P.sphere.w;
 }
 
-fn neighbor_sum(c: vec3i, n: i32) -> f32 {
+fn neighbor_sum(c: vec3i, n: vec3i) -> f32 {
   let pc = p_at(c, n);
   var sum = 0.0;
   for (var a = 0; a < 6; a++) {
@@ -69,16 +72,16 @@ fn neighbor_sum(c: vec3i, n: i32) -> f32 {
 
 @compute @workgroup_size(4, 4, 4)
 fn smooth_jacobi(@builtin(global_invocation_id) gid: vec3u) {
-  let n = i32(textureDimensions(p_src).x);
+  let n = vec3i(textureDimensions(p_src));
   let c = vec3i(gid);
-  if (c.x >= n || c.y >= n || c.z >= n) {
+  if (any(c >= n)) {
     return;
   }
   let b = textureLoad(rhs, c, 0).x;
   let upd = (neighbor_sum(c, n) - b) / 6.0;
   var value = mix(p_at(c, n), upd, OMEGA);
   // Ancrage de l'espace nul au niveau le plus grossier.
-  if (n < COARSEST_LIMIT && all(c == vec3i(0))) {
+  if (n.x < COARSEST_LIMIT && all(c == vec3i(0))) {
     value = 0.0;
   }
   textureStore(scalar_dst, gid, vec4f(value, 0.0, 0.0, 0.0));
@@ -86,9 +89,9 @@ fn smooth_jacobi(@builtin(global_invocation_id) gid: vec3u) {
 
 @compute @workgroup_size(4, 4, 4)
 fn residual(@builtin(global_invocation_id) gid: vec3u) {
-  let n = i32(textureDimensions(p_src).x);
+  let n = vec3i(textureDimensions(p_src));
   let c = vec3i(gid);
-  if (c.x >= n || c.y >= n || c.z >= n) {
+  if (any(c >= n)) {
     return;
   }
   let ap = neighbor_sum(c, n) - 6.0 * p_at(c, n);
@@ -99,9 +102,9 @@ fn residual(@builtin(global_invocation_id) gid: vec3u) {
 // Résidu fin → second membre grossier : moyenne des 8 enfants × 4 (facteur h²).
 @compute @workgroup_size(4, 4, 4)
 fn restrict_rhs(@builtin(global_invocation_id) gid: vec3u) {
-  let n = i32(textureDimensions(scalar_dst).x);
+  let n = vec3i(textureDimensions(scalar_dst));
   let c = vec3i(gid);
-  if (c.x >= n || c.y >= n || c.z >= n) {
+  if (any(c >= n)) {
     return;
   }
   let f = c * 2;
@@ -117,12 +120,12 @@ fn restrict_rhs(@builtin(global_invocation_id) gid: vec3u) {
 // (r32float non filtrable) ajoutée à la pression fine courante.
 @compute @workgroup_size(4, 4, 4)
 fn prolong_add(@builtin(global_invocation_id) gid: vec3u) {
-  let n = i32(textureDimensions(fine_src).x);
+  let n = vec3i(textureDimensions(fine_src));
   let c = vec3i(gid);
-  if (c.x >= n || c.y >= n || c.z >= n) {
+  if (any(c >= n)) {
     return;
   }
-  let nc = i32(textureDimensions(src_tex).x);
+  let nc = vec3i(textureDimensions(src_tex));
   let q = (vec3f(c) + vec3f(0.5)) * 0.5 - vec3f(0.5);
   let base = vec3i(floor(q));
   let t = q - vec3f(base);
@@ -131,7 +134,7 @@ fn prolong_add(@builtin(global_invocation_id) gid: vec3u) {
     let o = vec3i(i & 1, (i >> 1) & 1, (i >> 2) & 1);
     let w = mix(1.0 - t.x, t.x, f32(o.x)) * mix(1.0 - t.y, t.y, f32(o.y)) *
       mix(1.0 - t.z, t.z, f32(o.z));
-    corr += w * textureLoad(src_tex, clamp(base + o, vec3i(0), vec3i(nc - 1)), 0).x;
+    corr += w * textureLoad(src_tex, clamp(base + o, vec3i(0), nc - vec3i(1)), 0).x;
   }
   let value = textureLoad(fine_src, c, 0).x + corr;
   textureStore(scalar_dst, gid, vec4f(value, 0.0, 0.0, 0.0));

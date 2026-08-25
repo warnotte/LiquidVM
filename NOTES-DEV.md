@@ -68,6 +68,42 @@ typecheck strict + bundle. Aucune dépendance runtime.
 
 ## Pièges durement payés — ne pas re-tomber dedans
 
+- **UNITÉS ET RÉSOLUTION (3D, 2026-08-26)** — signalé par Renaud (« si j'augmente
+  la résolution, ça devient encore pire »), et c'était un vrai bug d'unités.
+  La règle, à appliquer à CHAQUE nouvelle grandeur :
+   - une **ACCÉLÉRATION** (monde/s²) vaut N fois plus en voxels/s² → **×SCALE3**.
+     Poussée, vent, poids des matières, force des champs : correctement traités.
+   - une **VITESSE** (monde/s) vaut aussi N fois plus en voxels/s → **×SCALE3**.
+   - le ε de **VORTICITÉ** est l'EXCEPTION, et elle mérite d'être comprise : la
+     forme de Fedkiw est `f = ε·h·(N̂ × ω)`, et le facteur h (taille de cellule,
+     1/N en monde) annule EXACTEMENT la conversion monde→voxels de
+     l'accélération. Le ε discret est donc **déjà indépendant de la résolution**
+     et ne se met PAS à l'échelle. J'ai cru le contraire en lisant la formule
+     discrète sans son h : à 384³ et 512³ le confinement injectait alors assez
+     d'énergie pour faire naître un TOURBILLON PARASITE qui envahissait la boîte
+     après quelques secondes (invisible aux résolutions basses, où le facteur
+     restait petit). **Règle de sûreté : le confinement de vorticité injecte de
+     l'énergie sans borne — toute modification de son ε se vérifie sur PLUSIEURS
+     SECONDES à la plus HAUTE résolution, jamais sur une image.**
+   - une **DIVERGENCE** est en 1/s et ne se met **PAS** à l'échelle. La
+     divergence discrète est la somme des écarts de vitesse d'une face à
+     l'autre, en voxels/s par voxel : c'est déjà du 1/s. L'expansion de
+     combustion était multipliée par SCALE3 à tort.
+  **Symptôme** : à temps SIMULÉ égal, la même détonation donnait une colonnette
+  à 128³ et un nuage massif à 384³ — la haute résolution paraissait « pire »
+  parce qu'elle explosait plus fort, pas parce qu'elle simulait moins bien.
+  **Méthode qui l'a montré** : `.selftest/cdp-res.mjs` — une passe par
+  résolution, page fraîche, capture au même temps SIMULÉ. Comparer à la montre
+  n'aurait rien donné : une grille fine tourne moins vite, on aurait comparé
+  deux ÂGES différents du même nuage.
+  Après correction, 128³ et 384³ donnent la même taille et la même forme, la
+  finesse en plus. C'est l'EXPANSION qui portait tout le défaut ; les défauts et
+  presets ont été rebasés en conséquence (expansion ×2 à 256³).
+  `.selftest/cdp-vortex.mjs` rejoue la scène qui a démasqué le tourbillon
+  parasite (boule poussée sur le côté, détonation, observation jusqu'à 8 s de
+  temps simulé) — à garder pour toute retouche du confinement.
+
+
 - **Grille MAC** : texel (i,j) .x = face u gauche (position (i, j+½)), .y = face v
   haute ((i+½, j)). Chaque composante s'échantillonne avec SON décalage d'un demi-texel.
 - **Le lisseur de pression doit être l'adjoint exact du couple divergence/gradient.**

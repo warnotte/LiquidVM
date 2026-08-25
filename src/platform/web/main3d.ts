@@ -13,6 +13,8 @@ import {
   INK_COLORS,
   INK_NAMES,
   setGrid3,
+  GRID3Y,
+  HEIGHT3,
   FIELD_NAMES,
   SIM3_DEFAULTS,
   type Sim3Tuning,
@@ -28,12 +30,12 @@ const SELFTEST_FRAMES = 240;
 /** Jeux de réglages nommés — partagés par les presets du panneau ET la démo. */
 const TUNE_CANDLE: Partial<Sim3Tuning> = {
   buoyancy: 80, velocityDissipation: 0.05, emitHeat: 1.6, emitInkRate: 0.7,
-  heatCooling: 1.5, inkDissipation: 0.3, burnRate: 2, heatYield: 0.5, expansion: 4,
+  heatCooling: 1.5, inkDissipation: 0.3, burnRate: 2, heatYield: 0.5, expansion: 8,
 };
 const TUNE_FURNACE: Partial<Sim3Tuning> = {
   buoyancy: 280, velocityDissipation: 0.02, emitHeat: 6.5, emitInkRate: 3.5,
   heatCooling: 0.55, inkDissipation: 0.15, burnRate: 6, heatYield: 1.05,
-  expansion: 24, oxygenRecover: 0.05, blowForce: 320,
+  expansion: 48, oxygenRecover: 0.05, blowForce: 320,
 };
 const TUNE_SMOKE: Partial<Sim3Tuning> = {
   buoyancy: 110, emitHeat: 1.2, emitInkRate: 5.5,
@@ -64,7 +66,7 @@ const TUNE_WIND: Partial<Sim3Tuning> = {
 const TUNE_MUSHROOM: Partial<Sim3Tuning> = {
   timeScale: 0.55, buoyancy: 430, velocityDissipation: 0.008, vorticityStrength: 22,
   heatCooling: 0.42, inkDissipation: 0.02, burnRate: 7, heatYield: 1.3,
-  expansion: 12, oxygenRecover: 0.02,
+  expansion: 24, oxygenRecover: 0.02,
   sootYield: 28, sootCooling: 3.2,
   // Éponge RESSERRÉE ET ADOUCIE — le réglage le plus contre-intuitif du preset.
   // Le chapeau d'un champignon ne TRAVERSE pas la bande, il s'y GARE : il monte
@@ -78,6 +80,12 @@ const TUNE_MUSHROOM: Partial<Sim3Tuning> = {
   // que le chapeau garde ses lobes.
   openBand: 0.09, openStrength: 24,
   openCeilBand: 0.035, openCeilStrength: 6,
+  // INVERSION : au-dessus du quart bas, l'air ambiant se réchauffe avec
+  // l'altitude. Le nuage cesse d'être flottant à mi-hauteur et s'y ÉTALE de
+  // lui-même, au lieu de monter jusqu'à s'écraser au plafond. C'est la vraie
+  // mécanique du chapeau d'un champignon — dans un cube, le « chapeau » était en
+  // réalité le plafond, et on ne s'en apercevait pas.
+  stratStrength: 2.2, stratBase: 0.25,
   // Le plafond de chaleur ouvre le domaine des BOULES DE FEU. La poussée sature
   // à 2 de son côté, donc relever ce plafond n'ajoute pas de flottabilité : il
   // n'ajoute que de la LUMIÈRE.
@@ -92,6 +100,7 @@ interface BoomTune {
   explosionHeight: number;
   dustRate: number;
   dustTime: number;
+  dustRadius: number;
   explosionSpark: number;
 }
 const BOOM_DEFAULT: BoomTune = {
@@ -100,6 +109,7 @@ const BOOM_DEFAULT: BoomTune = {
   explosionHeight: SIM3_DEFAULTS.explosionHeight,
   dustRate: SIM3_DEFAULTS.dustRate,
   dustTime: SIM3_DEFAULTS.dustTime,
+  dustRadius: SIM3_DEFAULTS.dustRadius,
   explosionSpark: SIM3_DEFAULTS.explosionSpark,
 };
 // Charge PETITE, posée au ras du sol. Contre-intuitif — « atomique » n'appelle
@@ -122,6 +132,7 @@ const BOOM_MUSHROOM: BoomTune = {
   // bouffée, la colonne est un paquet fini que la montée étire puis rompt.
   dustRate: 11,
   dustTime: 5.0,
+  dustRadius: 0.22,
   // AMORCE ÉNORME : c'est elle qui fait la différence entre un gros feu et une
   // bombe. Avec le plafond de chaleur relevé (voir TUNE_MUSHROOM), elle porte le
   // cœur loin au-dessus du domaine des flammes, là où l'émission part en loi de
@@ -310,7 +321,10 @@ async function boot(): Promise<void> {
   let demoOn = urlParams.has('demo');
   // Résolution à la demande : ?grid=128|256|320 (défaut 256 ; 320 = le plafond
   // mesuré de la machine de référence, toujours à 60 FPS).
-  setGrid3(Number(urlParams.get('grid') ?? 256));
+  // `?tall=2|3` : domaine plus HAUT que large, à cellules toujours cubiques. Le
+  // défaut (1) rend exactement le cube. Une boîte deux fois plus haute coûte
+  // deux fois plus de cellules — d'où le tableau de VRAM du sélecteur.
+  setGrid3(Number(urlParams.get('grid') ?? 256), Number(urlParams.get('tall') ?? 1));
   const canvas = document.getElementById('canvas3d') as HTMLCanvasElement;
   const hud = document.getElementById('hud3d') as HTMLDivElement;
 
@@ -400,6 +414,7 @@ async function boot(): Promise<void> {
     explosionHeight: SIM3_DEFAULTS.explosionHeight,
     dustRate: SIM3_DEFAULTS.dustRate,
     dustTime: SIM3_DEFAULTS.dustTime,
+    dustRadius: SIM3_DEFAULTS.dustRadius,
     explosionSpark: SIM3_DEFAULTS.explosionSpark,
     sphereActive: true,
     feedback: true,
@@ -417,6 +432,13 @@ async function boot(): Promise<void> {
     // vérifier « le champignon » recopierait leurs valeurs et vérifierait donc
     // sa propre copie plutôt que ce que voit l'utilisateur.
     (window as unknown as Record<string, unknown>)['__presets3d'] = PRESETS;
+    // Forme de la grille, pour le harnais : sans ça, un problème de domaine non
+    // cubique ne se diagnostique qu'à l'œil.
+    (window as unknown as Record<string, unknown>)['__grid3'] = {
+      x: GRID3,
+      y: GRID3Y,
+      height: HEIGHT3,
+    };
   }
 
   // Caméra orbitale : glisser (gauche) pour tourner — SAUF si le clic attrape un
@@ -658,7 +680,7 @@ async function boot(): Promise<void> {
       sliders: [
         { label: 'taux de réaction', min: 0, max: 8, step: 0.1, get: () => p.burnRate, set: (x) => (p.burnRate = x) },
         { label: 'chaleur dégagée', min: 0, max: 1.5, step: 0.05, get: () => p.heatYield, set: (x) => (p.heatYield = x) },
-        { label: 'expansion', min: 0, max: 40, step: 1, get: () => p.expansion, set: (x) => (p.expansion = x), format: (x) => x.toFixed(0) },
+        { label: 'expansion', min: 0, max: 60, step: 1, get: () => p.expansion, set: (x) => (p.expansion = x), format: (x) => x.toFixed(0) },
         { label: 'retour d’oxygène', min: 0, max: 0.08, step: 0.002, get: () => p.oxygenRecover, set: (x) => (p.oxygenRecover = x), format: (x) => x.toFixed(3) },
       ],
     },
@@ -706,6 +728,9 @@ async function boot(): Promise<void> {
         { label: 'ciel : absorption', min: 2, max: 90, step: 1, get: () => p.openStrength, set: (x) => (p.openStrength = x), format: (x) => x.toFixed(0) },
         { label: 'plafond : bande', min: 0, max: 0.25, step: 0.005, get: () => p.openCeilBand, set: (x) => (p.openCeilBand = x), format: (x) => (x <= 0 ? 'fermé' : x.toFixed(3)) },
         { label: 'plafond : absorption', min: 1, max: 90, step: 1, get: () => p.openCeilStrength, set: (x) => (p.openCeilStrength = x), format: (x) => x.toFixed(0) },
+        { label: 'inversion', min: 0, max: 5, step: 0.05, get: () => p.stratStrength, set: (x) => (p.stratStrength = x), format: (x) => (x <= 0 ? 'air neutre' : x.toFixed(2)) },
+        { label: 'inversion : base', min: 0.05, max: 0.9, step: 0.01, get: () => p.stratBase, set: (x) => (p.stratBase = x), format: (x) => x.toFixed(2) },
+        { label: 'soleil : hauteur', min: 0.02, max: 0.9, step: 0.01, get: () => p.sunHeight, set: (x) => (p.sunHeight = x), format: (x) => x.toFixed(2) },
       ],
       buttons: [{ label: '💥 détoner (G)', action: () => (input.explode = true) }],
     },
@@ -775,6 +800,15 @@ async function boot(): Promise<void> {
     ],
     [
       { label: '💥 boum', action: () => (input.explode = true) },
+      {
+        label: '🏞 extérieur',
+        isActive: () => p.outdoor,
+        action: () => {
+          p.outdoor = !p.outdoor;
+          // Les repères et la boîte de verre n'ont plus de sens en extérieur.
+          input.feedback = !p.outdoor;
+        },
+      },
       { label: '🎬 démo', isActive: () => demoOn, action: toggleDemo },
       { label: '⚙ réglages', action: () => panel.toggle() },
       // Autres pages (URL relatives : valides en dev et sous /LiquidVM/ sur Pages).

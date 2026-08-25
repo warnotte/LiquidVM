@@ -22,8 +22,11 @@ import embersDrawWGSL from './shaders3d/embers_draw.wgsl?raw';
 import clearWGSL from './shaders3d/clear3d.wgsl?raw';
 import {
   DISPATCH3,
+  DISPATCH3Y,
   EMBERS3,
   GRID3,
+  GRID3Y,
+  HEIGHT3,
   MG3_COARSE_SMOOTH,
   MG3_COARSEST_SIZE,
   MG3_PRE_SMOOTH,
@@ -80,6 +83,9 @@ export interface Frame3DInput {
   dustRate: number;
   /** Durée d'arrachement du sol — distincte de celle de la charge. */
   dustTime: number;
+  /** Rayon de la galette arrachée (fraction de N) : il doit suivre le calibre de
+   *  la charge, sinon une petite bombe pose une nappe de géant. */
+  dustRadius: number;
   /** Amorce en chaleur : c'est elle qui décide si la boule est une flamme ou
    *  une boule de feu (avec le plafond `heatCeiling`, côté paramètres). */
   explosionSpark: number;
@@ -113,12 +119,16 @@ function tex3d(
   label: string,
   format: GPUTextureFormat,
   size = GRID3,
+  // Hauteur INDÉPENDANTE : le domaine n'est plus forcément cubique. Par défaut
+  // elle suit le même facteur que la grille fine, de sorte qu'un niveau
+  // grossier reste proportionnel au domaine.
+  height = Math.round(size * HEIGHT3),
 ): GPUTextureView {
   return device
     .createTexture({
       label,
       dimension: '3d',
-      size: { width: size, height: size, depthOrArrayLayers: size },
+      size: { width: size, height, depthOrArrayLayers: size },
       format,
       usage:
         GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.COPY_SRC,
@@ -143,6 +153,8 @@ function halfToFloat(h: number): number {
 /** Un niveau de la pyramide multigrid 3D (le niveau 0 réutilise pression/divergence). */
 interface MGLevel3 {
   readonly dispatch: number;
+  /** Dispatch VERTICAL : le domaine n'est plus forcément cubique. */
+  readonly dispatchY: number;
   /** Lissage pondéré, indexé par [source de pression du niveau]. */
   readonly smoothBind: Pair<GPUBindGroup>;
   /** r = rhs − A·p → texture résidu. Null au niveau le plus grossier. */
@@ -182,8 +194,8 @@ export class FluidSim3D {
   /** Première frame : initialiser la texture d'espèces (O₂ = 1 partout). */
   private needSpeciesInit = true;
 
-  // 112 floats utilisés (28 vec4) depuis la poussière soulevée.
-  private readonly simData = new Float32Array(112);
+  // 116 floats utilisés (29 vec4) depuis la stratification.
+  private readonly simData = new Float32Array(116);
   // 92 floats utilisés (23 vec4) depuis la suie.
   private readonly renderData = new Float32Array(92);
   private lastRender = new Float32Array(92).fill(Number.NaN);
@@ -346,6 +358,7 @@ export class FluidSim3D {
       readonly bloomW: number;
       readonly bloomH: number;
       readonly glowDispatch: number;
+      readonly glowDispatchY: number;
     },
   ) {
     this.mgIdx = new Array<number>(mgLevels.length).fill(0);
@@ -395,7 +408,9 @@ export class FluidSim3D {
       // Volume de LUEUR (grille grossière) : inject → [0], blurs ping-pong,
       // le rendu lit [1] (3 blurs : 0→1→0→1). Coût mémoire négligeable.
       const GLOW3 = Math.max(GRID3 / 8, 16);
+      const GLOW3Y = Math.round(GLOW3 * HEIGHT3);
       const glowDispatch = Math.ceil(GLOW3 / WG3);
+      const glowDispatchY = Math.ceil(GLOW3Y / WG3);
       const glow = pair((i) => tex3d(device, `glow3d-${i}`, 'rgba16float', GLOW3));
       // Chaîne bloom : taille FIXE (la lueur est basse fréquence), 16:9 approx —
       // l'étirement du noyau sur d'autres aspects est invisible sur un halo.
@@ -1006,6 +1021,7 @@ export class FluidSim3D {
         const next = l < lastTier ? tiers[l + 1]! : null;
         return {
           dispatch: Math.ceil(t.size / WG3),
+          dispatchY: Math.ceil(Math.round(t.size * HEIGHT3) / WG3),
           smoothBind: pair((p) =>
             device.createBindGroup({
               label: `mg3-smooth-l${l}-p${p}`,
@@ -1121,6 +1137,7 @@ export class FluidSim3D {
           bloomW: BLOOM_W,
           bloomH: BLOOM_H,
           glowDispatch,
+          glowDispatchY,
         },
       );
     });
@@ -1187,25 +1204,26 @@ export class FluidSim3D {
     if (running || input.reset) {
       const cp = encoder.beginComputePass({ label: 'sim3d' });
       const n = DISPATCH3;
+      const ny = DISPATCH3Y;
       // Initialisation / reset des espèces : O₂ = 1 partout.
       if (this.needSpeciesInit || input.reset) {
         this.needSpeciesInit = false;
         cp.setPipeline(this.pipelines.clearOne);
         for (const bind of this.binds.clearsOne) {
           cp.setBindGroup(0, bind);
-          cp.dispatchWorkgroups(n, n, n);
+          cp.dispatchWorkgroups(n, ny, n);
         }
       }
       if (input.reset) {
         cp.setPipeline(this.pipelines.clearRgba);
         for (const bind of this.binds.clearsRgba) {
           cp.setBindGroup(0, bind);
-          cp.dispatchWorkgroups(n, n, n);
+          cp.dispatchWorkgroups(n, ny, n);
         }
         cp.setPipeline(this.pipelines.clearScalar);
         for (const bind of this.binds.clearsScalar) {
           cp.setBindGroup(0, bind);
-          cp.dispatchWorkgroups(n, n, n);
+          cp.dispatchWorkgroups(n, ny, n);
         }
       }
       if (running) {
@@ -1213,15 +1231,15 @@ export class FluidSim3D {
         // Advection MacCormack de la vélocité : prédicteur → scratch, correcteur clampé.
         cp.setPipeline(this.pipelines.velPredict);
         cp.setBindGroup(1, this.binds.velPredict[this.velIdx]);
-        cp.dispatchWorkgroups(n, n, n);
+        cp.dispatchWorkgroups(n, ny, n);
         cp.setPipeline(this.pipelines.velCorrect);
         cp.setBindGroup(1, this.binds.velCorrect[this.velIdx]);
-        cp.dispatchWorkgroups(n, n, n);
+        cp.dispatchWorkgroups(n, ny, n);
         this.velIdx = flip(this.velIdx);
 
         cp.setPipeline(this.pipelines.forces);
         cp.setBindGroup(1, this.binds.forces[this.velIdx][this.denIdx]);
-        cp.dispatchWorkgroups(n, n, n);
+        cp.dispatchWorkgroups(n, ny, n);
         this.velIdx = flip(this.velIdx);
 
         // Vorticity confinement : rotationnel, |ω| flouté (le fix anti-grain),
@@ -1229,19 +1247,19 @@ export class FluidSim3D {
         if (input.params.vorticityStrength > 0) {
           cp.setPipeline(this.pipelines.curl);
           cp.setBindGroup(1, this.binds.curl[this.velIdx]);
-          cp.dispatchWorkgroups(n, n, n);
+          cp.dispatchWorkgroups(n, ny, n);
           cp.setPipeline(this.pipelines.blurCurl);
           cp.setBindGroup(1, this.binds.blurCurl);
-          cp.dispatchWorkgroups(n, n, n);
+          cp.dispatchWorkgroups(n, ny, n);
           cp.setPipeline(this.pipelines.confine);
           cp.setBindGroup(1, this.binds.confine[this.velIdx]);
-          cp.dispatchWorkgroups(n, n, n);
+          cp.dispatchWorkgroups(n, ny, n);
           this.velIdx = flip(this.velIdx);
         }
 
         cp.setPipeline(this.pipelines.divergence);
         cp.setBindGroup(1, this.binds.divergence[this.velIdx][this.denIdx][this.oxyIdx]);
-        cp.dispatchWorkgroups(n, n, n);
+        cp.dispatchWorkgroups(n, ny, n);
 
         // Pression : V-cycles multigrid (défaut) ou Jacobi simple — warm start
         // dans les deux cas, la pression de la frame précédente sert de départ.
@@ -1254,29 +1272,29 @@ export class FluidSim3D {
           cp.setPipeline(this.pipelines.jacobi);
           for (let i = 0; i < input.jacobiIterations; i++) {
             cp.setBindGroup(1, this.binds.jacobi[this.pressIdx]);
-            cp.dispatchWorkgroups(n, n, n);
+            cp.dispatchWorkgroups(n, ny, n);
             this.pressIdx = flip(this.pressIdx);
           }
         }
 
         cp.setPipeline(this.pipelines.gradient);
         cp.setBindGroup(1, this.binds.gradient[this.pressIdx][this.velIdx]);
-        cp.dispatchWorkgroups(n, n, n);
+        cp.dispatchWorkgroups(n, ny, n);
         this.velIdx = flip(this.velIdx);
 
         // Advection MacCormack des densités + injection de l'émetteur au correcteur.
         cp.setPipeline(this.pipelines.denPredict);
         cp.setBindGroup(1, this.binds.denPredict[this.denIdx][this.velIdx]);
-        cp.dispatchWorkgroups(n, n, n);
+        cp.dispatchWorkgroups(n, ny, n);
         cp.setPipeline(this.pipelines.denCorrect);
         cp.setBindGroup(1, this.binds.denCorrect[this.denIdx][this.velIdx][this.oxyIdx]);
-        cp.dispatchWorkgroups(n, n, n);
+        cp.dispatchWorkgroups(n, ny, n);
         this.denIdx = flip(this.denIdx);
 
         // Espèces (oxygène…) : advection RK2 + chimie, sur les densités fraîches.
         cp.setPipeline(this.pipelines.species);
         cp.setBindGroup(1, this.binds.species[this.oxyIdx][this.velIdx][this.denIdx]);
-        cp.dispatchWorkgroups(n, n, n);
+        cp.dispatchWorkgroups(n, ny, n);
         this.oxyIdx = flip(this.oxyIdx);
       }
       cp.end();
@@ -1286,18 +1304,19 @@ export class FluidSim3D {
     // 3 diffusions ping-pong — tourne aussi en pause (le rendu le lit toujours).
     {
       const gd = this.post.glowDispatch;
+      const gdy = this.post.glowDispatchY;
       const gp = encoder.beginComputePass({ label: 'glow3d' });
       gp.setBindGroup(0, this.group0);
       gp.setPipeline(this.pipelines.glowInject);
       gp.setBindGroup(1, this.binds.glowInject[this.denIdx]);
-      gp.dispatchWorkgroups(gd, gd, gd);
+      gp.dispatchWorkgroups(gd, gdy, gd);
       gp.setPipeline(this.pipelines.glowBlur);
       gp.setBindGroup(1, this.binds.glowBlurAB);
-      gp.dispatchWorkgroups(gd, gd, gd);
+      gp.dispatchWorkgroups(gd, gdy, gd);
       gp.setBindGroup(1, this.binds.glowBlurBA);
-      gp.dispatchWorkgroups(gd, gd, gd);
+      gp.dispatchWorkgroups(gd, gdy, gd);
       gp.setBindGroup(1, this.binds.glowBlurAB);
-      gp.dispatchWorkgroups(gd, gd, gd);
+      gp.dispatchWorkgroups(gd, gdy, gd);
       // Braises : mise à jour des particules (naissances autorégulées dans le
       // chaud, portage par le fluide) — sautée si coupées, en pause ou à débit nul.
       if (running && input.embersOn && input.emberStrength > 0) {
@@ -1817,6 +1836,10 @@ export class FluidSim3D {
         const r = this.renderData;
         const lo = GRID3 * 0.05;
         const hi = GRID3 * 0.95;
+        // Le plafond suit la HAUTEUR du domaine, pas sa largeur : dans une boîte
+        // haute, s'arrêter à 0,95 × largeur bloquerait tout objet au tiers de la
+        // scène.
+        const hiY = GRID3Y - GRID3 * 0.05;
         if (this.dragAxis === FluidSim3D.AIM_DRAG) {
           this.aimSelected(target);
         } else if (this.dragAxis >= 0) {
@@ -1827,7 +1850,7 @@ export class FluidSim3D {
             const floor = a === 1 ? GRID3 * 0.04 : lo;
             target[a] = Math.min(
               Math.max(this.dragOrigin[a]! + (s - this.dragGrip), floor),
-              hi,
+              a === 1 ? hiY : hi,
             );
           }
         } else {
@@ -1841,7 +1864,7 @@ export class FluidSim3D {
             denom;
           if (t > 0) {
             target[0] = Math.min(Math.max(this.rayO[0] + t * this.rayD[0], lo), hi);
-            target[1] = Math.min(Math.max(this.rayO[1] + t * this.rayD[1], GRID3 * 0.04), hi);
+            target[1] = Math.min(Math.max(this.rayO[1] + t * this.rayD[1], GRID3 * 0.04), hiY);
             target[2] = Math.min(Math.max(this.rayO[2] + t * this.rayD[2], lo), hi);
           }
         }
@@ -1927,7 +1950,7 @@ export class FluidSim3D {
       idx[l] = 0;
       const lev = levels[l]!;
       cp.setBindGroup(0, lev.clearBind!);
-      cp.dispatchWorkgroups(lev.dispatch, lev.dispatch, lev.dispatch);
+      cp.dispatchWorkgroups(lev.dispatch, lev.dispatchY, lev.dispatch);
     }
     // Le clear utilise un autre layout de groupe 0 : on rétablit le groupe partagé.
     cp.setBindGroup(0, this.group0);
@@ -1939,17 +1962,17 @@ export class FluidSim3D {
       cp.setPipeline(this.pipelines.mgSmooth);
       for (let i = 0; i < count; i++) {
         cp.setBindGroup(1, lev.smoothBind[idx[l] as PingIndex]);
-        cp.dispatchWorkgroups(lev.dispatch, lev.dispatch, lev.dispatch);
+        cp.dispatchWorkgroups(lev.dispatch, lev.dispatchY, lev.dispatch);
         idx[l] = idx[l]! ^ 1;
       }
       if (l < last) {
         const coarse = levels[l + 1]!;
         cp.setPipeline(this.pipelines.mgResidual);
         cp.setBindGroup(1, lev.residualBind![idx[l] as PingIndex]);
-        cp.dispatchWorkgroups(lev.dispatch, lev.dispatch, lev.dispatch);
+        cp.dispatchWorkgroups(lev.dispatch, lev.dispatchY, lev.dispatch);
         cp.setPipeline(this.pipelines.mgRestrict);
         cp.setBindGroup(1, lev.restrictBind!);
-        cp.dispatchWorkgroups(coarse.dispatch, coarse.dispatch, coarse.dispatch);
+        cp.dispatchWorkgroups(coarse.dispatch, coarse.dispatchY, coarse.dispatch);
       }
     }
 
@@ -1958,12 +1981,12 @@ export class FluidSim3D {
       const lev = levels[l]!;
       cp.setPipeline(this.pipelines.mgProlong);
       cp.setBindGroup(1, lev.prolongBind![idx[l] as PingIndex][idx[l + 1] as PingIndex]);
-      cp.dispatchWorkgroups(lev.dispatch, lev.dispatch, lev.dispatch);
+      cp.dispatchWorkgroups(lev.dispatch, lev.dispatchY, lev.dispatch);
       idx[l] = idx[l]! ^ 1;
       cp.setPipeline(this.pipelines.mgSmooth);
       for (let i = 0; i < MG3_POST_SMOOTH; i++) {
         cp.setBindGroup(1, lev.smoothBind[idx[l] as PingIndex]);
-        cp.dispatchWorkgroups(lev.dispatch, lev.dispatch, lev.dispatch);
+        cp.dispatchWorkgroups(lev.dispatch, lev.dispatchY, lev.dispatch);
         idx[l] = idx[l]! ^ 1;
       }
     }
@@ -1977,7 +2000,22 @@ export class FluidSim3D {
     d[0] = dt;
     d[1] = this.simTime;
     d[2] = GRID3;
-    d[3] = p.vorticityStrength;
+    // misc.w porte la HAUTEUR du domaine (Ny/Nx) : c'est le seul slot déclaré
+    // par tous les shaders, donc le seul endroit où la forme de la grille est
+    // lisible partout sans rallonger le préfixe d'uniforme de chacun. La force
+    // de vorticité, qui l'occupait, a déménagé en sphere_vel.w.
+    d[3] = HEIGHT3;
+    // VORTICITÉ : PAS de mise à l'échelle, et ce n'est pas un oubli.
+    // La forme de Fedkiw est f = ε·h·(N̂ × ω) : le facteur h (taille de cellule,
+    // 1/N en monde) annule EXACTEMENT la conversion monde→voxels (×N) de
+    // l'accélération. Le ε discret est donc déjà indépendant de la résolution.
+    // J'ai cru le contraire le 2026-08-26 en lisant la formule discrète sans son
+    // h, et j'ai ajouté ×SCALE3 : à 384³ et 512³ le confinement injectait alors
+    // assez d'énergie pour faire naître un TOURBILLON PARASITE qui envahissait
+    // la boîte au bout de quelques secondes (invisible à 128³ et 256³, où le
+    // facteur restait petit). Signalé par Renaud, reproduit, puis isolé en
+    // rejouant la même scène avec l'ancienne valeur effective.
+    d[55] = p.vorticityStrength;
     // Émetteurs : position d'état + petit balancement propre à chacun (déphasé).
     const emitterSlot = (slot: number, i: number): void => {
       const e = this.emitters[i]!;
@@ -2026,7 +2064,17 @@ export class FluidSim3D {
     d[32] = this.emitters.length;
     d[33] = p.burnRate;
     d[34] = p.heatYield;
-    d[35] = p.expansion * SCALE3;
+    // EXPANSION : une source de DIVERGENCE, donc en 1/s — surtout pas ×SCALE3.
+    // La divergence discrète est la somme des écarts de vitesse d'une face à
+    // l'autre, en voxels/s par voxel : c'est DÉJÀ une grandeur en 1/s,
+    // indépendante de la résolution. La multiplier par SCALE3 rendait le souffle
+    // proportionnel à N — mesuré : à temps simulé égal, la même détonation
+    // donnait une colonnette à 128³ et un nuage massif à 384³. C'est ce qui
+    // faisait « empirer » les hautes résolutions.
+    // (Les accélérations, elles, se mettent bien à l'échelle : une accélération
+    //  en monde/s² vaut N fois plus en voxels/s². D'où la poussée, le vent, le
+    //  poids des matières et la force des champs, tous ×SCALE3 à juste titre.)
+    d[35] = p.expansion;
     for (let i = 1; i < 4; i++) {
       if (i < this.emitters.length) {
         emitterSlot(32 + i * 4, i);
@@ -2090,9 +2138,12 @@ export class FluidSim3D {
     // Poussière soulevée : débit, puis rayon et épaisseur EN VOXELS. Le débit ne
     // vaut que pendant la fenêtre d'injection, comme la charge elle-même.
     d[108] = this.dustFrac * input.dustRate;
-    d[109] = SIM3_DEFAULTS.dustRadius * GRID3;
+    d[109] = input.dustRadius * GRID3;
     d[110] = SIM3_DEFAULTS.dustHeight * GRID3;
     d[111] = p.heatCeiling;
+    // Stratification : la base est donnée en VOXELS (fraction × hauteur).
+    d[112] = p.stratStrength;
+    d[113] = p.stratBase * GRID3Y;
     // Oxygène : apport du souffle (blow_force.w) et récupération lente.
     d[27] = D.blowOxygen;
     d[59] = p.oxygenRecover;
@@ -2107,6 +2158,11 @@ export class FluidSim3D {
     const py = radius * Math.sin(elevation);
     const pz = radius * cy * Math.sin(azimuth);
     // Base orthonormée regardant le centre de la boîte.
+    // La caméra vise le CENTRE DE LA BOÎTE, qui n'est plus l'origine dès que le
+    // domaine est plus haut que large (le sol reste à −0,5, la boîte pousse vers
+    // le haut). Sans ce recentrage, un domaine ×3 est cadré sur son premier
+    // tiers et le reste sort de l'écran.
+    const boxMid = -0.5 + HEIGHT3 * 0.5;
     const fl = Math.hypot(px, py, pz);
     const fx = -px / fl;
     const fy = -py / fl;
@@ -2122,7 +2178,7 @@ export class FluidSim3D {
     const uy = rz * fx - rx * fz;
     const uz = rx * fy - ry * fx;
     d[0] = px;
-    d[1] = py;
+    d[1] = py + boxMid;
     d[2] = pz;
     d[3] = 0.364; // tan(fov/2), fov ≈ 40°
     d[4] = rx;
@@ -2220,7 +2276,12 @@ export class FluidSim3D {
     d[86] = axis?.[2] ?? 0;
     d[87] = axis === undefined ? 0 : handle * SIM3_DEFAULTS.handleAim;
     // Densité de suie AU RENDU (slot z du vec4 « soot » côté raymarch).
+    d[88] = input.params.outdoor ? 1 : 0;
+    d[89] = input.params.sunHeight;
     d[90] = input.params.sootDensity;
+    // Hauteur monde du domaine : le rendu en a besoin pour borner la boîte et
+    // pour normaliser la coordonnée verticale de texture.
+    d[91] = HEIGHT3;
     let dirty = false;
     for (let i = 0; i < d.length; i++) {
       if (d[i] !== this.lastRender[i]) {

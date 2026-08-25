@@ -28,6 +28,33 @@ struct Params {
   field1_b: vec4f,
   field2_a: vec4f,
   field2_b: vec4f,
+  // Champs traversés sans être lus ici (la disposition de l'uniforme est
+  // commune à toutes les passes ; un shader n'en déclare qu'un préfixe).
+  burst_a: vec4f,
+  burst_b: vec4f,
+  soot: vec4f,
+  open_box: vec4f,
+  dust: vec4f,
+  // STRATIFICATION : x = chaleur gagnée par l'air ambiant entre l'altitude de
+  // base et le plafond, y = cette altitude de base (voxels). x = 0 : atmosphère
+  // NEUTRE, exactement le comportement d'avant.
+  strat: vec4f,
+}
+
+// Chaleur de l'air AMBIANT à une altitude. Au-dessus de la base, il se réchauffe
+// avec la hauteur : un panache cesse d'être flottant dès que sa propre chaleur
+// rejoint celle du milieu, et il s'étale au lieu de continuer à monter.
+//
+// C'est CE terme qui donne son chapeau à un champignon. Dans une boîte cubique
+// on s'en passait sans le savoir : le chapeau y était en fait le PLAFOND, et
+// l'illusion a tenu jusqu'à ce qu'on rende la boîte haute — sans plafond proche,
+// le panache monte sans fin et rend une colonne lisse.
+fn ambient_heat(alt: f32) -> f32 {
+  if (P.strat.x <= 0.0) {
+    return 0.0;
+  }
+  let top = n_sizef().y;
+  return P.strat.x * clamp((alt - P.strat.y) / max(top - P.strat.y, 1.0), 0.0, 1.0);
 }
 
 fn field_a(i: u32) -> vec4f {
@@ -75,13 +102,24 @@ fn face_blocked(c: vec3i, axis: vec3i) -> bool {
 }
 
 @group(0) @binding(0) var<uniform> P: Params;
+
+// TAILLE DE LA GRILLE, par axe. Le domaine n'est plus forcément cubique :
+// Nx = Nz = misc.z, Ny = misc.z × misc.w. Les CELLULES, elles, restent cubiques
+// — c'est ce qui permet de ne rien changer à l'opérateur ni à l'advection.
+fn n_size() -> vec3i {
+  return vec3i(i32(P.misc.z), i32(P.misc.z * P.misc.w), i32(P.misc.z));
+}
+
+fn n_sizef() -> vec3f {
+  return vec3f(P.misc.z, P.misc.z * P.misc.w, P.misc.z);
+}
 @group(0) @binding(1) var lin: sampler;
 @group(1) @binding(0) var vel_src: texture_3d<f32>;
 @group(1) @binding(1) var den_src: texture_3d<f32>;
 @group(1) @binding(2) var vel_dst: texture_storage_3d<rgba16float, write>;
 
 fn inv_n() -> vec3f {
-  return vec3f(1.0) / vec3f(f32(P.misc.z));
+  return vec3f(1.0) / n_sizef();
 }
 
 fn density_at(p: vec3f) -> vec4f {
@@ -147,9 +185,9 @@ fn field_force(p: vec3f, matter: f32) -> vec3f {
 
 @compute @workgroup_size(4, 4, 4)
 fn main(@builtin(global_invocation_id) gid: vec3u) {
-  let n = i32(P.misc.z);
+  let n = n_size();
   let c = vec3i(gid);
-  if (c.x >= n || c.y >= n || c.z >= n) {
+  if (any(c >= n)) {
     return;
   }
   let dt = P.misc.x;
@@ -169,7 +207,11 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
   // boule de feu RAYONNE (elle éclaire), elle ne soulève pas proportionnellement.
   // Sans cette saturation, ouvrir le domaine d'incandescence multiplierait la
   // poussée d'autant et enverrait la scène au plafond.
-  vel.y += dt * (P.diss.w * min(dn.w, 2.0) - dot(P.ink_weights.xyz, dn.xyz));
+  // La poussée ne compte que l'EXCÈS de chaleur sur l'air ambiant à cette
+  // altitude. Sans stratification (strat.x = 0) l'ambiant vaut zéro partout et
+  // l'expression est identique à ce qu'elle était.
+  let lift = max(min(dn.w, 2.0) - ambient_heat(pv.y), 0.0);
+  vel.y += dt * (P.diss.w * lift - dot(P.ink_weights.xyz, dn.xyz));
 
   // VENT horizontal. Force DIFFÉRENTIELLE, proportionnelle à la matière
   // présente — exactement comme la poussée. Un vent UNIFORME serait vain : dans

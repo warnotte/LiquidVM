@@ -39,6 +39,17 @@ struct Ember {
 }
 
 @group(0) @binding(0) var<uniform> P: Params;
+
+// TAILLE DE LA GRILLE, par axe. Le domaine n'est plus forcément cubique :
+// Nx = Nz = misc.z, Ny = misc.z × misc.w. Les CELLULES, elles, restent cubiques
+// — c'est ce qui permet de ne rien changer à l'opérateur ni à l'advection.
+fn n_size() -> vec3i {
+  return vec3i(i32(P.misc.z), i32(P.misc.z * P.misc.w), i32(P.misc.z));
+}
+
+fn n_sizef() -> vec3f {
+  return vec3f(P.misc.z, P.misc.z * P.misc.w, P.misc.z);
+}
 @group(0) @binding(1) var lin: sampler;
 @group(1) @binding(0) var vel_src: texture_3d<f32>;
 @group(1) @binding(1) var den_src: texture_3d<f32>;
@@ -46,7 +57,7 @@ struct Ember {
 @group(1) @binding(3) var<uniform> R: RenderParams;
 
 fn inv_n() -> vec3f {
-  return vec3f(1.0) / vec3f(P.misc.z);
+  return vec3f(1.0) / n_sizef();
 }
 
 // Convention MAC identique à advect_density3d.wgsl.
@@ -76,6 +87,11 @@ fn update(@builtin(global_invocation_id) gid: vec3u) {
   }
   var e = embers[i];
   let dt = P.misc.x;
+  // RÈGLE de la grille non cubique : les POSITIONS et les BORNES sont per-axe,
+  // mais les VITESSES et les longueurs gardent le N horizontal — les cellules
+  // sont cubiques, donc « un voxel » vaut la même distance dans les trois axes.
+  // Utiliser Ny pour une vitesse verticale la multiplierait par la hauteur du
+  // domaine, ce qui n'aurait aucun sens.
   let n = P.misc.z;
   let seed = i * 1664525u + bitcast<u32>(P.misc.y);
 
@@ -85,7 +101,7 @@ fn update(@builtin(global_invocation_id) gid: vec3u) {
     let r = vec3f(rand01(seed), rand01(seed ^ 0x9e3779b9u), rand01(seed ^ 0x85ebca6bu));
     let heat = textureSampleLevel(den_src, lin, r, 0.0).w;
     if (heat > 0.55 && rand01(seed ^ 0xc2b2ae35u) < R.style.z * 0.30) {
-      let p = r * n;
+      let p = r * n_sizef();
       let kick = vec3f(
         (rand01(seed ^ 0x27d4eb2fu) - 0.5) * 0.08 * n,
         rand01(seed ^ 0x165667b1u) * 0.10 * n,

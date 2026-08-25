@@ -19,11 +19,25 @@ chaque push sur `main` redéploie automatiquement (GitHub Pages).
 Deuxième page de l'appli (bouton « 🧊 3D » de la barre d'outils, ou
 [/3d.html](https://warnotte.github.io/LiquidVM/3d.html)).
 
+**Domaine** : cube par défaut. `?tall=2` ou `?tall=3` donne une boîte plus HAUTE
+que large, à cellules toujours cubiques — l'opérateur de pression, le multigrid et
+l'advection sont inchangés, seuls le bornage et la taille des textures deviennent
+per-axe. **Expérimental** : le rendu et la simulation y sont corrects et vérifiés,
+mais le preset « champignon » est calibré pour un cube et n'y transpose pas encore
+(il rend une colonne au lieu d'un chapeau). `?tall=1`, le défaut, est identique au
+cube au poil près.
+
+**Prise de vue** : bouton « 🏞 extérieur » — ciel, sol jusqu'à l'horizon, soleil
+rasant, plus de boîte de verre. Ne touche à aucune physique ; sert à lire une
+ÉCHELLE, que l'atelier sur fond gris ne donne pas.
+
 **Simulation** : solveur MAC 3D, résolution choisissable 128³ à 512³ (`?grid=` ou
 sélecteur du panneau, estimation VRAM affichée — 512³ ≈ 11,3 Go, mesuré 20 FPS sur
 RTX 5070 Ti 16 Go ; 256³ par défaut à 60 FPS), advection MacCormack à traces RK2,
 projection multigrid V-cycle, vorticity confinement à magnitude floutée (défaut
-ε = 12), combustion à trois réactifs (carburant / chaleur / **oxygène** — une flamme
+ε = 12 — **son ε ne se met PAS à l'échelle avec la résolution**, le facteur h de la
+forme de Fedkiw annule déjà la conversion monde→voxels ; le lui ajouter fabrique un
+tourbillon parasite à 384³ et au-delà), combustion à trois réactifs (carburant / chaleur / **oxygène** — une flamme
 s'étouffe en vase clos, le souffle la ravive) avec expansion volumique au front de
 flamme et refroidissement radiatif T⁴, trois encres colorées, sphère-obstacle
 déplaçable à condition de bord mobile (elle brasse le fluide), multi-émetteurs,

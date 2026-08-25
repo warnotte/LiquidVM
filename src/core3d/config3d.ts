@@ -16,23 +16,46 @@
 export let GRID3 = 256;
 export let SCALE3 = GRID3 / 128;
 
+/** HAUTEUR de la grille, en voxels. Le domaine n'est plus forcément un cube :
+ *  la grille devient Nx × Ny × Nz avec Nx = Nz = GRID3 et Ny = GRID3Y.
+ *
+ *  LES CELLULES RESTENT CUBIQUES, et c'est tout le point. Un domaine à cellules
+ *  ANISOTROPES (un cube de voxels étiré) aurait exigé un pas de grille par axe
+ *  dans le laplacien, la divergence, le gradient et l'advection — donc rouvrir
+ *  un solveur mesuré et juste. Ici, l'opérateur de pression, le multigrid et
+ *  l'advection ne changent PAS D'UNE LIGNE : seuls le bornage et la taille des
+ *  textures deviennent per-axe. Une boîte deux fois plus haute, c'est deux fois
+ *  plus de cellules, pas une nouvelle numérique.
+ *
+ *  Le monde suit : le domaine mesure 1 × HEIGHT3 × 1, centré en x et z, et posé
+ *  sur le sol en y. HEIGHT3 = 1 rend exactement le cube d'avant. */
+export let GRID3Y = GRID3;
+export let HEIGHT3 = 1;
+
 export const GRID3_CHOICES = [128, 256, 320, 384, 512] as const;
+/** Hauteurs proposées : ×1 (le cube), ×2, ×3. */
+export const STRETCH3_CHOICES = [1, 2, 3] as const;
 
 /** Estimation VRAM du volume (octets) : ~88 o/voxel plein format (2× vélocité
  *  + 2× densités + 2× espèces + scratchs + rotationnel en rgba16float, pression
  *  ×2 + divergence + résidu en r32float) + pyramide multigrid (~16 o/voxel
  *  répartis sur les niveaux ≥ 1, somme des 1/8^k ≈ ×0,143). */
-export function estimateVram3(n: number): number {
-  return n * n * n * (88 + 16 * 0.143);
+export function estimateVram3(n: number, stretch = HEIGHT3): number {
+  return n * n * n * stretch * (88 + 16 * 0.143);
 }
 
 /** À appeler AVANT la création de la simulation. Valide et propage les dérivés. */
-export function setGrid3(n: number): void {
+export function setGrid3(n: number, stretch = HEIGHT3): void {
   if ((GRID3_CHOICES as readonly number[]).includes(n)) {
     GRID3 = n;
     SCALE3 = n / 128;
     DISPATCH3 = Math.ceil(n / WG3);
   }
+  if ((STRETCH3_CHOICES as readonly number[]).includes(stretch)) {
+    HEIGHT3 = stretch;
+  }
+  GRID3Y = GRID3 * HEIGHT3;
+  DISPATCH3Y = Math.ceil(GRID3Y / WG3);
 }
 
 /** Braises : nombre de particules (buffer fixe 32 o/particule ≈ 1 Mo).
@@ -42,6 +65,7 @@ export const EMBERS3 = 32768;
 /** Workgroups 4×4×4 = 64 threads ; dispatch cubique. */
 export const WG3 = 4;
 export let DISPATCH3 = Math.ceil(GRID3 / WG3);
+export let DISPATCH3Y = Math.ceil(GRID3Y / WG3);
 
 /** Multigrid 3D : pyramide GRID3 → 8³, lissages du V-cycle. */
 export const MG3_COARSEST_SIZE = 8;
@@ -95,6 +119,10 @@ export interface Sim3Tuning {
   openStrength: number;
   openCeilBand: number;
   openCeilStrength: number;
+  stratStrength: number;
+  stratBase: number;
+  outdoor: boolean;
+  sunHeight: number;
 }
 
 export function defaultTuning3(): Sim3Tuning {
@@ -119,6 +147,10 @@ export function defaultTuning3(): Sim3Tuning {
     openStrength: SIM3_DEFAULTS.openStrength,
     openCeilBand: SIM3_DEFAULTS.openCeilBand,
     openCeilStrength: SIM3_DEFAULTS.openCeilStrength,
+    stratStrength: SIM3_DEFAULTS.stratStrength,
+    stratBase: SIM3_DEFAULTS.stratBase,
+    outdoor: SIM3_DEFAULTS.outdoor,
+    sunHeight: SIM3_DEFAULTS.sunHeight,
     oxygenRecover: SIM3_DEFAULTS.oxygenRecover,
     blowForce: SIM3_DEFAULTS.blowForce,
     windStrength: SIM3_DEFAULTS.windStrength,
@@ -265,12 +297,28 @@ export const SIM3_DEFAULTS = {
    *  absorption calibrée pour un passage le lamine sur place. */
   openCeilBand: 0.11,
   openCeilStrength: 26,
+  /** STRATIFICATION de l'air ambiant : chaleur qu'il gagne entre l'altitude de
+   *  base et le plafond, et cette altitude (fraction de la HAUTEUR du domaine).
+   *  0 = atmosphère neutre, strictement le comportement d'avant.
+   *  C'est ce qui donne son CHAPEAU à un champignon : le panache s'arrête à
+   *  l'altitude où sa chaleur rejoint celle du milieu, et s'y étale. Dans une
+   *  boîte cubique on s'en passait sans le savoir — le chapeau y était en fait
+   *  le PLAFOND. L'illusion n'a pas survécu à une boîte haute. */
+  stratStrength: 0,
+  stratBase: 0.3,
+  /** PRISE DE VUE. `outdoor` remplace l'atelier (boîte de verre, fond gris) par
+   *  un ciel, un sol jusqu'à l'horizon et un soleil rasant. Rien n'y touche à la
+   *  simulation — mais c'est ce qui donne l'ÉCHELLE, et sans échelle le plus beau
+   *  champignon reste une bouffée de fumée dans une boîte. `sunHeight` est la
+   *  hauteur du soleil : bas, il sculpte les volutes ; haut, il les aplatit. */
+  outdoor: false,
+  sunHeight: 0.18,
   /** Combustion (modèle Feldman/Fedkiw simplifié) : taux de réaction (1/s au-dessus
    *  de l'ignition), chaleur dégagée par unité de carburant, expansion volumique au
    *  front de flamme (source de divergence, voxels/s — remise à l'échelle SCALE3). */
   burnRate: 3.0,
   heatYield: 0.7,
-  expansion: 10,
+  expansion: 20,
   /** OXYGÈNE (canal x de la texture d'espèces, initialisé à 1 partout) : la
    *  combustion le consomme (stœchiométrie dans le shader), il revient lentement
    *  (la boîte « fuit ») et le SOUFFLE en apporte — le soufflet de forge. */
