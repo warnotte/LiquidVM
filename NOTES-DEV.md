@@ -74,8 +74,17 @@ typecheck strict + bundle. Aucune dépendance runtime.
    - une **ACCÉLÉRATION** (monde/s²) vaut N fois plus en voxels/s² → **×SCALE3**.
      Poussée, vent, poids des matières, force des champs : correctement traités.
    - une **VITESSE** (monde/s) vaut aussi N fois plus en voxels/s → **×SCALE3**.
-     C'est le cas du ε de vorticité, qui multiplie un rotationnel (1/s) pour
-     donner une accélération : il lui manquait sa mise à l'échelle.
+   - le ε de **VORTICITÉ** est l'EXCEPTION, et elle mérite d'être comprise : la
+     forme de Fedkiw est `f = ε·h·(N̂ × ω)`, et le facteur h (taille de cellule,
+     1/N en monde) annule EXACTEMENT la conversion monde→voxels de
+     l'accélération. Le ε discret est donc **déjà indépendant de la résolution**
+     et ne se met PAS à l'échelle. J'ai cru le contraire en lisant la formule
+     discrète sans son h : à 384³ et 512³ le confinement injectait alors assez
+     d'énergie pour faire naître un TOURBILLON PARASITE qui envahissait la boîte
+     après quelques secondes (invisible aux résolutions basses, où le facteur
+     restait petit). **Règle de sûreté : le confinement de vorticité injecte de
+     l'énergie sans borne — toute modification de son ε se vérifie sur PLUSIEURS
+     SECONDES à la plus HAUTE résolution, jamais sur une image.**
    - une **DIVERGENCE** est en 1/s et ne se met **PAS** à l'échelle. La
      divergence discrète est la somme des écarts de vitesse d'une face à
      l'autre, en voxels/s par voxel : c'est déjà du 1/s. L'expansion de
@@ -88,8 +97,11 @@ typecheck strict + bundle. Aucune dépendance runtime.
   n'aurait rien donné : une grille fine tourne moins vite, on aurait comparé
   deux ÂGES différents du même nuage.
   Après correction, 128³ et 384³ donnent la même taille et la même forme, la
-  finesse en plus. Les défauts et presets ont été REBASÉS pour que l'image
-  réglée à 256³ ne bouge pas (vorticité ÷2, expansion ×2).
+  finesse en plus. C'est l'EXPANSION qui portait tout le défaut ; les défauts et
+  presets ont été rebasés en conséquence (expansion ×2 à 256³).
+  `.selftest/cdp-vortex.mjs` rejoue la scène qui a démasqué le tourbillon
+  parasite (boule poussée sur le côté, détonation, observation jusqu'à 8 s de
+  temps simulé) — à garder pour toute retouche du confinement.
 
 
 - **Grille MAC** : texel (i,j) .x = face u gauche (position (i, j+½)), .y = face v

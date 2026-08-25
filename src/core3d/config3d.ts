@@ -173,9 +173,7 @@ export const SIM3_DEFAULTS = {
    *  0). Calibré par captures EPS2-0/8/16/24 à 256³ : 8 = subtil, 16 = riche
    *  encore cohérent, 24 = panache déchiqueté (sans grain — l'échec est devenu
    *  « trop chaotique », plus jamais granuleux). Défaut 12 = vivant avec marge. */
-  // Rebasée pour 256³ après correction d'échelle (elle était appliquée sans
-  // SCALE3, donc ce 12 valait l'ancien 24 à cette résolution).
-  vorticityStrength: 6,
+  vorticityStrength: 12,
   /** Dissipations (1/s) : vélocité, fumée, refroidissement de la chaleur. */
   velocityDissipation: 0.03,
   smokeDissipation: 0.20,

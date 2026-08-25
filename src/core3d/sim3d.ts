@@ -2005,11 +2005,17 @@ export class FluidSim3D {
     // lisible partout sans rallonger le préfixe d'uniforme de chacun. La force
     // de vorticité, qui l'occupait, a déménagé en sphere_vel.w.
     d[3] = HEIGHT3;
-    // VORTICITÉ : le confinement produit une ACCÉLÉRATION (ε × rotationnel, le
-    // rotationnel étant en 1/s), donc ε est une vitesse — en voxels/s, soit
-    // N fois sa valeur monde. Il manquait sa mise à l'échelle : le confinement
-    // s'affaiblissait relativement à mesure qu'on montait en résolution.
-    d[55] = p.vorticityStrength * SCALE3;
+    // VORTICITÉ : PAS de mise à l'échelle, et ce n'est pas un oubli.
+    // La forme de Fedkiw est f = ε·h·(N̂ × ω) : le facteur h (taille de cellule,
+    // 1/N en monde) annule EXACTEMENT la conversion monde→voxels (×N) de
+    // l'accélération. Le ε discret est donc déjà indépendant de la résolution.
+    // J'ai cru le contraire le 2026-08-26 en lisant la formule discrète sans son
+    // h, et j'ai ajouté ×SCALE3 : à 384³ et 512³ le confinement injectait alors
+    // assez d'énergie pour faire naître un TOURBILLON PARASITE qui envahissait
+    // la boîte au bout de quelques secondes (invisible à 128³ et 256³, où le
+    // facteur restait petit). Signalé par Renaud, reproduit, puis isolé en
+    // rejouant la même scène avec l'ancienne valeur effective.
+    d[55] = p.vorticityStrength;
     // Émetteurs : position d'état + petit balancement propre à chacun (déphasé).
     const emitterSlot = (slot: number, i: number): void => {
       const e = this.emitters[i]!;
