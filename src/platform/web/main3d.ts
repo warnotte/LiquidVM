@@ -64,6 +64,14 @@ const TUNE_WIND: Partial<Sim3Tuning> = {
 //  · bande éponge RESSERRÉE : le chapeau doit pouvoir s'étaler près du plafond
 //    au lieu d'y être mangé avant d'avoir pris sa forme.
 const TUNE_MUSHROOM: Partial<Sim3Tuning> = {
+  // FLAMME PILOTE COUPÉE. C'est le réglage le plus important du preset, et il
+  // manquait : un champignon est un ÉVÉNEMENT, pas un régime. Laisser la flamme
+  // brûler en continu avec cette dissipation quasi nulle, ce refroidissement
+  // lent et cette poussée remplit la boîte de purée grise en quelques secondes —
+  // et la détonation s'y perd. Mon harnais de test coupait la flamme avant
+  // chaque tir, ce que l'utilisateur ne peut pas faire d'un clic : j'ai donc
+  // validé longtemps un scénario irreproductible à la souris.
+  emitHeat: 0, emitInkRate: 0,
   timeScale: 0.55, buoyancy: 430, velocityDissipation: 0.008, vorticityStrength: 22,
   heatCooling: 0.42, inkDissipation: 0.02, burnRate: 7, heatYield: 1.3,
   expansion: 24, oxygenRecover: 0.02,
@@ -646,9 +654,22 @@ async function boot(): Promise<void> {
         action: (): void => {
           Object.assign(p, defaultTuning3(), preset.values);
           Object.assign(input, preset.boom ?? BOOM_DEFAULT);
+          // Un preset de DÉTONATION est un scénario, pas une ambiance : il part
+          // d'un air PROPRE. Sans ce nettoyage, on tire dans ce que la scène
+          // précédente a laissé et on ne voit que le mélange des deux.
+          const scenario = preset.boom !== undefined;
+          if (scenario) {
+            input.reset = true;
+          }
           panel.refresh();
           if (input.feedback) {
-            toast(`preset : ${preset.label}`);
+            toast(
+              scenario
+                ? `${preset.label} — scène nettoyée, flamme coupée. G pour détoner${
+                    input.sphereActive ? ' · O retire la boule, elle est dans le souffle' : ''
+                  }`
+                : `preset : ${preset.label}`,
+            );
           }
         },
       })),

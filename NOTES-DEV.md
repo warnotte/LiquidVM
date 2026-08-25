@@ -68,6 +68,22 @@ typecheck strict + bundle. Aucune dépendance runtime.
 
 ## Pièges durement payés — ne pas re-tomber dedans
 
+- **TESTER CE QUE L'UTILISATEUR PEUT FAIRE (2026-08-26)** — le piège le plus
+  coûteux de la session, et il n'était pas dans le moteur. Mes harnais CDP
+  préparaient TOUJOURS la scène avant un tir : flamme pilote coupée, boule
+  retirée, caméra placée, panneau replié. J'ai donc validé pendant des heures un
+  scénario **irreproductible à la souris** : en cliquant « champignon » puis
+  « boum », Renaud voyait une purée grise, parce que le preset laissait la flamme
+  pilote brûler à plein débit avec une dissipation quasi nulle et une poussée de
+  430 — réglages calibrés pour un ÉVÉNEMENT, appliqués à un régime continu.
+  Deux règles qui en sortent :
+   1. Un harnais qui PRÉPARE la scène mesure le moteur, pas le produit. En garder
+      un qui ne fait QUE ce que fait l'utilisateur — `.selftest/cdp-user.mjs`
+      clique le preset, clique la détonation, et rien d'autre.
+   2. Un preset de SCÉNARIO (détonation) n'est pas un preset d'AMBIANCE : il doit
+      couper ce qui alimente en continu et repartir d'un air propre. Le champignon
+      coupe donc la flamme pilote et déclenche un reset.
+
 - **UNITÉS ET RÉSOLUTION (3D, 2026-08-26)** — signalé par Renaud (« si j'augmente
   la résolution, ça devient encore pire »), et c'était un vrai bug d'unités.
   La règle, à appliquer à CHAQUE nouvelle grandeur :
