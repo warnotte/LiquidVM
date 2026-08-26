@@ -129,15 +129,48 @@ fn omega_len(p: vec3f) -> f32 {
   return textureSampleLevel(curl_src, lin, p * inv_n(), 0.0).w;
 }
 
+// FONDU DU CONFINEMENT AU CONTACT DE L'OBSTACLE.
+//
+// Le rotationnel ne connaît pas la sphère : il lit la vitesse PRESCRITE sur les
+// faces qu'elle bloque à côté de la vitesse du fluide une cellule plus loin. La
+// marche d'escalier entre les deux produit un ω énorme — qui n'est pas un
+// tourbillon du fluide mais un artefact de la discrétisation du bord. Le
+// confinement, lui, RENFORCE ce qu'il trouve : il transforme cette nappe en un
+// jet tangent à la boule, qui s'entretient et finit par remplir la boîte.
+//
+// Et le défaut CROÎT AVEC LA RÉSOLUTION sans que ε y soit pour rien : la marche
+// vaut Δv sur UNE cellule, donc |ω| ≈ Δv/h grandit quand h rétrécit. C'est la
+// même famille que le tourbillon parasite du ×SCALE3 (le confinement injecte de
+// l'énergie sans borne), mais la source n'est plus le facteur : c'est le bord.
+// MESURÉ à 384³, boule TRAÎNÉE puis lâchée, preset champignon : la boîte est
+// envahie vers 6 s ; à ε = 0 elle ne l'est pas ; à 256³ elle ne l'est pas.
+//
+// On éteint donc le confinement sur une peau de trois cellules autour de la
+// sphère — en fondu, jamais net : une coupure franche serait elle-même une
+// discontinuité de force, donc une nouvelle source. Le fluide loin de la boule
+// garde exactement le confinement d'avant.
+const PEAU_SANS_CONFINEMENT = 3.0;
+
+fn fondu_obstacle(p: vec3f) -> f32 {
+  if (P.sphere.w <= 0.0) {
+    return 1.0;
+  }
+  return smoothstep(0.0, PEAU_SANS_CONFINEMENT, distance(p, P.sphere.xyz) - P.sphere.w);
+}
+
 // Force de confinement à la position p : ε (N̂ × ω), N̂ = ∇|ω|flou normalisé.
 fn confine_force(p: vec3f) -> vec3f {
+  let fondu = fondu_obstacle(p);
+  if (fondu <= 0.0) {
+    return vec3f(0.0);
+  }
   let grad = 0.5 * vec3f(
     omega_len(p + vec3f(1.0, 0.0, 0.0)) - omega_len(p - vec3f(1.0, 0.0, 0.0)),
     omega_len(p + vec3f(0.0, 1.0, 0.0)) - omega_len(p - vec3f(0.0, 1.0, 0.0)),
     omega_len(p + vec3f(0.0, 0.0, 1.0)) - omega_len(p - vec3f(0.0, 0.0, 1.0)),
   );
   let nrm = grad / max(length(grad), 1e-5);
-  return P.sphere_vel.w * cross(nrm, omega_at(p));
+  return P.sphere_vel.w * fondu * cross(nrm, omega_at(p));
 }
 
 @compute @workgroup_size(4, 4, 4)

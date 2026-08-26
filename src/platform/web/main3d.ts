@@ -446,6 +446,11 @@ async function boot(): Promise<void> {
     // vérifier « le champignon » recopierait leurs valeurs et vérifierait donc
     // sa propre copie plutôt que ce que voit l'utilisateur.
     (window as unknown as Record<string, unknown>)['__presets3d'] = PRESETS;
+    // Les DÉFAUTS eux-mêmes : un preset s'applique par-dessus une table remise à
+    // neuf (`Object.assign(p, defaultTuning3(), preset.values)`), et sans ce hook
+    // un harnais qui veut comparer « preset » et « défaut » recopierait sa propre
+    // idée des défauts — exactement le piège ci-dessus, un cran plus bas.
+    (window as unknown as Record<string, unknown>)['__defaults3d'] = defaultTuning3;
     // Forme de la grille, pour le harnais : sans ça, un problème de domaine non
     // cubique ne se diagnostique qu'à l'œil.
     (window as unknown as Record<string, unknown>)['__grid3'] = {

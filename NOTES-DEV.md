@@ -53,6 +53,17 @@ typecheck strict + bundle. Aucune dépendance runtime.
   nuage, et c'est ce qui a démasqué la suie qui ne se produisait pas.
   `cdp-timeline.mjs 9333 [action] [index] [ms] [n] [tag] [urlFilter]` : captures
   périodiques — l'outil pour localiser une mort dans le temps.
+  `cdp-obstacle-chaos.mjs 9333 [tag] [champignon|defaut] [posee[:x]|trainee|sans]
+  [retouche-js]` : le banc de l'OBSTACLE. Une seule chose varie à la fois ; la
+  détonation, la flamme coupée et la caméra sont tenues fixes. Le geste compte
+  autant que le reste : « posee » ne donne à la boule qu'une PRÉSENCE, « trainee »
+  lui donne une VITESSE — donc un bord mobile, un tout autre problème.
+  `mesure-nuage.mjs <png…>` : mesure HORS LIGNE (zlib de Node, aucun navigateur,
+  donc aucun GPU volé à la passe en cours). Compte la clarté d'une fenêtre prise
+  DANS la boîte, à gauche de l'axe de la colonne, moins celle du ciel : un
+  champignon y laisse ~2‰, une boîte envahie 50 à 100‰. Compter la matière ne
+  sépare rien — c'est OÙ elle est qui sépare. À étalonner sur le témoin avant de
+  s'en servir (cf. pièges).
 - Chrome de test : `--remote-debugging-port=9333 --user-data-dir=<tmp>
   --enable-unsafe-webgpu --disable-backgrounding-occluded-windows` (sans ce dernier,
   rAF est gelé pour une fenêtre hors écran). Le headless pur (`--headless=new`) ne
@@ -68,6 +79,46 @@ typecheck strict + bundle. Aucune dépendance runtime.
 
 ## Pièges durement payés — ne pas re-tomber dedans
 
+- **LE CONFINEMENT DE VORTICITÉ RENFORCE LE BORD DE L'OBSTACLE (2026-08-27)** —
+  fin de l'affaire « la sphère influence la simulation », signalée par Renaud et
+  restée ouverte trois commits. Symptôme : à 384³, preset champignon, boule
+  TRAÎNÉE à la souris puis lâchée, détonation — vers 6 s la boîte est envahie par
+  un tourbillon, avec un jet visible tangent à la boule.
+  **Ce que ce n'est pas**, mesuré et non raisonné : ce n'est pas la PRÉSENCE de
+  l'obstacle (boule posée au même endroit, jamais animée → champignon propre à
+  9 s) ; ce n'est pas la pyramide de pression (Jacobi montre un tout autre défaut,
+  celui déjà connu de la sous-convergence) ; ce n'est pas la résolution seule
+  (384³ sans boule → propre).
+  **Ce que c'est** : `curl` ne connaît pas l'obstacle. Il lit la vitesse PRESCRITE
+  sur les faces bloquées à côté de la vitesse du fluide une cellule plus loin ; la
+  marche d'escalier entre les deux donne un |ω| qui n'est pas un tourbillon mais
+  un artefact de discrétisation du bord. Le confinement, lui, RENFORCE ce qu'il
+  trouve : il en fait un jet tangent à la boule, qui s'entretient. Et la marche
+  vaut Δv sur UNE cellule, donc |ω| ≈ Δv/h **grandit quand la grille s'affine** —
+  d'où un défaut invisible à 256³ et net à 384³, sans que ε y soit pour rien.
+  Même famille que le tourbillon parasite du ×SCALE3 (ci-dessous) : le confinement
+  injecte de l'énergie sans borne. Là c'était le facteur, ici c'est le bord.
+  **Correctif** : le confinement s'éteint en FONDU sur une peau de trois cellules
+  autour de la sphère (`fondu_obstacle`, vorticity3d.wgsl). En fondu et jamais net
+  — une coupure franche serait elle-même une discontinuité de force, donc une
+  nouvelle source. Sans sphère le rayon vaut −1 et le chemin est identique à
+  l'ancien, au bit près.
+  **Mesuré** (fenêtre « gauche » de `mesure-nuage.mjs`, 384³, boule traînée,
+  champignon) : 77‰ à 6 s avant, 3‰ après — soit le niveau du témoin sans boule.
+  Non-régression sur la scène où la boule est un SUJET (fournaise, boule dans les
+  flammes, 256³, 24 s) : images indiscernables avant/après.
+  **Leçon de diagnostic, la plus chère de la session** : une mesure doit être
+  passée sur le TÉMOIN avant de conclure. Ma fenêtre a signalé « chaos » sur le
+  preset par défaut ; le même preset SANS boule donne le même chiffre — elle
+  mesurait la largeur de la boule de feu, pas le chaos. J'ai failli conclure que
+  le défaut ne demandait pas les réglages extrêmes, sur la foi d'un instrument que
+  je n'avais pas étalonné.
+  **Correction d'une entrée précédente** : le commit b5e0dac écrit que le
+  déplacement de la boule avait été éliminé comme cause (« même symptôme avec une
+  boule posée »). Cela ne se reproduit pas : à HEAD, posée = propre, traînée =
+  envahie. C'est bien le DÉPLACEMENT qui amorce, en lançant l'écoulement qui rend
+  la nappe de bord assez forte pour s'emballer.
+
 - **SOUS-CONVERGENCE DE LA PRESSION À HAUTE RÉSOLUTION (2026-08-26)** — signalé
   par Renaud comme « la sphère semble attirer la fumée », et « comme si le mode
   démo était activé ». Ce n'était NI la sphère NI le mode démo.
@@ -82,11 +133,12 @@ typecheck strict + bundle. Aucune dépendance runtime.
   **Leçon de diagnostic** : un symptôme qui DÉSIGNE un objet (« c'est la
   sphère ») doit être vérifié en RETIRANT l'objet. Ici l'obstacle ne faisait que
   rendre visible un écoulement parasite qui existait sans lui.
-  **RESTE OUVERT** : à ×4 une dérive latérale résiduelle subsiste à 384³. La
-  piste la plus probable est la dégradation des masques d'obstacle en descendant
-  la pyramide (plus la grille est fine, plus elle a de niveaux) — c'est
-  exactement la famille de bugs décrite dans le journal J4 de PLAN-EAU. Coût
-  mesuré du passage à ×4 : 384³ tombe à 20 FPS.
+  **REFERMÉ le 2026-08-27** : ce qui restait — la boîte envahie à 384³ avec la
+  boule — n'était pas la pyramide de pression mais le CONFINEMENT DE VORTICITÉ au
+  bord de l'obstacle (entrée suivante). La piste « masques d'obstacle dégradés en
+  descendant la pyramide » a été traitée quand même (restriction conservatrice,
+  commit b5e0dac) : elle est correcte, elle n'était pas la cause.
+  Coût mesuré du passage à ×4 : 384³ tombe à 20 FPS.
 
 - **TESTER CE QUE L'UTILISATEUR PEUT FAIRE (2026-08-26)** — le piège le plus
   coûteux de la session, et il n'était pas dans le moteur. Mes harnais CDP
