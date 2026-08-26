@@ -922,5 +922,9 @@ pour faire hériter l'eau de l'outillage du feu. La section qui la décrit reste
 comme ANALYSE (ce qui se mutualise, ce qui ne doit surtout pas fusionner), pas
 comme feuille de route.
 
-Reste, côté feu : encres colorées (canaux yz réservés dans la densité) · qualité
-du confinement de vorticité · test smartphone (1024², limites WebGPU mobiles).
+Reste, côté feu : 384³ confortable (les 4 V-cycles le font tomber à 20 FPS —
+convergence moins chère à trouver : lisseur, warm start FMG) · qualité du
+confinement de vorticité · test smartphone (1024², limites WebGPU mobiles).
+(« Encres colorées » a longtemps traîné ici : c'est FAIT depuis le 2026-08-21,
+commit 7cefd12 — touches 1/2/3, fumée/encre/carburant, albédo mélangé par voxel.
+La ligne datait d'avant ce commit et a survécu à une réécriture de la section.)
