@@ -36,9 +36,19 @@ fn p_at(c: vec3i, n: vec3i) -> f32 {
   return textureLoad(p_src, clamp(c, vec3i(0), n - vec3i(1)), 0).x;
 }
 
-// Sphère-obstacle vue depuis un niveau grossier : le centre de la cellule du niveau
-// est remonté en voxels fins (même approximation « centre » qu'au niveau 0 — un
-// obstacle plus fin que la cellule grossière peut fuir, comme la restriction 2D).
+// Sphère-obstacle vue depuis un niveau grossier. RESTRICTION CONSERVATRICE : la
+// cellule n'est solide que si elle est ENTIÈREMENT dans la sphère, pas
+// seulement son centre.
+//
+// C'est la règle du journal J4 — « le domaine grossier doit RÉTRÉCIR, jamais
+// grandir » — et elle vaut pour l'obstacle comme elle valait pour le fluide.
+// Avec le critère du centre, une cellule à moitié dedans devient solide, donc
+// l'obstacle GROSSIT à chaque niveau : le niveau grossier corrige alors un
+// problème que le niveau fin ne pose pas, et cette incohérence pompe de
+// l'énergie tout autour de la boule. Le défaut n'apparaît qu'en HAUTE
+// résolution parce que la pyramide y a plus de niveaux, et il met plusieurs
+// secondes à devenir visible — d'où l'impression que la sphère « attire » la
+// fumée au bout d'un moment.
 fn solid_cell(c: vec3i, n: vec3i) -> bool {
   if (P.sphere.w <= 0.0) {
     return false;
@@ -47,7 +57,10 @@ fn solid_cell(c: vec3i, n: vec3i) -> bool {
   // niveau : un seul facteur d'échelle suffit, quelle que soit la forme du
   // domaine.
   let scale = P.misc.z / f32(n.x);
-  return distance((vec3f(c) + vec3f(0.5)) * scale, P.sphere.xyz) < P.sphere.w;
+  // Demi-diagonale de la cellule grossière, en voxels fins : ce qu'il faut
+  // retrancher au rayon pour exiger la cellule ENTIÈRE à l'intérieur.
+  let half_diag = scale * 0.866025;
+  return distance((vec3f(c) + vec3f(0.5)) * scale, P.sphere.xyz) < P.sphere.w - half_diag;
 }
 
 fn neighbor_sum(c: vec3i, n: vec3i) -> f32 {

@@ -65,11 +65,37 @@ fn divergence(@builtin(global_invocation_id) gid: vec3u) {
   }
   let n = n_size();
   let v0 = textureLoad(vel_src, c, 0).xyz;
-  // Faces opposées : hors grille = mur (0), schéma compact.
-  let ux = select(0.0, textureLoad(vel_src, c + vec3i(1, 0, 0), 0).x, c.x + 1 < n.x);
-  let vy = select(0.0, textureLoad(vel_src, c + vec3i(0, 1, 0), 0).y, c.y + 1 < n.y);
-  let wz = select(0.0, textureLoad(vel_src, c + vec3i(0, 0, 1), 0).z, c.z + 1 < n.z);
-  var div = ux - v0.x + vy - v0.y + wz - v0.z;
+  // FACES BLOQUÉES : lire la vitesse PRESCRITE, pas la vitesse stockée.
+  //
+  // Le gradient impose la vitesse de la sphère sur les faces qu'elle bloque, et
+  // zéro sur les parois. Si la divergence, elle, lit la valeur stockée à ces
+  // mêmes faces, le triplet divergence / lisseur / gradient ne décrit plus le
+  // MÊME opérateur autour de l'obstacle : la projection ne peut plus y annuler
+  // la divergence, et il reste un écoulement parasite qui s'installe et grandit
+  // avec le temps. C'est ce qu'on voyait comme une sphère « attirant » la fumée
+  // après quelques secondes — l'obstacle ne l'attirait pas, il la fabriquait.
+  //
+  // Jacobi le pardonnait en partie (il converge peu) ; le multigrid non, il
+  // converge FORT vers la solution du mauvais système. C'est le piège déjà écrit
+  // pour le 2D — « le lisseur doit être l'adjoint exact du couple
+  // divergence/gradient » — appliqué cette fois à l'OBSTACLE et non aux bords.
+  let sv = P.sphere_vel.xyz;
+  let solid_c = solid_cell(c);
+  // Faces négatives (celles que ce texel stocke).
+  var u0 = select(v0.x, sv.x, solid_c || solid_cell(c - vec3i(1, 0, 0)));
+  var v_0 = select(v0.y, sv.y, solid_c || solid_cell(c - vec3i(0, 1, 0)));
+  var w0 = select(v0.z, sv.z, solid_c || solid_cell(c - vec3i(0, 0, 1)));
+  u0 = select(u0, 0.0, c.x == 0);
+  v_0 = select(v_0, 0.0, c.y == 0);
+  w0 = select(w0, 0.0, c.z == 0);
+  // Faces positives (stockées par le voisin) ; hors grille = paroi, donc zéro.
+  var ux = select(0.0, textureLoad(vel_src, c + vec3i(1, 0, 0), 0).x, c.x + 1 < n.x);
+  var vy = select(0.0, textureLoad(vel_src, c + vec3i(0, 1, 0), 0).y, c.y + 1 < n.y);
+  var wz = select(0.0, textureLoad(vel_src, c + vec3i(0, 0, 1), 0).z, c.z + 1 < n.z);
+  ux = select(ux, sv.x, c.x + 1 < n.x && (solid_c || solid_cell(c + vec3i(1, 0, 0))));
+  vy = select(vy, sv.y, c.y + 1 < n.y && (solid_c || solid_cell(c + vec3i(0, 1, 0))));
+  wz = select(wz, sv.z, c.z + 1 < n.z && (solid_c || solid_cell(c + vec3i(0, 0, 1))));
+  var div = ux - u0 + vy - v_0 + wz - w0;
   // EXPANSION de combustion : source de divergence au front de flamme (le gaz
   // brûlé gonfle) — mêmes critères que la réaction, oxygène compris.
   let dn = textureLoad(den_src, c, 0);
