@@ -43,6 +43,10 @@ struct Ember {
 @group(0) @binding(1) var lin: sampler;
 @group(0) @binding(2) var density_tex: texture_3d<f32>;
 @group(0) @binding(3) var<storage, read> embers: array<Ember>;
+// Occlusion PRÉCALCULÉE par particule (passe compute `occlude` ci-dessous) :
+// le facteur final exp(−τ·portée/4), lu tel quel par le vertex.
+@group(0) @binding(4) var<storage, read> occ_in: array<f32>;
+@group(0) @binding(5) var<storage, read_write> occ_out: array<f32>;
 
 // Dupliqués (les shaders sont autonomes).
 fn blackbody(heat: f32) -> vec3f {
@@ -85,18 +89,13 @@ fn vs_embers(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -
   let t = age / life;
   let world = e.pos.xyz / R.style.w - vec3f(0.5);
 
-  // Occlusion : extinction cumulée sur 4 échantillons vers la caméra.
+  // Occlusion : précalculée PAR PARTICULE (passe `occlude`) — la recalculer ici
+  // coûtait six fois par braise (une par sommet), ~4 ms à 384³.
   let cam = R.cam_pos.xyz;
   let to_cam = cam - world;
   let dist = length(to_cam);
   let dir = to_cam / max(dist, 1e-4);
-  let span = min(dist, 0.45);
-  var tau = 0.0;
-  for (var j = 1u; j <= 4u; j++) {
-    let sp = world + dir * (f32(j) / 4.0) * span;
-    tau += extinction(textureSampleLevel(density_tex, lin, tex_uvw(sp), 0.0));
-  }
-  var brightness = (1.0 - t) * (1.0 - t) * exp(-tau * span * 0.25);
+  var brightness = (1.0 - t) * (1.0 - t) * occ_in[ii];
   // Boule devant la braise : occultée.
   if (R.sphere.w > 0.0) {
     let oc = world - R.sphere.xyz;
@@ -141,4 +140,34 @@ fn fs_embers(frag: VSOut) -> @location(0) vec4f {
   let r2 = dot(frag.uv, frag.uv);
   let fall = max(1.0 - r2, 0.0);
   return vec4f(frag.color * fall * fall, 1.0);
+}
+
+// Occlusion par PARTICULE, en compute — une fois par braise et par frame, au
+// lieu de six fois (une par sommet du billboard) : 4 échantillons × 6 sommets ×
+// 32k particules ≈ 786k lectures trilinéaires par frame, ~4 ms à 384³, ramenés
+// à 131k. Tourne aussi en pause : l'orbite de caméra doit garder l'occlusion
+// juste même quand les braises sont figées.
+@compute @workgroup_size(64)
+fn occlude(@builtin(global_invocation_id) gid: vec3u) {
+  let ii = gid.x;
+  if (ii >= arrayLength(&occ_out)) {
+    return;
+  }
+  let e = embers[ii];
+  // Morte ou jamais née : le vertex l'écarte de toute façon.
+  if (e.vel.w <= 0.0 || e.pos.w >= e.vel.w) {
+    occ_out[ii] = 0.0;
+    return;
+  }
+  let world = e.pos.xyz / R.style.w - vec3f(0.5);
+  let to_cam = R.cam_pos.xyz - world;
+  let dist = length(to_cam);
+  let dir = to_cam / max(dist, 1e-4);
+  let span = min(dist, 0.45);
+  var tau = 0.0;
+  for (var j = 1u; j <= 4u; j++) {
+    let sp = world + dir * (f32(j) / 4.0) * span;
+    tau += extinction(textureSampleLevel(density_tex, lin, tex_uvw(sp), 0.0));
+  }
+  occ_out[ii] = exp(-tau * span * 0.25);
 }

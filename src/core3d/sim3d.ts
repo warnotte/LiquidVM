@@ -349,6 +349,7 @@ export class FluidSim3D {
       present: GPURenderPipeline;
       gizmo: GPURenderPipeline;
       embersUpdate: GPUComputePipeline;
+      embersOcc: GPUComputePipeline;
       embersDraw: GPURenderPipeline;
     },
     private readonly binds: {
@@ -372,7 +373,8 @@ export class FluidSim3D {
       bloomH: GPUBindGroup; // bloomA → bloomB
       bloomV: GPUBindGroup; // bloomB → bloomA
       embersSim: Pair<Pair<GPUBindGroup>>; // [vel][den] + particules + R
-      embersDraw: Pair<GPUBindGroup>; // [den] (occlusion) + particules
+      embersDraw: Pair<GPUBindGroup>; // [den] + particules + occlusion précalculée
+      embersOcc: Pair<GPUBindGroup>; // [den] — la passe compute d'occlusion
       clearsRgba: readonly GPUBindGroup[];
       clearsScalar: readonly GPUBindGroup[];
     },
@@ -429,7 +431,10 @@ export class FluidSim3D {
       // MacCormack : prédicteurs φ̂ ; vorticité : rotationnel vectoriel aux centres.
       const velScratch = tex3d(device, 'vel3d-hat', 'rgba16float');
       const denScratch = tex3d(device, 'den3d-hat', 'rgba16float');
-      const curlTex = tex3d(device, 'curl3d', 'rgba16float');
+      // Vorticité en MI-RÉSOLUTION : rotationnel et |ω| flouté vivent sur une
+      // grille moitié (1/8 du coût — voir le commentaire du shader) ; deux
+      // textures ping (le flou lit l'une, écrit l'autre), 2×7 Mo à 384³.
+      const curlHalf = pair((i) => tex3d(device, `curl3d-${i}`, 'rgba16float', GRID3 / 2));
       // Espèces transportées : x = oxygène (init 1), yzw réservés.
       const species = pair((i) => tex3d(device, `species3d-${i}`, 'rgba16float'));
       // Volume de LUEUR (grille grossière) : inject → [0], blurs ping-pong,
@@ -458,6 +463,12 @@ export class FluidSim3D {
       const emberBuffer = device.createBuffer({
         label: 'embers3d',
         size: EMBERS3 * 32,
+        usage: GPUBufferUsage.STORAGE,
+      });
+      // Occlusion par particule (écrite par la passe `occlude`, lue au vertex).
+      const emberOcc = device.createBuffer({
+        label: 'embers3d-occ',
+        size: EMBERS3 * 4,
         usage: GPUBufferUsage.STORAGE,
       });
 
@@ -629,6 +640,17 @@ export class FluidSim3D {
             { binding: 1, visibility: VERTEX, sampler: { type: 'filtering' } },
             sampled3d(2, VERTEX),
             { binding: 3, visibility: VERTEX, buffer: { type: 'read-only-storage' } },
+            { binding: 4, visibility: VERTEX, buffer: { type: 'read-only-storage' } },
+          ],
+        }),
+        embersOcc: device.createBindGroupLayout({
+          label: 'embers-occ-3d',
+          entries: [
+            { binding: 0, visibility: COMPUTE, buffer: { type: 'uniform' } },
+            { binding: 1, visibility: COMPUTE, sampler: { type: 'filtering' } },
+            { binding: 2, visibility: COMPUTE, texture: { sampleType: 'float', viewDimension: '3d' } },
+            { binding: 3, visibility: COMPUTE, buffer: { type: 'read-only-storage' } },
+            { binding: 5, visibility: COMPUTE, buffer: { type: 'storage' } },
           ],
         }),
       };
@@ -695,6 +717,14 @@ export class FluidSim3D {
         device.queue.writeBuffer(tinyParams, slot * 256, new Float32Array([parity, omega, 0, 0]));
       }
 
+      const embersOccPipe = await device.createComputePipelineAsync({
+        label: 'embers-occ-3d',
+        layout: device.createPipelineLayout({
+          label: 'embers-occ-3d-pl',
+          bindGroupLayouts: [L.embersOcc],
+        }),
+        compute: { module: embersDrawM, entryPoint: 'occlude' },
+      });
       const [velPredict, velCorrect, forces, curlPipe, blurCurlPipe, confine, denPredict, denCorrect, divergencePipe, jacobi, gradient, mgSmoothRed, mgSmoothBlack, mgTinyPipe, mgResidual, mgRestrictPipe, mgProlongPipe, mgProlongPPPipe, speciesPipe, clearOne, clearRgba, clearScalar, render, glowInjectPipe, glowBlurPipe, bloomDownPipe, bloomHPipe, bloomVPipe, presentPipe, gizmoPipe, embersUpdatePipe, embersDrawPipe] =
         await Promise.all([
           compute('vel-predict-3d', L.velPredict, advectVelM, 'predict'),
@@ -848,17 +878,16 @@ export class FluidSim3D {
             layout: L.curl,
             entries: [
               { binding: 0, resource: velocity[v] },
-              { binding: 1, resource: curlTex },
+              { binding: 1, resource: curlHalf[0] },
             ],
           }),
         ),
-        // velScratch est libre ici (le correcteur MacCormack l'a consommé).
         blurCurl: device.createBindGroup({
           label: 'blur-curl-3d',
           layout: L.curl,
           entries: [
-            { binding: 0, resource: curlTex },
-            { binding: 1, resource: velScratch },
+            { binding: 0, resource: curlHalf[0] },
+            { binding: 1, resource: curlHalf[1] },
           ],
         }),
         confine: pair((v) =>
@@ -867,7 +896,7 @@ export class FluidSim3D {
             layout: L.confine,
             entries: [
               { binding: 0, resource: velocity[v] },
-              { binding: 2, resource: velScratch },
+              { binding: 2, resource: curlHalf[1] },
               { binding: 3, resource: velocity[flip(v)] },
             ],
           }),
@@ -1047,6 +1076,20 @@ export class FluidSim3D {
               { binding: 1, resource: sampler },
               { binding: 2, resource: density[d] },
               { binding: 3, resource: { buffer: emberBuffer } },
+              { binding: 4, resource: { buffer: emberOcc } },
+            ],
+          }),
+        ),
+        embersOcc: pair((d) =>
+          device.createBindGroup({
+            label: `embers-occ-3d-${d}`,
+            layout: L.embersOcc,
+            entries: [
+              { binding: 0, resource: { buffer: renderUniforms } },
+              { binding: 1, resource: sampler },
+              { binding: 2, resource: density[d] },
+              { binding: 3, resource: { buffer: emberBuffer } },
+              { binding: 5, resource: { buffer: emberOcc } },
             ],
           }),
         ),
@@ -1226,6 +1269,7 @@ export class FluidSim3D {
           present: presentPipe,
           gizmo: gizmoPipe,
           embersUpdate: embersUpdatePipe,
+          embersOcc: embersOccPipe,
           embersDraw: embersDrawPipe,
         },
         binds,
@@ -1352,12 +1396,15 @@ export class FluidSim3D {
         // Vorticity confinement : rotationnel, |ω| flouté (le fix anti-grain),
         // puis force de renforcement. Passes sautées à ε = 0.
         if (input.params.vorticityStrength > 0) {
+          // Rotationnel et flou en mi-résolution ; le confinement plein grain.
+          const nh = Math.ceil(n / 2);
+          const nhy = Math.ceil(ny / 2);
           cp.setPipeline(this.pipelines.curl);
           cp.setBindGroup(1, this.binds.curl[this.velIdx]);
-          cp.dispatchWorkgroups(n, ny, n);
+          cp.dispatchWorkgroups(nh, nhy, nh);
           cp.setPipeline(this.pipelines.blurCurl);
           cp.setBindGroup(1, this.binds.blurCurl);
-          cp.dispatchWorkgroups(n, ny, n);
+          cp.dispatchWorkgroups(nh, nhy, nh);
           cp.setPipeline(this.pipelines.confine);
           cp.setBindGroup(1, this.binds.confine[this.velIdx]);
           cp.dispatchWorkgroups(n, ny, n);
@@ -1438,6 +1485,15 @@ export class FluidSim3D {
         gp.dispatchWorkgroups(EMBERS3 / 64);
       }
       gp.end();
+      // Occlusion des braises, par PARTICULE (voir `occlude`) — aussi en pause :
+      // l'orbite de caméra change la ligne de visée, l'occlusion doit suivre.
+      if (input.embersOn && input.emberStrength > 0) {
+        const op = encoder.beginComputePass({ label: 'embers-occ' });
+        op.setPipeline(this.pipelines.embersOcc);
+        op.setBindGroup(0, this.binds.embersOcc[this.denIdx]);
+        op.dispatchWorkgroups(EMBERS3 / 64);
+        op.end();
+      }
     }
 
     // Raymarch → scène HDR linéaire.

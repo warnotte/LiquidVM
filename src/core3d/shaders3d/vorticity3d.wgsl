@@ -63,33 +63,38 @@ fn inv_n() -> vec3f {
   return vec3f(1.0) / n_sizef();
 }
 
-// Vitesse au centre de la cellule c (moyenne des deux faces de chaque axe ;
-// coordonnées clampées : au bord, la face manquante est un mur → biais négligeable).
-fn center_vel(c: vec3i) -> vec3f {
-  let n = n_size();
-  let cc = clamp(c, vec3i(0), n - vec3i(1));
-  let v0 = textureLoad(vel_src, cc, 0).xyz;
-  let ux = select(0.0, textureLoad(vel_src, clamp(cc + vec3i(1, 0, 0), vec3i(0), n - vec3i(1)), 0).x, cc.x + 1 < n.x);
-  let vy = select(0.0, textureLoad(vel_src, clamp(cc + vec3i(0, 1, 0), vec3i(0), n - vec3i(1)), 0).y, cc.y + 1 < n.y);
-  let wz = select(0.0, textureLoad(vel_src, clamp(cc + vec3i(0, 0, 1), vec3i(0), n - vec3i(1)), 0).z, cc.z + 1 < n.z);
-  return 0.5 * vec3f(v0.x + ux, v0.y + vy, v0.z + wz);
-}
-
+// ROTATIONNEL EN MI-RÉSOLUTION (2026-08-28). La chaîne du confinement ne
+// consomme ω qu'après un FLOU volontaire (le fix anti-grain) : autant ne jamais
+// le calculer plus fin que ce qu'on s'apprête à flouter. Le rotationnel et son
+// flou vivent sur une grille MOITIÉ (1/8 du coût — mesuré : la chaîne vorticité
+// pesait ~8 ms sur les ~50 d'une frame 384³) ; le confinement, lui, reste à
+// pleine grille et échantillonne ce champ en coordonnées NORMALISÉES — il ne
+// sait même pas que la texture est plus petite.
+//
+// L'ÉCHELLE NE BOUGE PAS, et ce n'est pas un détail (cf. le piège du ×SCALE3) :
+// les dérivées sont centrées à ±1 cellule grossière (= 2 voxels fins) mais
+// exprimées PAR VOXEL FIN — mêmes unités qu'avant, la force de confinement ne
+// voit qu'un ω un peu plus lisse, ce qui est précisément l'intention du flou.
+// La vitesse est échantillonnée en trilinéaire (le décalage d'une demi-face du
+// stockage MAC devient un demi-voxel d'à-peu-près — noyé dans le lissage).
 @compute @workgroup_size(4, 4, 4)
 fn curl(@builtin(global_invocation_id) gid: vec3u) {
-  let n = n_size();
+  let nh = vec3i(textureDimensions(curl_dst));
   let c = vec3i(gid);
-  if (any(c >= n)) {
+  if (any(c >= nh)) {
     return;
   }
-  // Différences centrées des vitesses centrées voisines.
-  let xp = center_vel(c + vec3i(1, 0, 0));
-  let xm = center_vel(c - vec3i(1, 0, 0));
-  let yp = center_vel(c + vec3i(0, 1, 0));
-  let ym = center_vel(c - vec3i(0, 1, 0));
-  let zp = center_vel(c + vec3i(0, 0, 1));
-  let zm = center_vel(c - vec3i(0, 0, 1));
-  let omega = 0.5 * vec3f(
+  let inv = vec3f(1.0) / n_sizef();
+  // Centre de la cellule grossière, en voxels fins.
+  let p = (vec3f(c) + vec3f(0.5)) * 2.0;
+  let d = 2.0; // un pas grossier, en voxels fins (le sampler clampe aux bords)
+  let xp = textureSampleLevel(vel_src, lin, (p + vec3f(d, 0.0, 0.0)) * inv, 0.0).xyz;
+  let xm = textureSampleLevel(vel_src, lin, (p - vec3f(d, 0.0, 0.0)) * inv, 0.0).xyz;
+  let yp = textureSampleLevel(vel_src, lin, (p + vec3f(0.0, d, 0.0)) * inv, 0.0).xyz;
+  let ym = textureSampleLevel(vel_src, lin, (p - vec3f(0.0, d, 0.0)) * inv, 0.0).xyz;
+  let zp = textureSampleLevel(vel_src, lin, (p + vec3f(0.0, 0.0, d)) * inv, 0.0).xyz;
+  let zm = textureSampleLevel(vel_src, lin, (p - vec3f(0.0, 0.0, d)) * inv, 0.0).xyz;
+  let omega = (0.5 / d) * vec3f(
     (yp.z - ym.z) - (zp.y - zm.y),
     (zp.x - zm.x) - (xp.z - xm.z),
     (xp.y - xm.y) - (yp.x - ym.x),
@@ -102,7 +107,8 @@ fn curl(@builtin(global_invocation_id) gid: vec3u) {
 // layout que curl), sortie : velScratch (libre à ce point de la frame).
 @compute @workgroup_size(4, 4, 4)
 fn blur_curl(@builtin(global_invocation_id) gid: vec3u) {
-  let n = n_size();
+  // Dimensions lues sur la TEXTURE (mi-résolution), pas sur la grille fine.
+  let n = vec3i(textureDimensions(vel_src));
   let c = vec3i(gid);
   if (any(c >= n)) {
     return;
