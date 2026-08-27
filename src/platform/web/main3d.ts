@@ -169,10 +169,11 @@ const PRESETS: readonly {
 
 /**
  * Mode DÉMO (touche D ou ?demo) : chorégraphie scriptée du moteur — le showcase.
- * REMASTER : quatre actes qui traversent les presets (bougie → défaut →
- * fournaise avec braises et lueur poussée → fumée épaisse), caméra scénarisée
- * par cibles lissées, boule en lemniscate dans le brasier. Les réglages de
- * l'utilisateur sont SNAPSHOTÉS au lancement et RESTAURÉS à la sortie (D).
+ * CINQ actes qui traversent les presets (bougie → défaut → fournaise avec
+ * braises et lueur poussée → fumée épaisse → DÉTONATION champignon en finale),
+ * caméra scénarisée par cibles lissées, boule en lemniscate dans le brasier.
+ * Les réglages de l'utilisateur sont SNAPSHOTÉS au lancement et RESTAURÉS à la
+ * sortie (D) — détonation et boule comprises : l'acte V les réécrit.
  */
 class DemoDriver {
   private t = 0;
@@ -184,6 +185,9 @@ class DemoDriver {
     embersOn: boolean;
     glowStrength: number;
     exposure: number;
+    boom: BoomTune;
+    sphereActive: boolean;
+    feedback: boolean;
   } | null = null;
 
   constructor(
@@ -215,6 +219,19 @@ class DemoDriver {
       embersOn: this.input.embersOn,
       glowStrength: this.input.glowStrength,
       exposure: this.input.exposure,
+      // L'acte V réécrit les réglages de DÉTONATION et retire la boule : ils
+      // font partie de ce que la sortie doit rendre intact.
+      boom: {
+        explosionRadius: this.input.explosionRadius,
+        explosionFuel: this.input.explosionFuel,
+        explosionHeight: this.input.explosionHeight,
+        dustRate: this.input.dustRate,
+        dustTime: this.input.dustTime,
+        dustRadius: this.input.dustRadius,
+        explosionSpark: this.input.explosionSpark,
+      },
+      sphereActive: this.input.sphereActive,
+      feedback: this.input.feedback,
     };
     this.t = 0;
     this.fired.clear();
@@ -228,6 +245,9 @@ class DemoDriver {
       this.input.embersOn = this.saved.embersOn;
       this.input.glowStrength = this.saved.glowStrength;
       this.input.exposure = this.saved.exposure;
+      Object.assign(this.input, this.saved.boom);
+      this.input.sphereActive = this.saved.sphereActive;
+      this.input.feedback = this.saved.feedback;
       this.saved = null;
     }
     this.input.blow.active = false;
@@ -317,9 +337,34 @@ class DemoDriver {
     });
     this.at(72, () => (input.removeEmitter = true));
     this.at(74, () => (input.removeEmitter = true));
-    this.at(80, () => this.toast('accalmie… (D : reprendre la main)'));
-    // Boucle.
-    if (this.t > 88) {
+    // ACTE V — LE FINALE : un champignon, DEHORS. Même recette que le bouton
+    // « 🍄 » (scène nettoyée, flamme coupée, boule retirée — elle se tiendrait
+    // en plein dans le souffle), mais en PRISE DE VUE EXTÉRIEURE : dans la
+    // boîte de verre, le nuage à 256³ n'est qu'une bouffée boueuse ; contre le
+    // ciel et l'horizon, la même simulation devient un champignon lointain —
+    // c'est l'échelle qui fait le spectacle, pas la matière (vérifié A/B,
+    // captures EXT256-* contre UNCLIC256-*). La caméra reste basse, presque au
+    // ras de l'horizon, puis s'élève doucement avec le chapeau.
+    this.at(80, () => {
+      this.apply(TUNE_MUSHROOM);
+      input.params.outdoor = true;
+      Object.assign(input, BOOM_MUSHROOM);
+      input.reset = true;
+      input.sphereActive = false;
+      input.embersOn = false;
+      input.glowStrength = 1.8;
+      this.act({ speed: 0.045, elevation: 0.14, radius: 2.7 });
+      this.toast('Acte V — dehors : un champignon pour finir (D : reprendre la main)');
+      // Comme le bouton « extérieur » : la boîte de verre et les gizmos n'ont
+      // plus de sens face à l'horizon. Coupé APRÈS le toast (le narrateur passe
+      // par feedback) ; rendu à la boucle et à la sortie.
+      input.feedback = false;
+    });
+    this.at(81.2, () => (input.explode = true));
+    this.at(92, () => this.act({ speed: 0.06, elevation: 0.22, radius: 2.65 }));
+    // Boucle — l'acte I ramène l'atelier (apply() remet outdoor à faux).
+    if (this.t > 118) {
+      input.feedback = this.saved?.feedback ?? true;
       input.reset = true;
       this.t = 0;
       this.fired.clear();
