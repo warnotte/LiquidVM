@@ -310,6 +310,8 @@ fn fs_main(frag: VSOut) -> @location(0) vec4f {
     // s'éclaircit, ce qui se lit à tort comme un problème de rendu. La sortie se
     // fait normalement par `t >= t_end` ou par extinction, donc ce plafond ne
     // coûte rien tant qu'on ne le touche pas.
+    var shade_cache = 1.0;
+    var shade_ttl = 0u;
     for (var i = 0u; i < 1024u; i++) {
       if (t >= t_end || transmit < 0.015) {
         break;
@@ -319,7 +321,12 @@ fn fs_main(frag: VSOut) -> @location(0) vec4f {
       // Suie : lue au même point, elle s'ajoute à l'extinction et TIRE L'ALBÉDO
       // VERS LE NOIR. Le pas adaptatif ci-dessous doit en tenir compte, sinon un
       // nuage de suie sans fumée serait traversé à double enjambée.
-      let soot = soot_at(pos) * R.soot.z;
+      // La lecture n'a lieu que si la suie PÈSE au rendu (R.soot.z > 0) : à
+      // zéro, c'est une texture entière de moins à échantillonner par pas.
+      var soot = 0.0;
+      if (R.soot.z > 0.0) {
+        soot = soot_at(pos) * R.soot.z;
+      }
       let ext = extinction(s) + soot * SOOT_EXT;
       // Pas ADAPTATIF : l'air vide se traverse à double enjambée (gros gain quand
       // la boîte est peu remplie), les intégrales utilisent la longueur réelle.
@@ -338,20 +345,32 @@ fn fs_main(frag: VSOut) -> @location(0) vec4f {
         }
       }
       if (ext > 0.005) {
-        // Ombre interne : marche courte vers la lumière.
-        var occ = 0.0;
-        for (var j = 1u; j <= 6u; j++) {
-          let sp = pos + ldir * (f32(j) * shadow_step);
-          let ss = textureSampleLevel(density_tex, lin, tex_uvw(sp), 0.0);
-          // La suie compte AUSSI dans l'ombre interne : c'est elle qui rend un
-          // panache d'explosion sombre en son cœur. L'ignorer ici donnerait un
-          // nuage noir de face et translucide de dos.
-          occ += extinction(ss) + soot_at(sp) * R.soot.z * SOOT_EXT;
+        // Ombre interne : marche courte vers la lumière — recalculée UN PAS
+        // OCCUPÉ SUR DEUX et réutilisée entre-temps : le long d'un rayon,
+        // l'ombre varie bien plus lentement que la densité (c'est une intégrale
+        // sur une demi-boîte), et c'était le poste le plus cher du rendu
+        // (6 échantillons + suie par pas).
+        if (shade_ttl == 0u) {
+          var occ = 0.0;
+          for (var j = 1u; j <= 6u; j++) {
+            let sp = pos + ldir * (f32(j) * shadow_step);
+            let ss = textureSampleLevel(density_tex, lin, tex_uvw(sp), 0.0);
+            // La suie compte AUSSI dans l'ombre interne : c'est elle qui rend un
+            // panache d'explosion sombre en son cœur. L'ignorer ici donnerait un
+            // nuage noir de face et translucide de dos.
+            if (R.soot.z > 0.0) {
+              occ += soot_at(sp) * R.soot.z * SOOT_EXT;
+            }
+            occ += extinction(ss);
+          }
+          // DEUX octaves d'extinction (« powder ») : la seconde, 4× plus
+          // transparente, laisse la lumière pénétrer les cœurs épais — la fumée
+          // dense devient lumineuse en profondeur au lieu de virer au noir.
+          shade_cache = 0.62 * exp(-occ * shadow_step * 0.9) + 0.38 * exp(-occ * shadow_step * 0.22);
+          shade_ttl = 2u;
         }
-        // DEUX octaves d'extinction (« powder ») : la seconde, 4× plus
-        // transparente, laisse la lumière pénétrer les cœurs épais — la fumée
-        // dense devient lumineuse en profondeur au lieu de virer au noir.
-        var shade = 0.62 * exp(-occ * shadow_step * 0.9) + 0.38 * exp(-occ * shadow_step * 0.22);
+        shade_ttl -= 1u;
+        var shade = shade_cache;
         // La boule projette son ombre dans la fumée.
         if (sphere_hit(pos, ldir) < 1e8) {
           shade *= 0.25;

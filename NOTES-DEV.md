@@ -965,9 +965,15 @@ pour faire hériter l'eau de l'outillage du feu. La section qui la décrit reste
 comme ANALYSE (ce qui se mutualise, ce qui ne doit surtout pas fusionner), pas
 comme feuille de route.
 
-Reste, côté feu : 384³ à 60 FPS — le solveur est FAIT (rouge-noir ×2 : 20 FPS au
-lieu de 14 à rendu égal, journal du 2026-08-27), le reste du budget est ailleurs
-(~30 FPS plafond sans aucune pression : advection MacCormack, vorticité, rendu)
+Reste, côté feu : 384³ à 60 FPS — le solveur est FAIT (rouge-noir ×2, journal du
+2026-08-27) ; première passe sur le reste FAITE (2026-08-28 : vorticité en
+mi-résolution −4 ms, occlusion des braises par particule −4 ms, ombre du
+raymarch réutilisée un pas sur deux −4 ms sur scène DENSE — défaut ~21 FPS,
+fournaise 19,5 → 21,3). Encore au budget : fusionner les espèces dans le
+correcteur de densité, le confinement plein grain (3 forces MAC ≈ 21 lectures),
+l'advection MacCormack elle-même. Se souvenir : les paliers vsync écrasent les
+petits deltas — mesurer chaque poste par TOGGLE, et les gains de rendu sur une
+scène DENSE (le panache par défaut a trop peu de pas occupés pour juger)
 · qualité du confinement de vorticité · test smartphone (1024², limites WebGPU
 mobiles).
 (« Encres colorées » a longtemps traîné ici : c'est FAIT depuis le 2026-08-21,
