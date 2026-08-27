@@ -145,6 +145,18 @@ fn n_sizef() -> vec3f {
 @group(1) @binding(2) var aux: texture_3d<f32>;
 @group(1) @binding(3) var den_dst: texture_storage_3d<rgba16float, write>;
 @group(1) @binding(4) var oxy_src: texture_3d<f32>;
+// ESPÈCES FUSIONNÉES (2026-08-28) : la passe species3d a été absorbée ici — le
+// correcteur calcule déjà la rétro-trace RK2 et la combustion ; refaire les
+// deux dans une passe séparée coûtait un plein parcours de grille. Le canal
+// x = oxygène, y = SUIE (une flamme qui manque d'air craque son carburant et
+// noircit — c'est la signature d'une explosion ; une bougie brûle dans l'air
+// libre et reste claire, le même terme donne les deux).
+@group(1) @binding(5) var oxy_dst: texture_storage_3d<rgba16float, write>;
+
+// Fraction d'O₂ de référence : en dessous, la flamme faiblit puis s'étouffe.
+const O2_REF = 0.25;
+// Stœchiométrie : O₂ consommé par unité de carburant brûlé.
+const O2_PER_FUEL = 0.55;
 
 fn inv_n() -> vec3f {
   return vec3f(1.0) / n_sizef();
@@ -217,11 +229,14 @@ fn correct(@builtin(global_invocation_id) gid: vec3u) {
   // le carburant (canal z) se consume — il dégage de la chaleur et de la suie grise
   // (canal x). L'expansion volumique associée est injectée par la passe divergence.
   // Le triangle du feu est complet : sans OXYGÈNE, la flamme faiblit puis s'étouffe.
-  let spec = textureSampleLevel(oxy_src, lin, center * inv_n(), 0.0);
-  let o2 = spec.x;
-  let oxy_factor = clamp(o2 / 0.25, 0.0, 1.0);
+  // L'oxygène est ADVECTÉ ICI (même rétro-trace RK2 que la correction — c'est
+  // toute l'économie de la fusion), puis consommé par cette combustion.
+  var spec = textureSampleLevel(oxy_src, lin, back * inv_n(), 0.0);
+  var o2 = spec.x;
+  let oxy_factor = clamp(o2 / O2_REF, 0.0, 1.0);
   let ignite = smoothstep(0.28, 0.55, val.w);
   let burn = min(val.z * P.emit_meta.y * dt * ignite, val.z) * oxy_factor;
+  o2 -= O2_PER_FUEL * burn;
   val.z -= burn;
   val.w = min(val.w + P.emit_meta.z * burn, 1.9);
   val.x += 0.35 * burn;
@@ -307,4 +322,30 @@ fn correct(@builtin(global_invocation_id) gid: vec3u) {
   }
 
   textureStore(den_dst, gid, max(val, vec4f(0.0)));
+
+  // SUIE : le carburant CHAUD que l'air ne suffit plus à brûler craque en noir.
+  // La mesure de MANQUE D'AIR se prend sur le rapport de ce que le carburant
+  // présent RÉCLAME à ce qui est disponible — surtout pas sur `oxy_factor`, qui
+  // sature à 1 dès 0,25 d'oxygène et vaut donc 1 presque partout (leçon payée :
+  // première version à suie invisible). Une bougie brûle du carburant dilué :
+  // propre ; une charge concentre des unités de carburant sur une unité d'air :
+  // elle noircit. Le même terme donne les deux.
+  let demande = val.z * O2_PER_FUEL;
+  let manque = clamp(1.0 - o2 / max(demande, 1e-3), 0.0, 1.0);
+  var soot = spec.y + P.soot.x * dt * val.z * ignite * manque;
+  soot = soot / (1.0 + P.soot.y * dt);
+
+  // Récupération lente de l'oxygène (la boîte fuit) + apport du souffle.
+  o2 += dt * P.ink_weights.w * (1.0 - o2);
+  if (P.blow_dir.w > 0.5) {
+    let bv = center - P.blow_origin.xyz;
+    let bt = dot(bv, P.blow_dir.xyz);
+    if (bt > 0.0) {
+      let bd = distance(center, P.blow_origin.xyz + P.blow_dir.xyz * bt) /
+        max(P.blow_origin.w, 1e-3);
+      o2 += dt * P.blow_force.w * exp(-bd * bd * 2.0) * (1.0 - o2);
+    }
+  }
+
+  textureStore(oxy_dst, gid, vec4f(clamp(o2, 0.0, 1.0), min(soot, 4.0), spec.zw));
 }

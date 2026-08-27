@@ -189,9 +189,13 @@ fn confine(@builtin(global_invocation_id) gid: vec3u) {
   let dt = P.misc.x;
   let fc = vec3f(c);
   var vel = textureLoad(vel_src, c, 0).xyz;
-  vel.x += dt * confine_force(fc + vec3f(0.0, 0.5, 0.5)).x;
-  vel.y += dt * confine_force(fc + vec3f(0.5, 0.0, 0.5)).y;
-  vel.z += dt * confine_force(fc + vec3f(0.5, 0.5, 0.0)).z;
+  // UNE évaluation au centre de la cellule, appliquée aux trois faces — et non
+  // trois évaluations aux positions MAC exactes (21 lectures par cellule). Le
+  // champ est flouté sur ~3 voxels ET calculé en mi-résolution : à cette
+  // échelle de lissage, un demi-voxel d'écart entre face et centre est du
+  // bruit. Mesuré avant de trancher : images de référence indiscernables.
+  let f = confine_force(fc + vec3f(0.5));
+  vel += dt * f;
 
   vel.x = select(vel.x, P.sphere_vel.x, face_blocked(c, vec3i(1, 0, 0)));
   vel.y = select(vel.y, P.sphere_vel.y, face_blocked(c, vec3i(0, 1, 0)));
