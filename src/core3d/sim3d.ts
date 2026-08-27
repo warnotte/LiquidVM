@@ -28,6 +28,7 @@ import {
   GRID3Y,
   HEIGHT3,
   MG3_COARSE_SMOOTH,
+  MG3_TINY,
   MG3_COARSEST_SIZE,
   MG3_PRE_SMOOTH,
   MG3_POST_SMOOTH,
@@ -155,14 +156,29 @@ interface MGLevel3 {
   readonly dispatch: number;
   /** Dispatch VERTICAL : le domaine n'est plus forcément cubique. */
   readonly dispatchY: number;
-  /** Lissage pondéré, indexé par [source de pression du niveau]. */
-  readonly smoothBind: Pair<GPUBindGroup>;
+  /** Taille du niveau (côté horizontal), pour choisir le lisseur. */
+  readonly size: number;
+  /** Lissage rouge-noir EN PLACE, indexé par [pression courante du niveau].
+   *  Pas de ping-pong : les deux couleurs écrivent la même texture. Utilisé sur
+   *  les GRANDS niveaux (> MG3_TINY), où il converge ~2× mieux par balayage. */
+  readonly rbBind: Pair<GPUBindGroup>;
+  /** Lissage rouge-noir PING-PONG des niveaux MINUSCULES (≤ MG3_TINY), indexé
+   *  par [ping source][parité][0 = Gauss-Seidel, 1 = SOR] — huit bind groups
+   *  STATIQUES par niveau : le read_write, l'alternance de pipelines et les
+   *  offsets dynamiques sont trois poisons de driver, tous mesurés. */
+  readonly tinyBind: Pair<Pair<Pair<GPUBindGroup>>>;
   /** r = rhs − A·p → texture résidu. Null au niveau le plus grossier. */
   readonly residualBind: Pair<GPUBindGroup> | null;
   /** Résidu de ce niveau → rhs du suivant. Null au plus grossier. */
   readonly restrictBind: GPUBindGroup | null;
-  /** Correction du suivant → ce niveau, [pression fine][pression grossière]. */
-  readonly prolongBind: Pair<Pair<GPUBindGroup>> | null;
+  /** Correction du suivant (toujours son ping 0) AJOUTÉE EN PLACE à ce niveau,
+   *  indexé par [pression fine]. Les niveaux grossiers ne basculent plus jamais :
+   *  leur pression vit dans le ping 0, le ping 1 ne sert qu'au repli Jacobi du
+   *  niveau 0. */
+  readonly prolongBind: Pair<GPUBindGroup> | null;
+  /** Prolongation PING-PONG (niveaux minuscules : le read_write y est
+   *  pathologique) : lit ping 0, écrit ping 1. Null si non minuscule. */
+  readonly prolongPPBind: GPUBindGroup | null;
   /** Remise à zéro de la pression de départ (niveaux > 0). */
   readonly clearBind: GPUBindGroup | null;
 }
@@ -180,6 +196,16 @@ function storage3d(binding: number, format: GPUTextureFormat): GPUBindGroupLayou
     binding,
     visibility: COMPUTE,
     storageTexture: { access: 'write-only', format, viewDimension: '3d' },
+  };
+}
+
+/** Storage READ_WRITE — réservé au lisseur rouge-noir en place (r32float est le
+ *  seul format où cet accès est garanti par WebGPU). */
+function storageRW3d(binding: number, format: GPUTextureFormat): GPUBindGroupLayoutEntry {
+  return {
+    binding,
+    visibility: COMPUTE,
+    storageTexture: { access: 'read-write', format, viewDimension: '3d' },
   };
 }
 
@@ -303,7 +329,10 @@ export class FluidSim3D {
       divergence: GPUComputePipeline;
       jacobi: GPUComputePipeline;
       gradient: GPUComputePipeline;
-      mgSmooth: GPUComputePipeline;
+      mgSmoothRed: GPUComputePipeline;
+      mgSmoothBlack: GPUComputePipeline;
+      mgTiny: GPUComputePipeline;
+      mgProlongPP: GPUComputePipeline;
       mgResidual: GPUComputePipeline;
       mgRestrict: GPUComputePipeline;
       mgProlong: GPUComputePipeline;
@@ -361,11 +390,9 @@ export class FluidSim3D {
       readonly glowDispatchY: number;
     },
   ) {
-    this.mgIdx = new Array<number>(mgLevels.length).fill(0);
   }
 
   /** Index de pression courant par niveau multigrid (tableau réutilisé, zéro alloc). */
-  private readonly mgIdx: number[];
 
   /** Cible HDR (raymarch → bloom → présentation) et bind groups qui la
    *  référencent — recréés UNIQUEMENT quand la taille du canvas change
@@ -509,6 +536,21 @@ export class FluidSim3D {
           label: 'jacobi-3d',
           entries: [sampledScalar3d(1), sampledScalar3d(2), storage3d(3, 'r32float')],
         }),
+        mgSmoothRB: device.createBindGroupLayout({
+          label: 'mg-smooth-rb-3d',
+          entries: [sampledScalar3d(2), storageRW3d(5, 'r32float')],
+        }),
+        mgTiny: device.createBindGroupLayout({
+          label: 'mg-tiny-3d',
+          entries: [
+            sampledScalar3d(1),
+            sampledScalar3d(2),
+            storage3d(3, 'r32float'),
+            // Offset STATIQUE par bind group — le dynamique est un poison de
+            // plus (mesuré : 4,6 FPS avec offsets dynamiques, 21,6 sans).
+            { binding: 6, visibility: COMPUTE, buffer: { type: 'uniform' } },
+          ],
+        }),
         gradient: device.createBindGroupLayout({
           label: 'gradient-3d',
           entries: [sampled3d(0), sampledScalar3d(1), storage3d(4, 'rgba16float')],
@@ -519,6 +561,10 @@ export class FluidSim3D {
         }),
         mgProlong: device.createBindGroupLayout({
           label: 'mg-prolong-3d',
+          entries: [sampledScalar3d(0), storageRW3d(5, 'r32float')],
+        }),
+        mgProlongPP: device.createBindGroupLayout({
+          label: 'mg-prolong-pp-3d',
           entries: [sampledScalar3d(0), storage3d(3, 'r32float'), sampledScalar3d(4)],
         }),
         clearRgba: device.createBindGroupLayout({
@@ -612,6 +658,7 @@ export class FluidSim3D {
         group1: GPUBindGroupLayout | null,
         module: GPUShaderModule,
         entryPoint: string,
+        constants?: Record<string, number>,
       ): Promise<GPUComputePipeline> =>
         device.createComputePipelineAsync({
           label,
@@ -619,10 +666,36 @@ export class FluidSim3D {
             label: `${label}-pl`,
             bindGroupLayouts: group1 === null ? [L.group0] : [L.group0, group1],
           }),
-          compute: { module, entryPoint },
+          compute: { module, entryPoint, constants },
         });
 
-      const [velPredict, velCorrect, forces, curlPipe, blurCurlPipe, confine, denPredict, denCorrect, divergencePipe, jacobi, gradient, mgSmooth, mgResidual, mgRestrictPipe, mgProlongPipe, speciesPipe, clearOne, clearRgba, clearScalar, render, glowInjectPipe, glowBlurPipe, bloomDownPipe, bloomHPipe, bloomVPipe, presentPipe, gizmoPipe, embersUpdatePipe, embersDrawPipe] =
+      // Côté du niveau le plus grossier de la pyramide : l'ancrage de l'espace
+      // nul (dans les lisseurs) ne doit viser que lui.
+      let coarsestSide = GRID3;
+      while (coarsestSide / 2 >= MG3_COARSEST_SIZE) {
+        coarsestSide /= 2;
+      }
+      const anchor = { COARSEST_SIDE: coarsestSide };
+      // Les quatre slots {parité, ω} du lisseur minuscule, à offset dynamique
+      // (alignement 256) : rouge/noir en Gauss-Seidel pur (ω = 1, pour LISSER),
+      // rouge/noir en SOR (ω optimal du Laplacien N³ — le niveau le plus
+      // grossier RÉSOUT, et le SOR y converge en O(N) balayages).
+      const omegaSOR = 2 / (1 + Math.sin(Math.PI / coarsestSide));
+      const tinyParams = device.createBuffer({
+        label: 'mg-tiny-params',
+        size: 1024,
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+      });
+      for (const [slot, parity, omega] of [
+        [0, 0, 1],
+        [1, 1, 1],
+        [2, 0, omegaSOR],
+        [3, 1, omegaSOR],
+      ] as const) {
+        device.queue.writeBuffer(tinyParams, slot * 256, new Float32Array([parity, omega, 0, 0]));
+      }
+
+      const [velPredict, velCorrect, forces, curlPipe, blurCurlPipe, confine, denPredict, denCorrect, divergencePipe, jacobi, gradient, mgSmoothRed, mgSmoothBlack, mgTinyPipe, mgResidual, mgRestrictPipe, mgProlongPipe, mgProlongPPPipe, speciesPipe, clearOne, clearRgba, clearScalar, render, glowInjectPipe, glowBlurPipe, bloomDownPipe, bloomHPipe, bloomVPipe, presentPipe, gizmoPipe, embersUpdatePipe, embersDrawPipe] =
         await Promise.all([
           compute('vel-predict-3d', L.velPredict, advectVelM, 'predict'),
           compute('vel-correct-3d', L.velCorrect, advectVelM, 'correct'),
@@ -635,10 +708,13 @@ export class FluidSim3D {
           compute('divergence-3d', L.divergence, projectM, 'divergence'),
           compute('jacobi-3d', L.jacobi, projectM, 'jacobi'),
           compute('gradient-3d', L.gradient, projectM, 'gradient'),
-          compute('mg-smooth-3d', L.jacobi, multigridM, 'smooth_jacobi'),
+          compute('mg-smooth-red-3d', L.mgSmoothRB, multigridM, 'smooth_red', anchor),
+          compute('mg-smooth-black-3d', L.mgSmoothRB, multigridM, 'smooth_black', anchor),
+          compute('mg-tiny-3d', L.mgTiny, multigridM, 'smooth_tiny', anchor),
           compute('mg-residual-3d', L.jacobi, multigridM, 'residual'),
           compute('mg-restrict-3d', L.mgRestrict, multigridM, 'restrict_rhs'),
           compute('mg-prolong-3d', L.mgProlong, multigridM, 'prolong_add'),
+          compute('mg-prolong-pp-3d', L.mgProlongPP, multigridM, 'prolong_add_pp'),
           compute('species-3d', L.species, speciesM, 'main'),
           device.createComputePipelineAsync({
             label: 'clear-one-3d',
@@ -1020,18 +1096,37 @@ export class FluidSim3D {
       const mgLevels: MGLevel3[] = tiers.map((t, l) => {
         const next = l < lastTier ? tiers[l + 1]! : null;
         return {
+          size: t.size,
           dispatch: Math.ceil(t.size / WG3),
           dispatchY: Math.ceil(Math.round(t.size * HEIGHT3) / WG3),
-          smoothBind: pair((p) =>
+          rbBind: pair((p) =>
             device.createBindGroup({
-              label: `mg3-smooth-l${l}-p${p}`,
-              layout: L.jacobi,
+              label: `mg3-rb-l${l}-p${p}`,
+              layout: L.mgSmoothRB,
               entries: [
-                { binding: 1, resource: t.pressure[p] },
                 { binding: 2, resource: t.rhs },
-                { binding: 3, resource: t.pressure[flip(p)] },
+                { binding: 5, resource: t.pressure[p] },
               ],
             }),
+          ),
+          tinyBind: pair((p) =>
+            pair((parity) =>
+              pair((sor) =>
+                device.createBindGroup({
+                  label: `mg3-tiny-l${l}-p${p}-c${parity}-s${sor}`,
+                  layout: L.mgTiny,
+                  entries: [
+                    { binding: 1, resource: t.pressure[p] },
+                    { binding: 2, resource: t.rhs },
+                    { binding: 3, resource: t.pressure[flip(p)] },
+                    {
+                      binding: 6,
+                      resource: { buffer: tinyParams, offset: sor * 512 + parity * 256, size: 16 },
+                    },
+                  ],
+                }),
+              ),
+            ),
           ),
           residualBind:
             next === null
@@ -1062,18 +1157,27 @@ export class FluidSim3D {
             next === null
               ? null
               : pair((fine) =>
-                  pair((coarse) =>
-                    device.createBindGroup({
-                      label: `mg3-prolong-l${l}-f${fine}-c${coarse}`,
-                      layout: L.mgProlong,
-                      entries: [
-                        { binding: 0, resource: next.pressure[coarse] },
-                        { binding: 3, resource: t.pressure[flip(fine)] },
-                        { binding: 4, resource: t.pressure[fine] },
-                      ],
-                    }),
-                  ),
+                  device.createBindGroup({
+                    label: `mg3-prolong-l${l}-f${fine}`,
+                    layout: L.mgProlong,
+                    entries: [
+                      { binding: 0, resource: next.pressure[0] },
+                      { binding: 5, resource: t.pressure[fine] },
+                    ],
+                  }),
                 ),
+          prolongPPBind:
+            next === null || t.size > MG3_TINY
+              ? null
+              : device.createBindGroup({
+                  label: `mg3-prolong-pp-l${l}`,
+                  layout: L.mgProlongPP,
+                  entries: [
+                    { binding: 0, resource: next.pressure[0] },
+                    { binding: 3, resource: t.pressure[1] },
+                    { binding: 4, resource: t.pressure[0] },
+                  ],
+                }),
           clearBind:
             l === 0
               ? null
@@ -1102,10 +1206,13 @@ export class FluidSim3D {
           divergence: divergencePipe,
           jacobi,
           gradient,
-          mgSmooth,
+          mgSmoothRed,
+          mgSmoothBlack,
+          mgTiny: mgTinyPipe,
           mgResidual,
           mgRestrict: mgRestrictPipe,
           mgProlong: mgProlongPipe,
+          mgProlongPP: mgProlongPPPipe,
           species: speciesPipe,
           clearOne,
           clearRgba,
@@ -1202,7 +1309,7 @@ export class FluidSim3D {
 
     const encoder = this.device.createCommandEncoder({ label: 'frame3d' });
     if (running || input.reset) {
-      const cp = encoder.beginComputePass({ label: 'sim3d' });
+      let cp = encoder.beginComputePass({ label: 'sim3d' });
       const n = DISPATCH3;
       const ny = DISPATCH3Y;
       // Initialisation / reset des espèces : O₂ = 1 partout.
@@ -1264,10 +1371,16 @@ export class FluidSim3D {
         // Pression : V-cycles multigrid (défaut) ou Jacobi simple — warm start
         // dans les deux cas, la pression de la frame précédente sert de départ.
         if (input.multigrid) {
+          // Les V-cycles gèrent leurs PROPRES passes compute (voir le
+          // commentaire de découpe dans encodeVCycle3) : on suspend la passe
+          // sim et on la rouvre après.
+          cp.end();
           const cycles = Math.max(1, Math.round(input.vcycles));
           for (let k = 0; k < cycles; k++) {
-            this.encodeVCycle3(cp);
+            this.encodeVCycle3(encoder);
           }
+          cp = encoder.beginComputePass({ label: 'sim3d-suite' });
+          cp.setBindGroup(0, this.group0);
         } else {
           cp.setPipeline(this.pipelines.jacobi);
           for (let i = 0; i < input.jacobiIterations; i++) {
@@ -1934,20 +2047,51 @@ export class FluidSim3D {
 
   /**
    * Encode un V-cycle multigrid complet sur la pression du niveau 0 (warm start).
-   * Descente : lissage pondéré, résidu, restriction ; plus grossier : lissage long ;
-   * remontée : prolongation trilinéaire + post-lissage. Les index ping-pong par
-   * niveau vivent dans mgIdx ; celui du niveau 0 est resynchronisé avec pressIdx.
+   * Descente : balayages rouge-noir, résidu, restriction ; plus grossier :
+   * lissage long ; remontée : prolongation trilinéaire ajoutée EN PLACE +
+   * post-lissage. Aucun ping-pong : voir le commentaire dans le corps.
    */
-  private encodeVCycle3(cp: GPUComputePassEncoder): void {
+  private encodeVCycle3(encoder: GPUCommandEncoder): void {
     const levels = this.mgLevels;
     const last = levels.length - 1;
-    const idx = this.mgIdx;
-    idx[0] = this.pressIdx;
+    // Le cycle gère ses propres passes compute, le segment minuscule isolé
+    // dans la sienne (héritage du débogage de la pathologie ci-dessous ; les
+    // passes découpées n'ont pas suffi seules, mais elles rendent le cycle
+    // lisible dans un profil GPU et ne coûtent rien).
+    let cp = encoder.beginComputePass({ label: 'mg3-descente' });
+    cp.setBindGroup(0, this.group0);
+    const cut = (label: string): void => {
+      cp.end();
+      cp = encoder.beginComputePass({ label });
+      cp.setBindGroup(0, this.group0);
+    };
+    // ARCHITECTURE, et les deux plaies qui l'ont sculptée (2026-08-27) :
+    //
+    // · GRANDS niveaux : rouge-noir EN PLACE (read_write) — pas de ping-pong,
+    //   pas d'écriture de la moitié inchangée. Le niveau 0 vit dans
+    //   pression[pressIdx], les niveaux grossiers dans leur ping 0 : plus une
+    //   seule bascule d'index dans le cycle.
+    // · Niveaux MINUSCULES (≤ 24³) : rouge-noir en PING-PONG, UN SEUL pipeline,
+    //   offsets d'uniforme STATIQUES. Toute autre forme mesurée là — read_write,
+    //   deux pipelines alternés, offsets dynamiques — fait passer la frame 384³
+    //   de ~50 à ~230 ms, sans exception ni explication propre (pathologie de
+    //   driver ; les passes séparées n'y changent rien).
+    // · JAMAIS un seul V-cycle par frame (voir vcyclesFor) : à ×1 le solve
+    //   dégénère numériquement frame à frame — boîte vide en quelques secondes
+    //   à 384³, quel que soit le lisseur — quand ×2, strictement identique par
+    //   cycle, reste sain. Le Jacobi d'origine montrait la même maladie en
+    //   moins fort (le « panache couché » du journal). Non élucidé au fond ;
+    //   contourné en ne prenant jamais ce chemin.
+    const p0 = this.pressIdx;
+    // HOOK DE BISSECTION (debug seulement) : __mgLast limite la profondeur de la
+    // pyramide, __mgSkip saute des passes nommées — pour localiser un coût.
+    const dbg = globalThis as unknown as { __mgLast?: number; __mgSkip?: string };
+    const lastEff = Math.min(last, dbg.__mgLast ?? last);
+    const skip = dbg.__mgSkip ?? '';
 
     // L'équation d'erreur des niveaux grossiers part de zéro à chaque cycle.
     cp.setPipeline(this.pipelines.clearScalar);
-    for (let l = 1; l <= last; l++) {
-      idx[l] = 0;
+    for (let l = 1; l <= lastEff; l++) {
       const lev = levels[l]!;
       cp.setBindGroup(0, lev.clearBind!);
       cp.dispatchWorkgroups(lev.dispatch, lev.dispatchY, lev.dispatch);
@@ -1955,20 +2099,64 @@ export class FluidSim3D {
     // Le clear utilise un autre layout de groupe 0 : on rétablit le groupe partagé.
     cp.setBindGroup(0, this.group0);
 
-    // Descente.
-    for (let l = 0; l <= last; l++) {
-      const lev = levels[l]!;
-      const count = l === last ? MG3_COARSE_SMOOTH : MG3_PRE_SMOOTH;
-      cp.setPipeline(this.pipelines.mgSmooth);
+    // Un balayage rouge-noir : deux dispatches EN PLACE sur la même texture
+    // (les voisins d'une cellule sont tous de l'autre couleur, et WebGPU ordonne
+    // les écritures entre dispatches).
+    const rbSweeps = (lev: MGLevel3, l: number, count: number): void => {
+      const bind = lev.rbBind[l === 0 ? p0 : 0];
+      // Le niveau le plus grossier est toujours minuscule (côté ≤ 24 quel que
+      // soit GRID3) : le SOR ne passe donc jamais par ici.
+      const red = this.pipelines.mgSmoothRed;
+      const black = this.pipelines.mgSmoothBlack;
       for (let i = 0; i < count; i++) {
-        cp.setBindGroup(1, lev.smoothBind[idx[l] as PingIndex]);
+        cp.setPipeline(red);
+        cp.setBindGroup(1, bind);
         cp.dispatchWorkgroups(lev.dispatch, lev.dispatchY, lev.dispatch);
-        idx[l] = idx[l]! ^ 1;
+        cp.setPipeline(black);
+        cp.setBindGroup(1, bind);
+        cp.dispatchWorkgroups(lev.dispatch, lev.dispatchY, lev.dispatch);
       }
-      if (l < last) {
+    };
+    // Niveaux MINUSCULES : rouge-noir en PING-PONG (2 dispatches par balayage,
+    // nombre de dispatches PAIR — la pression du niveau repart du ping `start`
+    // et retombe dessus après chaque balayage). Jamais de read_write ici, et UN
+    // SEUL pipeline : parité et ω par offset dynamique — deux contournements de
+    // driver, tous deux mesurés. (Un niveau minuscule n'est jamais le niveau
+    // 0 : la grille fine fait ≥ 128.)
+    const tinySweeps = (lev: MGLevel3, count: number, start = 0, sor = false): void => {
+      const w = (sor ? 1 : 0) as PingIndex;
+      cp.setPipeline(this.pipelines.mgTiny);
+      for (let i = 0; i < count; i++) {
+        cp.setBindGroup(1, lev.tinyBind[(start & 1) as PingIndex][0][w]);
+        cp.dispatchWorkgroups(lev.dispatch, lev.dispatchY, lev.dispatch);
+        cp.setBindGroup(1, lev.tinyBind[((start + 1) & 1) as PingIndex][1][w]);
+        cp.dispatchWorkgroups(lev.dispatch, lev.dispatchY, lev.dispatch);
+      }
+    };
+    const sweeps = (lev: MGLevel3, l: number, count: number, sor = false): void => {
+      if (lev.size <= MG3_TINY) {
+        tinySweeps(lev, count, 0, sor);
+      } else {
+        rbSweeps(lev, l, count);
+      }
+    };
+
+    // Descente.
+    let tinyOpen = false;
+    for (let l = 0; l <= lastEff; l++) {
+      const lev = levels[l]!;
+      if (!tinyOpen && lev.size <= MG3_TINY) {
+        tinyOpen = true;
+        cut('mg3-minuscules');
+      }
+      if (!skip.includes('smooth')) {
+        // Au niveau le plus grossier : SOR — il résout, il ne lisse pas.
+        sweeps(lev, l, l === lastEff ? MG3_COARSE_SMOOTH : MG3_PRE_SMOOTH, l === lastEff);
+      }
+      if (l < lastEff) {
         const coarse = levels[l + 1]!;
         cp.setPipeline(this.pipelines.mgResidual);
-        cp.setBindGroup(1, lev.residualBind![idx[l] as PingIndex]);
+        cp.setBindGroup(1, lev.residualBind![l === 0 ? p0 : 0]);
         cp.dispatchWorkgroups(lev.dispatch, lev.dispatchY, lev.dispatch);
         cp.setPipeline(this.pipelines.mgRestrict);
         cp.setBindGroup(1, lev.restrictBind!);
@@ -1977,21 +2165,44 @@ export class FluidSim3D {
     }
 
     // Remontée.
-    for (let l = last - 1; l >= 0; l--) {
+    for (let l = lastEff - 1; l >= 0; l--) {
       const lev = levels[l]!;
-      cp.setPipeline(this.pipelines.mgProlong);
-      cp.setBindGroup(1, lev.prolongBind![idx[l] as PingIndex][idx[l + 1] as PingIndex]);
-      cp.dispatchWorkgroups(lev.dispatch, lev.dispatchY, lev.dispatch);
-      idx[l] = idx[l]! ^ 1;
-      cp.setPipeline(this.pipelines.mgSmooth);
-      for (let i = 0; i < MG3_POST_SMOOTH; i++) {
-        cp.setBindGroup(1, lev.smoothBind[idx[l] as PingIndex]);
+      const tiny = lev.size <= MG3_TINY;
+      if (tinyOpen && !tiny) {
+        tinyOpen = false;
+        cut('mg3-remontee');
+      }
+      if (!skip.includes('prolong')) {
+        if (tiny) {
+          // Cible MINUSCULE : ping-pong (0 → 1), le read_write y est
+          // pathologique (mesuré : la prolongation en place vers 24³ suffisait
+          // à faire tomber la frame de 46 à 260 ms à 384³).
+          cp.setPipeline(this.pipelines.mgProlongPP);
+          cp.setBindGroup(1, lev.prolongPPBind!);
+        } else {
+          cp.setPipeline(this.pipelines.mgProlong);
+          cp.setBindGroup(1, lev.prolongBind![l === 0 ? p0 : 0]);
+        }
         cp.dispatchWorkgroups(lev.dispatch, lev.dispatchY, lev.dispatch);
-        idx[l] = idx[l]! ^ 1;
+      }
+      if (!skip.includes('post')) {
+        if (tiny) {
+          // La prolongation ping-pong a laissé la pression sur le ping 1 : les
+          // balayages partent de 1, et une DEMI-PASSE finale (rouge seule, qui
+          // recopie les noirs) la ramène sur le ping 0 que les binds du parent
+          // supposent.
+          tinySweeps(lev, MG3_POST_SMOOTH, 1);
+          cp.setPipeline(this.pipelines.mgTiny);
+          cp.setBindGroup(1, lev.tinyBind[1][0][0]);
+          cp.dispatchWorkgroups(lev.dispatch, lev.dispatchY, lev.dispatch);
+        } else {
+          sweeps(lev, l, MG3_POST_SMOOTH);
+        }
       }
     }
-    this.pressIdx = idx[0] as PingIndex;
+    cp.end();
   }
+
 
   private writeSimUniforms(dt: number, input: Frame3DInput): void {
     const d = this.simData;

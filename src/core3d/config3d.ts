@@ -45,18 +45,18 @@ export function estimateVram3(n: number, stretch = HEIGHT3): number {
 }
 
 /** À appeler AVANT la création de la simulation. Valide et propage les dérivés. */
-/** V-cycles nécessaires à une résolution donnée. Le compte ne monte pas parce
- *  que le problème est « plus dur » dans l'absolu, mais parce que notre cycle
- *  n'est pas idéal : les masques d'obstacle se dégradent en descendant la
- *  pyramide, et plus la grille est fine, plus elle a de niveaux. */
+/** V-cycles nécessaires à une résolution donnée. Depuis le lisseur rouge-noir
+ *  (V(1,1), SOR au coarsest), DEUX cycles suffisent à 384³ là où le Jacobi
+ *  pondéré en demandait quatre — vérifié sur la jauge du panache couché (scène
+ *  par défaut, 24 s). JAMAIS UN SEUL cycle par frame : à ×1 le solve accumule
+ *  frame à frame une erreur que le second cycle corrige, et la scène dégénère
+ *  (mesuré : boîte vide à 384³ en quelques secondes — et l'ancien Jacobi ×1
+ *  couchait déjà le panache, même famille, ampleur moindre). */
 export function vcyclesFor(n: number): number {
-  if (n >= 384) {
-    return 4;
-  }
-  if (n > 256) {
-    return 2;
-  }
-  return 1;
+  // Le second cycle est quasi gratuit à 256³ et au-dessous (mesuré : 59,3 FPS
+  // contre 60,3) : on le prend partout plutôt que d'exposer le cas ×1.
+  void n;
+  return 2;
 }
 
 export function setGrid3(n: number, stretch = HEIGHT3): void {
@@ -81,11 +81,21 @@ export const WG3 = 4;
 export let DISPATCH3 = Math.ceil(GRID3 / WG3);
 export let DISPATCH3Y = Math.ceil(GRID3Y / WG3);
 
-/** Multigrid 3D : pyramide GRID3 → 8³, lissages du V-cycle. */
-export const MG3_COARSEST_SIZE = 8;
-export const MG3_PRE_SMOOTH = 2;
-export const MG3_POST_SMOOTH = 2;
-export const MG3_COARSE_SMOOTH = 16;
+/** Multigrid 3D : la pyramide descend tant que le côté reste ≥ cette valeur —
+ *  le niveau le plus grossier fait donc entre 16 et 31 de côté (24 pour 384,
+ *  16 pour les puissances de deux). Elle s'arrêtait à 8³ ; le niveau 12³ de la
+ *  grille 384 déclenchait une pathologie de driver mesurée (frame ×5 à
+ *  1 V-cycle, quel que soit le lisseur) — et un coarsest de 24³ lissé 16 fois
+ *  coûte toujours à peu près rien. L'ancrage suit : COARSEST_SIDE (constante
+ *  override des lisseurs) vaut exactement le côté du dernier niveau. */
+export const MG3_COARSEST_SIZE = 16;
+export const MG3_PRE_SMOOTH = 1;
+export const MG3_POST_SMOOTH = 1;
+export const MG3_COARSE_SMOOTH = 8;
+/** Au-dessous de ce côté, un niveau est « minuscule » : lissé au Jacobi
+ *  ping-pong et non au rouge-noir en place — les dispatches read_write sur ces
+ *  textures déclenchent une pathologie de driver mesurée (voir multigrid3d). */
+export const MG3_TINY = 24;
 
 /** Palette des trois MATIÈRES (canaux xyz de la densité) : fumée grise (produit de
  *  combustion et encre neutre), encre magenta (lourde, retombe en refroidissant),
@@ -175,16 +185,12 @@ export function defaultTuning3(): Sim3Tuning {
 }
 
 export const SIM3_DEFAULTS = {
-  /** Solveur de pression : multigrid par défaut, Jacobi en repli comparatif.
-   *  1 V-cycle warm-starté suffit pour le visuel — 2 coûtent ~6 balayages de plus. */
+  /** Solveur de pression : multigrid par défaut, Jacobi en repli comparatif. */
   multigrid: true,
-  /** V-cycles de pression. UN SEUL suffit jusqu'à 256³, pas au-delà : mesuré à
-   *  384³, la pression sous-convergée laisse un écoulement latéral parasite qui
-   *  couche le panache au ras du sol au lieu de le laisser monter — le symptôme
-   *  ressemble à s'y méprendre à un obstacle qui « attire » la fumée, alors
-   *  qu'aucun obstacle n'est en cause (vérifié boule retirée). Voir
-   *  `vcyclesFor()`, qui donne le défaut en fonction de la résolution. */
-  vcycles: 1,
+  /** V-cycles de pression — TOUJOURS 2, jamais 1 (voir `vcyclesFor()` : à ×1 le
+   *  solve dégénère frame à frame ; historiquement le symptôme doux en était le
+   *  « panache couché » à 384³, qui a longtemps fait croire qu'il fallait ×4). */
+  vcycles: 2,
   /** Itérations de Jacobi quand le multigrid est coupé. */
   jacobiIterations: 36,
   /** Force du vorticity confinement (ε). RÉACTIVÉ (2026-08-22) : |ω| est flouté

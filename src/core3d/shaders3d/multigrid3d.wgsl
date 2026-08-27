@@ -1,4 +1,6 @@
-// Multigrid 3D pour la pression : V-cycle géométrique 128³ → 8³.
+// Multigrid 3D pour la pression : V-cycle géométrique, pyramide GRID3 → 24³/16³
+// (MG3_COARSEST_SIZE). Lisseur rouge-noir : V(1,1) et 2 cycles par frame valent
+// mieux que le V(2,2) Jacobi ×4 qu'ils remplacent, pour la moitié du coût.
 // Les tailles se déduisent de textureDimensions — les mêmes entry points servent
 // tous les niveaux. Leçons du 2D, payées cher, appliquées d'office :
 // 1) le couple divergence/gradient compact et ce lisseur partagent EXACTEMENT le
@@ -25,15 +27,33 @@ struct Params {
 @group(1) @binding(1) var p_src: texture_3d<f32>;
 @group(1) @binding(2) var rhs: texture_3d<f32>;
 @group(1) @binding(3) var scalar_dst: texture_storage_3d<r32float, write>;
-@group(1) @binding(4) var fine_src: texture_3d<f32>;  // prolong : pression fine courante
+// Lisseur rouge-noir EN PLACE : la pression est lue ET écrite dans la même
+// texture. r32float est le seul format storage garanti en read_write — la
+// pression l'est, et c'est ce qui rend le Gauss-Seidel possible sans ping-pong.
+@group(1) @binding(4) var fine_src: texture_3d<f32>;  // prolong ping-pong : pression fine courante
+@group(1) @binding(5) var p_rw: texture_storage_3d<r32float, read_write>;
 
-// Le niveau le plus grossier est le SEUL de taille < 16 quelle que soit la
-// pyramide (8 pour les grilles 2^k, 12 pour 384) — l'ancrage se détecte ainsi.
-const COARSEST_LIMIT = 16;
-const OMEGA = 0.8;
+// CÔTÉ DU NIVEAU LE PLUS GROSSIER, fourni à la création du pipeline (constante
+// override) : l'ancrage de l'espace nul ne doit viser QUE ce niveau, et sa
+// taille dépend de la grille (24 pour 384, 16 pour les puissances de deux
+// depuis que la pyramide s'arrête à 24³ — voir MG3_COARSEST_SIZE).
+override COARSEST_SIDE: i32 = 8;
+// Sur-relaxation du lisseur rouge-noir. 1,0 = Gauss-Seidel pur, la bonne valeur
+// pour LISSER (un ω > 1 amplifie les hautes fréquences au lieu de les amortir).
+// Le niveau le plus grossier, lui, ne lisse pas : il RÉSOUT — et là le SOR
+// converge en O(N) balayages où Gauss-Seidel en demande O(N²). Ses pipelines
+// sont créés avec ω ≈ 2/(1 + sin(π/N)) : le mode le plus lent d'un 24³ passe
+// de 0,993 par balayage (Jacobi pondéré — 16 balayages n'en retiraient que
+// 10 %) à une résolution quasi complète sur les 16 mêmes balayages.
+override OMEGA_RB: f32 = 1.0;
 
 fn p_at(c: vec3i, n: vec3i) -> f32 {
   return textureLoad(p_src, clamp(c, vec3i(0), n - vec3i(1)), 0).x;
+}
+
+// Lecture pour le lisseur EN PLACE (même clamp = même Neumann que p_at).
+fn p_rw_at(c: vec3i, n: vec3i) -> f32 {
+  return textureLoad(p_rw, clamp(c, vec3i(0), n - vec3i(1))).x;
 }
 
 // Sphère-obstacle vue depuis un niveau grossier. RESTRICTION CONSERVATRICE : la
@@ -83,21 +103,110 @@ fn neighbor_sum(c: vec3i, n: vec3i) -> f32 {
   return sum;
 }
 
+// LISSEUR ROUGE-NOIR EN PING-PONG — la forme des niveaux MINUSCULES.
+// Mesuré (bissection __mgLast, 256³, 1 V-cycle) : les balayages rouge-noir en
+// place s'effondrent dès que la texture est ≤ 16³ (60 FPS à profondeur 3, 19 à
+// profondeur 4, 24 en pyramide complète), pour un motif que ni les barrières ni
+// les transitions n'expliquent proprement — pathologie de driver sur les
+// dispatches read_write minuscules. À ces tailles le Jacobi ping-pong ne coûte
+// rien : on garde donc rouge-noir où il paie (les grands niveaux) et Jacobi où
+// il ne coûte pas (les petits). Même opérateur dans les deux cas.
+// L'ordre Gauss-Seidel n'exige PAS le read_write : la passe rouge met à jour
+// ses cellules et RECOPIE les noires vers l'autre ping ; la passe noire lit
+// alors des rouges déjà frais. Deux dispatches par balayage, et la pression du
+// niveau retombe sur son ping de départ après un nombre PAIR de dispatches.
+//
+// UN SEUL pipeline pour toutes les combinaisons : la parité ET le ω arrivent
+// par un uniforme à OFFSET DYNAMIQUE (un root-constant côté D3D12), parce
+// qu'alterner les PIPELINES entre dispatches minuscules est précisément ce que
+// le driver fait payer — mesuré à 384³ : 16 dispatches en deux pipelines
+// alternés = 5 FPS, les 16 mêmes en un seul = 21,6.
+struct TinyParams {
+  // x : parité (0 = rouge, 1 = noir) · y : ω (1 = Gauss-Seidel pour lisser,
+  // ≈ 1,7 = SOR au niveau le plus grossier, qui RÉSOUT au lieu de lisser).
+  v: vec4f,
+}
+@group(1) @binding(6) var<uniform> TP: TinyParams;
+
 @compute @workgroup_size(4, 4, 4)
-fn smooth_jacobi(@builtin(global_invocation_id) gid: vec3u) {
+fn smooth_tiny(@builtin(global_invocation_id) gid: vec3u) {
   let n = vec3i(textureDimensions(p_src));
   let c = vec3i(gid);
   if (any(c >= n)) {
     return;
   }
-  let b = textureLoad(rhs, c, 0).x;
-  let upd = (neighbor_sum(c, n) - b) / 6.0;
-  var value = mix(p_at(c, n), upd, OMEGA);
+  let pc = p_at(c, n);
+  var value = pc;
+  if (((c.x + c.y + c.z) & 1) == i32(TP.v.x)) {
+    let b = textureLoad(rhs, c, 0).x;
+    value = mix(pc, (neighbor_sum(c, n) - b) / 6.0, TP.v.y);
+  }
   // Ancrage de l'espace nul au niveau le plus grossier.
-  if (n.x < COARSEST_LIMIT && all(c == vec3i(0))) {
+  if (n.x == COARSEST_SIDE && all(c == vec3i(0))) {
     value = 0.0;
   }
   textureStore(scalar_dst, gid, vec4f(value, 0.0, 0.0, 0.0));
+}
+
+// LISSEUR ROUGE-NOIR (Gauss-Seidel par couleurs), EN PLACE.
+//
+// Pourquoi remplacer le Jacobi pondéré : à 384³ la pression coûtait 4 V-cycles
+// par frame (~30 ms). Le facteur de lissage du Jacobi amorti (ω = 0,8) est ~0,5
+// par balayage ; celui du Gauss-Seidel rouge-noir est ~0,25, ET il s'exécute en
+// place — plus de ping-pong, donc plus d'écriture de la moitié inchangée. Un
+// V-cycle rouge-noir vaut la qualité de plusieurs V-cycles Jacobi, pour un coût
+// moindre par cycle. MESURÉ, pas raisonné : voir NOTES-DEV (couché du panache à
+// 384³, la jauge de sous-convergence connue).
+//
+// L'OPÉRATEUR EST INCHANGÉ AU BIT PRÈS : même somme de voisins (clamp = Neumann,
+// voisin solide = valeur du centre), même second membre, même ancrage. Le piège
+// J4 (« le lisseur doit être l'adjoint exact du couple divergence/gradient »)
+// porte sur l'opérateur, pas sur l'ordre de parcours — rouge-noir ne change QUE
+// l'ordre. Deux dispatches par balayage : les voisins d'une cellule rouge sont
+// tous noirs (stencil 7 points), donc aucune course dans un dispatch, et WebGPU
+// ordonne les écritures entre dispatches d'une même passe.
+fn rb_smooth(gid: vec3u, parity: i32) {
+  let n = vec3i(textureDimensions(p_rw));
+  let c = vec3i(gid);
+  if (any(c >= n)) {
+    return;
+  }
+  if (((c.x + c.y + c.z) & 1) != parity) {
+    return;
+  }
+  let pc = p_rw_at(c, n);
+  var sum = 0.0;
+  for (var a = 0; a < 6; a++) {
+    var off = vec3i(0);
+    let axis = a >> 1;
+    let sign = select(-1, 1, (a & 1) == 0);
+    if (axis == 0) {
+      off.x = sign;
+    } else if (axis == 1) {
+      off.y = sign;
+    } else {
+      off.z = sign;
+    }
+    let nb = c + off;
+    sum += select(p_rw_at(nb, n), pc, solid_cell(nb, n));
+  }
+  let b = textureLoad(rhs, c, 0).x;
+  var value = mix(pc, (sum - b) / 6.0, OMEGA_RB);
+  // Ancrage de l'espace nul au niveau le plus grossier.
+  if (n.x == COARSEST_SIDE && all(c == vec3i(0))) {
+    value = 0.0;
+  }
+  textureStore(p_rw, c, vec4f(value, 0.0, 0.0, 0.0));
+}
+
+@compute @workgroup_size(4, 4, 4)
+fn smooth_red(@builtin(global_invocation_id) gid: vec3u) {
+  rb_smooth(gid, 0);
+}
+
+@compute @workgroup_size(4, 4, 4)
+fn smooth_black(@builtin(global_invocation_id) gid: vec3u) {
+  rb_smooth(gid, 1);
 }
 
 @compute @workgroup_size(4, 4, 4)
@@ -131,8 +240,17 @@ fn restrict_rhs(@builtin(global_invocation_id) gid: vec3u) {
 
 // Correction grossière → niveau fin : interpolation trilinéaire manuelle
 // (r32float non filtrable) ajoutée à la pression fine courante.
+// Deux prolongations, choisies par la taille de la CIBLE :
+// · prolong_add, EN PLACE (read_write) pour les grands niveaux — chaque thread
+//   ne lit et n'écrit QUE sa propre cellule fine, aucune course possible, et
+//   chaque texture garde le même rôle d'une frame à l'autre ;
+// · prolong_add_pp, PING-PONG, pour les niveaux MINUSCULES : comme pour le
+//   lisseur, tout accès read_write sur ces petites textures fait s'effondrer la
+//   frame (mesuré à 384³ : la prolongation en place vers le niveau 24³ suffisait
+//   à faire passer la frame de 46 à 260 ms). On écrit en write-only partout où
+//   la texture est petite, sans chercher la règle exacte du driver.
 @compute @workgroup_size(4, 4, 4)
-fn prolong_add(@builtin(global_invocation_id) gid: vec3u) {
+fn prolong_add_pp(@builtin(global_invocation_id) gid: vec3u) {
   let n = vec3i(textureDimensions(fine_src));
   let c = vec3i(gid);
   if (any(c >= n)) {
@@ -151,4 +269,26 @@ fn prolong_add(@builtin(global_invocation_id) gid: vec3u) {
   }
   let value = textureLoad(fine_src, c, 0).x + corr;
   textureStore(scalar_dst, gid, vec4f(value, 0.0, 0.0, 0.0));
+}
+
+@compute @workgroup_size(4, 4, 4)
+fn prolong_add(@builtin(global_invocation_id) gid: vec3u) {
+  let n = vec3i(textureDimensions(p_rw));
+  let c = vec3i(gid);
+  if (any(c >= n)) {
+    return;
+  }
+  let nc = vec3i(textureDimensions(src_tex));
+  let q = (vec3f(c) + vec3f(0.5)) * 0.5 - vec3f(0.5);
+  let base = vec3i(floor(q));
+  let t = q - vec3f(base);
+  var corr = 0.0;
+  for (var i = 0; i < 8; i++) {
+    let o = vec3i(i & 1, (i >> 1) & 1, (i >> 2) & 1);
+    let w = mix(1.0 - t.x, t.x, f32(o.x)) * mix(1.0 - t.y, t.y, f32(o.y)) *
+      mix(1.0 - t.z, t.z, f32(o.z));
+    corr += w * textureLoad(src_tex, clamp(base + o, vec3i(0), nc - vec3i(1)), 0).x;
+  }
+  let value = textureLoad(p_rw, c).x + corr;
+  textureStore(p_rw, c, vec4f(value, 0.0, 0.0, 0.0));
 }

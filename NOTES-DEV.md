@@ -79,6 +79,42 @@ typecheck strict + bundle. Aucune dépendance runtime.
 
 ## Pièges durement payés — ne pas re-tomber dedans
 
+- **PRESSION : JAMAIS UN SEUL V-CYCLE PAR FRAME, et le lisseur rouge-noir
+  (2026-08-27)** — chantier « 384³ confortable ». Trois choses apprises, chacune
+  payée plusieurs heures.
+  1. **À ×1 exactement, le solve dégénère.** Un V-cycle par frame, warm start :
+     l'erreur s'accumule frame à frame et la scène meurt (à 384³, boîte vide en
+     quelques secondes — la flamme pilote écrasée au sol). Deux cycles par
+     frame, STRICTEMENT identiques un à un : sain. Vrai pour tous les lisseurs
+     essayés (Jacobi pondéré, rouge-noir en place, rouge-noir ping-pong, avec ou
+     sans SOR). Le « panache couché » du journal du 26 était la forme DOUCE de
+     cette maladie — je l'avais lue comme de la simple sous-convergence et
+     conclu qu'il fallait ×4 ; en réalité ×2 suffit avec un bon lisseur, et ×1
+     est un cas maudit qu'aucun compte de balayages ne rattrape. Non élucidé au
+     fond ; contourné : `vcyclesFor()` rend 2 partout, le second cycle est quasi
+     gratuit à 256³ (59,3 contre 60,3 FPS).
+  2. **Le driver fait payer certaines FORMES sur les textures minuscules.** Sur
+     les niveaux ≤ 24³ de la pyramide, trois formes font passer la frame 384³ de
+     ~50 à ~230 ms, mesuré chacune isolément, sans explication propre : le
+     storage read_write (lisseur en place OU prolongation en place), deux
+     pipelines alternés entre dispatches, les offsets dynamiques d'uniforme. La
+     forme qui passe : UN pipeline, ping-pong write-only, offsets STATIQUES par
+     bind group. Les grands niveaux, eux, tolèrent le read_write sans broncher.
+     Découpage en passes séparées : aucun effet.
+  3. **Une config « mystérieusement lente » peut être une config numériquement
+     MALADE.** Un champ qui explose coûte des FPS par le RENDU (les early-exit
+     du raymarch ne s'amorcent plus) : 4 FPS qui ressemblent à une pathologie
+     driver. Une partie de mes mesures « driver » de la journée mesuraient en
+     fait la maladie du ×1. Règle : devant une lenteur inexpliquée, REGARDER LA
+     SCÈNE (une capture) avant de profiler quoi que ce soit.
+  Résultat net : lisseur rouge-noir V(1,1) (Gauss-Seidel, ~2× le facteur de
+  lissage du Jacobi amorti), SOR (ω ≈ 1,7) au niveau le plus grossier qui RÉSOUT
+  au lieu de lisser, pyramide arrêtée à 24³ (le 12³ était dans une des formes
+  maudites), ×2 partout. À rendu verrouillé 100 % : 384³ passe de ~14 à
+  20,0 FPS, 320³ à 36,8, 256³ reste à 60. Le plafond SANS pression est ~30 FPS à
+  384³ : les 60 FPS demanderaient de s'attaquer au reste de la frame
+  (advection, vorticité, rendu), pas au solveur.
+
 - **LE CONFINEMENT DE VORTICITÉ RENFORCE LE BORD DE L'OBSTACLE (2026-08-27)** —
   fin de l'affaire « la sphère influence la simulation », signalée par Renaud et
   restée ouverte trois commits. Symptôme : à 384³, preset champignon, boule
@@ -922,9 +958,11 @@ pour faire hériter l'eau de l'outillage du feu. La section qui la décrit reste
 comme ANALYSE (ce qui se mutualise, ce qui ne doit surtout pas fusionner), pas
 comme feuille de route.
 
-Reste, côté feu : 384³ confortable (les 4 V-cycles le font tomber à 20 FPS —
-convergence moins chère à trouver : lisseur, warm start FMG) · qualité du
-confinement de vorticité · test smartphone (1024², limites WebGPU mobiles).
+Reste, côté feu : 384³ à 60 FPS — le solveur est FAIT (rouge-noir ×2 : 20 FPS au
+lieu de 14 à rendu égal, journal du 2026-08-27), le reste du budget est ailleurs
+(~30 FPS plafond sans aucune pression : advection MacCormack, vorticité, rendu)
+· qualité du confinement de vorticité · test smartphone (1024², limites WebGPU
+mobiles).
 (« Encres colorées » a longtemps traîné ici : c'est FAIT depuis le 2026-08-21,
 commit 7cefd12 — touches 1/2/3, fumée/encre/carburant, albédo mélangé par voxel.
 La ligne datait d'avant ce commit et a survécu à une réécriture de la section.)
