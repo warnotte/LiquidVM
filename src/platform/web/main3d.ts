@@ -169,12 +169,15 @@ const PRESETS: readonly {
 
 /**
  * Mode DÉMO (touche D ou ?demo) : chorégraphie scriptée du moteur — le showcase.
- * SIX actes qui traversent les presets (bougie → défaut → fournaise avec
- * braises et lueur poussée → fumée épaisse → BOMBARDEMENT de charges visées →
- * DÉTONATION champignon en finale, dehors), caméra scénarisée par cibles
- * lissées, boule en lemniscate dans le brasier.
+ * SIX actes, ~100 s : bougie → trois matières → le souffle qui embrase la nappe
+ * de carburant → fournaise (braises, boule en lemniscate) → SALVE de trois
+ * détonations montées en CUTS (une boîte propre et un angle neuf par tir : dans
+ * une boîte close, une rafale en continu s'enterre dans sa propre fumée — le
+ * montage est la seule façon d'offrir à chaque boule de feu son air pur) →
+ * champignon tiré en extérieur. Le rendu est VERROUILLÉ à 100 % pendant le
+ * spectacle (l'adaptation floutait précisément les détonations).
  * Les réglages de l'utilisateur sont SNAPSHOTÉS au lancement et RESTAURÉS à la
- * sortie (D) — détonation et boule comprises : l'acte V les réécrit.
+ * sortie (D) — détonation, boule et retours visuels compris.
  */
 class DemoDriver {
   private t = 0;
@@ -285,43 +288,44 @@ class DemoDriver {
       this.act({ speed: 0.06, elevation: 0.1, radius: 1.55 });
       this.toast('Acte I — une bougie dans le noir');
     });
-    // La flamme prend ses aises, la caméra recule.
-    this.at(8, () => {
+    // ACTE II — les trois matières : la flamme prend ses aises, l'encre lourde
+    // retombe, la vapeur de carburant nappe le sol.
+    this.at(9, () => {
       this.apply({});
       this.act({ speed: 0.09, elevation: 0.22, radius: 1.95 });
-      this.toast('la flamme prend ses aises');
+      this.toast('Acte II — la flamme prend ses aises');
     });
-    this.at(14, () => {
+    this.at(12, () => {
       this.sim.addEmitterAt(0.27, 0.08, 0.5, 1);
       this.toast("fontaine d'encre magenta — lourde, elle retombe en refroidissant");
     });
-    // ACTE II — la nappe de carburant rampe au sol (caméra au ras).
-    this.at(21, () => {
+    this.at(15, () => {
       this.sim.addEmitterAt(0.62, 0.08, 0.35, 2);
       this.act({ speed: 0.08, elevation: 0.13, radius: 1.85 });
-      this.toast('Acte II — la vapeur de carburant coule et nappe le sol');
+      this.toast('la vapeur de carburant coule et nappe le sol');
     });
-    this.at(28, () => this.toast('un souffle la pousse vers la flamme…'));
-    if (this.t > 28 && this.t < 32) {
+    // ACTE III — le souffle pousse la nappe dans la flamme : embrasement.
+    this.at(25, () => this.toast('Acte III — un souffle pousse la nappe vers la flamme…'));
+    if (this.t > 25 && this.t < 29.5) {
       input.blow.active = true;
       input.blow.ndcX = 0.2;
       input.blow.ndcY = -0.4;
       input.blow.moveX += -dt * 1.4;
     }
-    this.at(32, () => (input.blow.active = false));
-    // ACTE III — embrasement : fournaise, braises, lueur poussée, caméra ample.
+    this.at(29.5, () => (input.blow.active = false));
+    // ACTE IV — embrasement : fournaise, braises, lueur poussée, caméra ample.
     // Dissipation remontée : la brume des actes précédents se consume, le
     // brasier se détache au lieu de se noyer dans la boîte enfumée.
-    this.at(34, () => {
+    this.at(33, () => {
       this.apply({ ...TUNE_FURNACE, inkDissipation: 0.4 });
       input.embersOn = true;
       input.glowStrength = 2.3;
       this.act({ speed: 0.12, elevation: 0.3, radius: 2.3 });
-      this.toast('Acte III — FOURNAISE : braises au vent, la fumée boit la lumière');
+      this.toast('Acte IV — FOURNAISE : braises au vent, la fumée boit la lumière');
     });
-    this.at(40, () => this.toast('la boule plonge dans le brasier'));
-    if (this.t > 40 && this.t < 56) {
-      const u = (this.t - 40) * 0.33;
+    this.at(38, () => this.toast('la boule plonge dans le brasier'));
+    if (this.t > 38 && this.t < 52) {
+      const u = (this.t - 38) * 0.33;
       this.sim.driveSphere(
         0.5 + 0.3 * Math.sin(u),
         0.4 + 0.17 * Math.sin(u * 0.71),
@@ -329,44 +333,34 @@ class DemoDriver {
         dt,
       );
     }
-    this.at(57, () => this.act({ speed: 0.1, elevation: 0.2, radius: 2.1 }));
-    if (this.t > 58 && this.t < 61) {
-      input.blow.active = true;
-      input.blow.ndcX = -0.3;
-      input.blow.ndcY = 0.0;
-      input.blow.moveX += dt * 1.2;
-      input.blow.moveY += dt * 0.3;
-    }
-    this.at(61, () => (input.blow.active = false));
-    // ACTE IV — l'après : la fumée épaisse retombe (caméra haute, lente).
-    this.at(64, () => {
-      this.apply(TUNE_SMOKE);
-      input.embersOn = false;
-      input.glowStrength = 1.5;
-      this.act({ speed: 0.05, elevation: 0.34, radius: 2.45 });
-      this.toast('Acte IV — la fumée épaisse retombe');
-    });
-    this.at(72, () => (input.removeEmitter = true));
-    this.at(74, () => (input.removeEmitter = true));
-    // ACTE V — BOMBARDEMENT : des charges ORDINAIRES (les boules de feu),
-    // visées à gauche, à droite, au centre. Le moteur n'a qu'UN slot de charge :
-    // une rafale espacée de ~2 s, jamais des tirs simultanés — et c'est tant
-    // mieux, chaque boule a le temps d'exister. L'air est remis à neuf d'abord :
-    // tirer dans la purée de l'acte IV ne montrerait que du mélange.
-    this.at(76, () => {
-      this.apply({ emitHeat: 0, emitInkRate: 0 });
-      Object.assign(input, BOOM_DEFAULT);
+    // ACTE V — LA SALVE, montée en CUTS. Trois détonations, chacune dans une
+    // boîte PROPRE et sous un angle NEUF : dans une boîte close, une rafale en
+    // continu s'enterre dans sa propre fumée dès le deuxième tir (mesuré — la
+    // boule de feu est de la fumée qui rougeoie : dissiper la fumée assez vite
+    // pour nettoyer la scène éteint la boule elle-même). Le montage tranche le
+    // dilemme : reset + saut d'azimut = un cut, et chaque tir vit ses cinq
+    // secondes dans l'air pur. Charges au réglage « spectacle » : suie réduite
+    // de moitié, amorce incandescente poussée.
+    const cut = (label?: string): void => {
+      this.apply({ emitHeat: 0, emitInkRate: 0, sootYield: 6 });
+      Object.assign(input, BOOM_DEFAULT, { dustRate: 1.5, dustTime: 0.8, explosionSpark: 90 });
       input.reset = true;
       input.embersOn = true;
       input.glowStrength = 2.2;
-      this.act({ speed: 0.11, elevation: 0.24, radius: 2.15 });
-      this.toast('Acte V — BOMBARDEMENT');
+      input.cam.azimuth += 2.1;
+      if (label !== undefined) {
+        this.toast(label);
+      }
+    };
+    this.at(54, () => {
+      cut('Acte V — SALVE, trois charges');
+      this.act({ speed: 0.05, elevation: 0.22, radius: 2.05 });
     });
-    this.at(77.5, () => this.shoot(-0.45, -0.15));
-    this.at(79.5, () => this.shoot(0.45, -0.1));
-    this.at(81.5, () => this.shoot(-0.15, -0.35));
-    this.at(83.5, () => this.shoot(0.3, 0.0));
-    this.at(85.5, () => this.shoot(0.0, -0.12));
+    this.at(54.6, () => this.shoot(-0.35, -0.22));
+    this.at(60, () => cut());
+    this.at(60.6, () => this.shoot(0.3, -0.3));
+    this.at(66, () => cut());
+    this.at(66.6, () => this.shoot(0.05, -0.15));
     // ACTE VI — LE FINALE : un champignon, DEHORS. Même recette que le bouton
     // « 🍄 » (scène nettoyée, flamme coupée, boule retirée — elle se tiendrait
     // en plein dans le souffle), mais en PRISE DE VUE EXTÉRIEURE : dans la
@@ -375,7 +369,7 @@ class DemoDriver {
     // c'est l'échelle qui fait le spectacle, pas la matière (vérifié A/B,
     // captures EXT256-* contre UNCLIC256-*). La caméra reste basse, presque au
     // ras de l'horizon, puis s'élève doucement avec le chapeau.
-    this.at(90, () => {
+    this.at(72, () => {
       this.apply(TUNE_MUSHROOM);
       input.params.outdoor = true;
       Object.assign(input, BOOM_MUSHROOM);
@@ -390,16 +384,18 @@ class DemoDriver {
       // par feedback) ; rendu à la boucle et à la sortie.
       input.feedback = false;
     });
-    this.at(91.2, () => this.shoot(0.0, -0.2));
-    this.at(102, () => this.act({ speed: 0.06, elevation: 0.22, radius: 2.65 }));
-    // Boucle — l'acte I ramène l'atelier (apply() remet outdoor à faux).
-    if (this.t > 128) {
+    this.at(73.2, () => this.shoot(0.0, -0.2));
+    this.at(84, () => this.act({ speed: 0.06, elevation: 0.22, radius: 2.65 }));
+    // Boucle — l'acte I ramène l'atelier (apply() remet outdoor à faux). Le
+    // chapeau se disperse vers 96 : ne pas laisser dix secondes de ciel vide.
+    if (this.t > 100) {
       input.feedback = this.saved?.feedback ?? true;
       input.reset = true;
       this.t = 0;
       this.fired.clear();
     }
   }
+
 }
 
 async function boot(): Promise<void> {
@@ -749,15 +745,26 @@ async function boot(): Promise<void> {
   const inkCss = INK_COLORS.map((c) => `rgb(${c.map((v) => Math.round(v * 255)).join(',')})`);
   // Le mode démo scénarise TOUT (presets, braises, lueur, caméra) : snapshot
   // des réglages au lancement, restauration à la sortie.
+  let lockBeforeDemo = false;
   const toggleDemo = (): void => {
     demoOn = !demoOn;
     if (demoOn) {
+      // RENDU VERROUILLÉ À 100 % pendant le spectacle : l'adaptation baisse la
+      // résolution exactement quand la scène est la plus lourde — c'est-à-dire
+      // pendant les détonations, le moment qu'on est venu regarder. Les FPS
+      // peuvent plonger un peu ; le flou, lui, ruinait le plan.
+      lockBeforeDemo = lockScale;
+      lockScale = true;
       demoDriver.start();
     } else {
+      lockScale = lockBeforeDemo;
       demoDriver.stop();
     }
   };
   if (demoOn) {
+    // ?demo au chargement : même verrou de rendu que par la touche D.
+    lockBeforeDemo = lockScale;
+    lockScale = true;
     demoDriver.start();
   }
   const panel = new Panel3D(document.body, [
