@@ -975,8 +975,13 @@ par passe : FAIT (?profile — timestamps matériels, table au HUD et dans
 __sim3d.profileMs ; les toggles rAF sous-estimaient la pression de moitié). La
 VRAIE table à 384³/défaut : pression 17,7 ms · amont (advection vitesse + forces
 + vorticité) 13,8 · aval (gradient + densités) 7,5 · divergence 2,0 · raymarch
-2,6 · reste ~0,3 — total 44. Les deux cibles suivantes sont donc la PRESSION
-(le 2e V-cycle coûte ~8,8 ms) et l'advection MacCormack de la vitesse. Se
+2,6 · reste ~0,3 — total 44. Pression ATTAQUÉE
+(2026-08-28 soir : restriction fusionnée au résidu — zéro texture intermédiaire,
+260 Mo de VRAM rendus — et pré-lissage fin des cycles enchaînés sauté) :
+17,7 → 13,5 ms, total 44,0 → 39,2, ~25 FPS au défaut, 27 FPS mesurés PENDANT une
+explosion de spectacle (captures REVE-384-*). À 512³ : 11 FPS (pression 33,
+amont 32 — la table ?profile y est encore plus parlante). La cible suivante est
+l'advection MacCormack de la vitesse (le gros de l'amont, 13,8 ms à 384³). Se
 souvenir : mesurer au PROFILEUR, plus aux toggles ; les gains de rendu se jugent
 sur une scène DENSE (le panache par défaut a trop peu de pas occupés)
 · qualité du confinement de vorticité · test smartphone (1024², limites WebGPU
