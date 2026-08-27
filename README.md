@@ -52,8 +52,9 @@ par la fumée. Coût mesuré nul quand coupées.
 
 **Autour** : presets un-clic (bougie / fournaise / fumée épaisse / vent — ce
 dernier allume un vent horizontal au cap oscillant, coupé par défaut), mode démo
-chorégraphié en cinq actes (`D` — bougie, encres, fournaise, fumée, puis un
-champignon tiré en extérieur pour finir ; restaure vos réglages en sortie), export
+chorégraphié en six actes (`D` — bougie, encres, fournaise, fumée, un
+bombardement de charges visées, puis un champignon tiré en extérieur pour
+finir ; restaure vos réglages en sortie), export
 OpenVDB (`E`, validé dans Blender, jusqu'à 512³), panneau de réglages déclaratif
 (`Tab`, toute la physique à chaud). Même contrat que le 2D : état 100 % GPU, zéro
 readback en boucle de frame, `src/core3d/` portable sans DOM.

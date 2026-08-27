@@ -169,9 +169,10 @@ const PRESETS: readonly {
 
 /**
  * Mode DÉMO (touche D ou ?demo) : chorégraphie scriptée du moteur — le showcase.
- * CINQ actes qui traversent les presets (bougie → défaut → fournaise avec
- * braises et lueur poussée → fumée épaisse → DÉTONATION champignon en finale),
- * caméra scénarisée par cibles lissées, boule en lemniscate dans le brasier.
+ * SIX actes qui traversent les presets (bougie → défaut → fournaise avec
+ * braises et lueur poussée → fumée épaisse → BOMBARDEMENT de charges visées →
+ * DÉTONATION champignon en finale, dehors), caméra scénarisée par cibles
+ * lissées, boule en lemniscate dans le brasier.
  * Les réglages de l'utilisateur sont SNAPSHOTÉS au lancement et RESTAURÉS à la
  * sortie (D) — détonation et boule comprises : l'acte V les réécrit.
  */
@@ -210,6 +211,16 @@ class DemoDriver {
 
   private act(cam: { speed: number; elevation: number; radius: number }): void {
     this.camT = cam;
+  }
+
+  /** Tir VISÉ : la détonation du moteur part sous le pointeur (rayon caméra →
+   *  plan de la charge) — il suffit donc de poser le pointeur avant de tirer.
+   *  En NDC : x < 0 tombe à gauche de l'écran, x > 0 à droite — et comme la
+   *  caméra orbite, les mêmes NDC donnent des points du sol toujours nouveaux. */
+  private shoot(ndcX: number, ndcY: number): void {
+    this.input.pointer.ndcX = ndcX;
+    this.input.pointer.ndcY = ndcY;
+    this.input.explode = true;
   }
 
   /** Lancement : snapshot des réglages du spectateur, scène vierge, acte I. */
@@ -337,7 +348,26 @@ class DemoDriver {
     });
     this.at(72, () => (input.removeEmitter = true));
     this.at(74, () => (input.removeEmitter = true));
-    // ACTE V — LE FINALE : un champignon, DEHORS. Même recette que le bouton
+    // ACTE V — BOMBARDEMENT : des charges ORDINAIRES (les boules de feu),
+    // visées à gauche, à droite, au centre. Le moteur n'a qu'UN slot de charge :
+    // une rafale espacée de ~2 s, jamais des tirs simultanés — et c'est tant
+    // mieux, chaque boule a le temps d'exister. L'air est remis à neuf d'abord :
+    // tirer dans la purée de l'acte IV ne montrerait que du mélange.
+    this.at(76, () => {
+      this.apply({ emitHeat: 0, emitInkRate: 0 });
+      Object.assign(input, BOOM_DEFAULT);
+      input.reset = true;
+      input.embersOn = true;
+      input.glowStrength = 2.2;
+      this.act({ speed: 0.11, elevation: 0.24, radius: 2.15 });
+      this.toast('Acte V — BOMBARDEMENT');
+    });
+    this.at(77.5, () => this.shoot(-0.45, -0.15));
+    this.at(79.5, () => this.shoot(0.45, -0.1));
+    this.at(81.5, () => this.shoot(-0.15, -0.35));
+    this.at(83.5, () => this.shoot(0.3, 0.0));
+    this.at(85.5, () => this.shoot(0.0, -0.12));
+    // ACTE VI — LE FINALE : un champignon, DEHORS. Même recette que le bouton
     // « 🍄 » (scène nettoyée, flamme coupée, boule retirée — elle se tiendrait
     // en plein dans le souffle), mais en PRISE DE VUE EXTÉRIEURE : dans la
     // boîte de verre, le nuage à 256³ n'est qu'une bouffée boueuse ; contre le
@@ -345,7 +375,7 @@ class DemoDriver {
     // c'est l'échelle qui fait le spectacle, pas la matière (vérifié A/B,
     // captures EXT256-* contre UNCLIC256-*). La caméra reste basse, presque au
     // ras de l'horizon, puis s'élève doucement avec le chapeau.
-    this.at(80, () => {
+    this.at(90, () => {
       this.apply(TUNE_MUSHROOM);
       input.params.outdoor = true;
       Object.assign(input, BOOM_MUSHROOM);
@@ -354,16 +384,16 @@ class DemoDriver {
       input.embersOn = false;
       input.glowStrength = 1.8;
       this.act({ speed: 0.045, elevation: 0.14, radius: 2.7 });
-      this.toast('Acte V — dehors : un champignon pour finir (D : reprendre la main)');
+      this.toast('Acte VI — dehors : un champignon pour finir (D : reprendre la main)');
       // Comme le bouton « extérieur » : la boîte de verre et les gizmos n'ont
       // plus de sens face à l'horizon. Coupé APRÈS le toast (le narrateur passe
       // par feedback) ; rendu à la boucle et à la sortie.
       input.feedback = false;
     });
-    this.at(81.2, () => (input.explode = true));
-    this.at(92, () => this.act({ speed: 0.06, elevation: 0.22, radius: 2.65 }));
+    this.at(91.2, () => this.shoot(0.0, -0.2));
+    this.at(102, () => this.act({ speed: 0.06, elevation: 0.22, radius: 2.65 }));
     // Boucle — l'acte I ramène l'atelier (apply() remet outdoor à faux).
-    if (this.t > 118) {
+    if (this.t > 128) {
       input.feedback = this.saved?.feedback ?? true;
       input.reset = true;
       this.t = 0;
@@ -706,6 +736,12 @@ async function boot(): Promise<void> {
       toast(text);
     }
   });
+  if (selftest) {
+    // L'horloge de la démo, pour le harnais : capturer « à t mural » dérive de
+    // plusieurs secondes (boot variable) — viser un instant du SCÉNARIO exige
+    // de lire son horloge à elle.
+    (window as unknown as Record<string, unknown>)['__demo3d'] = demoDriver;
+  }
 
   // INTERFACE déclarative : panneau à sections (Tab) + barre d'outils tactile.
   // Ajouter un réglage futur = une entrée ici, rien d'autre.
