@@ -166,10 +166,10 @@ interface MGLevel3 {
    *  STATIQUES par niveau : le read_write, l'alternance de pipelines et les
    *  offsets dynamiques sont trois poisons de driver, tous mesurés. */
   readonly tinyBind: Pair<Pair<Pair<GPUBindGroup>>>;
-  /** r = rhs − A·p → texture résidu. Null au niveau le plus grossier. */
-  readonly residualBind: Pair<GPUBindGroup> | null;
-  /** Résidu de ce niveau → rhs du suivant. Null au plus grossier. */
-  readonly restrictBind: GPUBindGroup | null;
+  /** Résidu des 8 enfants évalué à la volée → rhs du niveau suivant (une seule
+   *  passe, dispatchée à la taille grossière), indexé par [ping de pression
+   *  fine]. Null au plus grossier. */
+  readonly restrictBind: Pair<GPUBindGroup> | null;
   /** Correction du suivant (toujours son ping 0) AJOUTÉE EN PLACE à ce niveau,
    *  indexé par [pression fine]. Les niveaux grossiers ne basculent plus jamais :
    *  leur pression vit dans le ping 0, le ping 1 ne sert qu'au repli Jacobi du
@@ -332,7 +332,6 @@ export class FluidSim3D {
       mgSmoothBlack: GPUComputePipeline;
       mgTiny: GPUComputePipeline;
       mgProlongPP: GPUComputePipeline;
-      mgResidual: GPUComputePipeline;
       mgRestrict: GPUComputePipeline;
       mgProlong: GPUComputePipeline;
       clearOne: GPUComputePipeline;
@@ -575,10 +574,6 @@ export class FluidSim3D {
           label: 'gradient-3d',
           entries: [sampled3d(0), sampledScalar3d(1), storage3d(4, 'rgba16float')],
         }),
-        mgRestrict: device.createBindGroupLayout({
-          label: 'mg-restrict-3d',
-          entries: [sampledScalar3d(0), storage3d(3, 'r32float')],
-        }),
         mgProlong: device.createBindGroupLayout({
           label: 'mg-prolong-3d',
           entries: [sampledScalar3d(0), storageRW3d(5, 'r32float')],
@@ -733,7 +728,7 @@ export class FluidSim3D {
         }),
         compute: { module: embersDrawM, entryPoint: 'occlude' },
       });
-      const [velPredict, velCorrect, forces, curlPipe, blurCurlPipe, confine, denPredict, denCorrect, divergencePipe, jacobi, gradient, mgSmoothRed, mgSmoothBlack, mgTinyPipe, mgResidual, mgRestrictPipe, mgProlongPipe, mgProlongPPPipe, clearOne, clearRgba, clearScalar, render, glowInjectPipe, glowBlurPipe, bloomDownPipe, bloomHPipe, bloomVPipe, presentPipe, gizmoPipe, embersUpdatePipe, embersDrawPipe] =
+      const [velPredict, velCorrect, forces, curlPipe, blurCurlPipe, confine, denPredict, denCorrect, divergencePipe, jacobi, gradient, mgSmoothRed, mgSmoothBlack, mgTinyPipe, mgRestrictPipe, mgProlongPipe, mgProlongPPPipe, clearOne, clearRgba, clearScalar, render, glowInjectPipe, glowBlurPipe, bloomDownPipe, bloomHPipe, bloomVPipe, presentPipe, gizmoPipe, embersUpdatePipe, embersDrawPipe] =
         await Promise.all([
           compute('vel-predict-3d', L.velPredict, advectVelM, 'predict'),
           compute('vel-correct-3d', L.velCorrect, advectVelM, 'correct'),
@@ -749,8 +744,7 @@ export class FluidSim3D {
           compute('mg-smooth-red-3d', L.mgSmoothRB, multigridM, 'smooth_red', anchor),
           compute('mg-smooth-black-3d', L.mgSmoothRB, multigridM, 'smooth_black', anchor),
           compute('mg-tiny-3d', L.mgTiny, multigridM, 'smooth_tiny', anchor),
-          compute('mg-residual-3d', L.jacobi, multigridM, 'residual'),
-          compute('mg-restrict-3d', L.mgRestrict, multigridM, 'restrict_rhs'),
+          compute('mg-restrict-3d', L.jacobi, multigridM, 'restrict_residual'),
           compute('mg-prolong-3d', L.mgProlong, multigridM, 'prolong_add'),
           compute('mg-prolong-pp-3d', L.mgProlongPP, multigridM, 'prolong_add_pp'),
           device.createComputePipelineAsync({
@@ -1102,28 +1096,23 @@ export class FluidSim3D {
       };
 
       // Pyramide multigrid : niveau 0 = pression/divergence principales, puis
-      // paires de pression + rhs + résidu propres jusqu'à 8³.
+      // paires de pression + rhs propres jusqu'au niveau le plus grossier. (Le
+      // RÉSIDU n'a plus de texture : il est évalué à la volée par la passe de
+      // restriction fusionnée — 260 Mo de VRAM rendus à 384³.)
       interface LevelTex {
         size: number;
         pressure: Pair<GPUTextureView>;
         rhs: GPUTextureView;
-        residual: GPUTextureView;
       }
       const tiers: LevelTex[] = [];
       for (let size = GRID3, l = 0; size >= MG3_COARSEST_SIZE; size /= 2, l++) {
         if (l === 0) {
-          tiers.push({
-            size,
-            pressure,
-            rhs: divergence,
-            residual: tex3d(device, 'mg3-residual-0', 'r32float', size),
-          });
+          tiers.push({ size, pressure, rhs: divergence });
         } else {
           tiers.push({
             size,
             pressure: pair((i) => tex3d(device, `mg3-press-${l}-${i}`, 'r32float', size)),
             rhs: tex3d(device, `mg3-rhs-${l}`, 'r32float', size),
-            residual: tex3d(device, `mg3-residual-${l}`, 'r32float', size),
           });
         }
       }
@@ -1163,31 +1152,20 @@ export class FluidSim3D {
               ),
             ),
           ),
-          residualBind:
+          restrictBind:
             next === null
               ? null
               : pair((p) =>
                   device.createBindGroup({
-                    label: `mg3-residual-l${l}-p${p}`,
+                    label: `mg3-restrict-l${l}-p${p}`,
                     layout: L.jacobi,
                     entries: [
                       { binding: 1, resource: t.pressure[p] },
                       { binding: 2, resource: t.rhs },
-                      { binding: 3, resource: t.residual },
+                      { binding: 3, resource: next.rhs },
                     ],
                   }),
                 ),
-          restrictBind:
-            next === null
-              ? null
-              : device.createBindGroup({
-                  label: `mg3-restrict-l${l}`,
-                  layout: L.mgRestrict,
-                  entries: [
-                    { binding: 0, resource: t.residual },
-                    { binding: 3, resource: next.rhs },
-                  ],
-                }),
           prolongBind:
             next === null
               ? null
@@ -1271,7 +1249,6 @@ export class FluidSim3D {
           mgSmoothRed,
           mgSmoothBlack,
           mgTiny: mgTinyPipe,
-          mgResidual,
           mgRestrict: mgRestrictPipe,
           mgProlong: mgProlongPipe,
           mgProlongPP: mgProlongPPPipe,
@@ -1460,7 +1437,7 @@ export class FluidSim3D {
         if (input.multigrid) {
           const cycles = Math.max(1, Math.round(input.vcycles));
           for (let k = 0; k < cycles; k++) {
-            this.encodeVCycle3(encoder);
+            this.encodeVCycle3(encoder, k > 0);
           }
         } else {
           cp = encoder.beginComputePass({ label: 'sim3d-jacobi' });
@@ -2188,7 +2165,7 @@ export class FluidSim3D {
    * lissage long ; remontée : prolongation trilinéaire ajoutée EN PLACE +
    * post-lissage. Aucun ping-pong : voir le commentaire dans le corps.
    */
-  private encodeVCycle3(encoder: GPUCommandEncoder): void {
+  private encodeVCycle3(encoder: GPUCommandEncoder, skipFinePre = false): void {
     const levels = this.mgLevels;
     const last = levels.length - 1;
     // Le cycle gère ses propres passes compute, le segment minuscule isolé
@@ -2288,15 +2265,18 @@ export class FluidSim3D {
       }
       if (!skip.includes('smooth')) {
         // Au niveau le plus grossier : SOR — il résout, il ne lisse pas.
-        sweeps(lev, l, l === lastEff ? MG3_COARSE_SMOOTH : MG3_PRE_SMOOTH, l === lastEff);
+        // `skipFinePre` (cycles enchaînés) : le pré-lissage du niveau 0 d'un
+        // cycle suivant relisse ce que le post du cycle précédent vient de
+        // lisser, au même second membre — un balayage fin économisé.
+        if (!(skipFinePre && l === 0)) {
+          sweeps(lev, l, l === lastEff ? MG3_COARSE_SMOOTH : MG3_PRE_SMOOTH, l === lastEff);
+        }
       }
       if (l < lastEff) {
+        // Résidu + restriction FUSIONNÉS : une passe à la taille grossière.
         const coarse = levels[l + 1]!;
-        cp.setPipeline(this.pipelines.mgResidual);
-        cp.setBindGroup(1, lev.residualBind![l === 0 ? p0 : 0]);
-        cp.dispatchWorkgroups(lev.dispatch, lev.dispatchY, lev.dispatch);
         cp.setPipeline(this.pipelines.mgRestrict);
-        cp.setBindGroup(1, lev.restrictBind!);
+        cp.setBindGroup(1, lev.restrictBind![l === 0 ? p0 : 0]);
         cp.dispatchWorkgroups(coarse.dispatch, coarse.dispatchY, coarse.dispatch);
       }
     }

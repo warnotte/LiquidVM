@@ -209,33 +209,28 @@ fn smooth_black(@builtin(global_invocation_id) gid: vec3u) {
   rb_smooth(gid, 1);
 }
 
+// RÉSIDU + RESTRICTION EN UNE PASSE, dispatchée à la taille GROSSIÈRE. Le
+// résidu fin n'était calculé QUE pour être restreint : l'écrire dans une
+// texture pleine grille (226 Mo à 384³) pour la relire aussitôt coûtait deux
+// allers-retours mémoire par cycle — mesuré au profileur, la pression pesait
+// 17,7 ms sur 44. Ici chaque cellule grossière évalue le résidu de ses huit
+// enfants à la volée : mêmes lectures de pression, zéro texture intermédiaire.
+// Même opérateur, même facteur h² : Σ(8 résidus)/8 × 4 = Σ × 0,5.
 @compute @workgroup_size(4, 4, 4)
-fn residual(@builtin(global_invocation_id) gid: vec3u) {
-  let n = vec3i(textureDimensions(p_src));
+fn restrict_residual(@builtin(global_invocation_id) gid: vec3u) {
+  let nc = vec3i(textureDimensions(scalar_dst));
   let c = vec3i(gid);
-  if (any(c >= n)) {
+  if (any(c >= nc)) {
     return;
   }
-  let ap = neighbor_sum(c, n) - 6.0 * p_at(c, n);
-  let r = textureLoad(rhs, c, 0).x - ap;
-  textureStore(scalar_dst, gid, vec4f(r, 0.0, 0.0, 0.0));
-}
-
-// Résidu fin → second membre grossier : moyenne des 8 enfants × 4 (facteur h²).
-@compute @workgroup_size(4, 4, 4)
-fn restrict_rhs(@builtin(global_invocation_id) gid: vec3u) {
-  let n = vec3i(textureDimensions(scalar_dst));
-  let c = vec3i(gid);
-  if (any(c >= n)) {
-    return;
-  }
-  let f = c * 2;
-  var s = 0.0;
+  let nf = vec3i(textureDimensions(p_src));
+  var sum = 0.0;
   for (var i = 0; i < 8; i++) {
-    let o = vec3i(i & 1, (i >> 1) & 1, (i >> 2) & 1);
-    s += textureLoad(src_tex, f + o, 0).x;
+    let f = c * 2 + vec3i(i & 1, (i >> 1) & 1, (i >> 2) & 1);
+    let ap = neighbor_sum(f, nf) - 6.0 * p_at(f, nf);
+    sum += textureLoad(rhs, f, 0).x - ap;
   }
-  textureStore(scalar_dst, gid, vec4f(s * 0.5, 0.0, 0.0, 0.0)); // (s/8)·4
+  textureStore(scalar_dst, gid, vec4f(sum * 0.5, 0.0, 0.0, 0.0));
 }
 
 // Correction grossière → niveau fin : interpolation trilinéaire manuelle
