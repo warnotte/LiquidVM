@@ -8,7 +8,6 @@
 
 import advectVelWGSL from './shaders3d/advect_velocity3d.wgsl?raw';
 import advectDenWGSL from './shaders3d/advect_density3d.wgsl?raw';
-import forcesWGSL from './shaders3d/forces3d.wgsl?raw';
 import vorticityWGSL from './shaders3d/vorticity3d.wgsl?raw';
 import projectWGSL from './shaders3d/project3d.wgsl?raw';
 import multigridWGSL from './shaders3d/multigrid3d.wgsl?raw';
@@ -319,7 +318,6 @@ export class FluidSim3D {
     private readonly pipelines: {
       velPredict: GPUComputePipeline;
       velCorrect: GPUComputePipeline;
-      forces: GPUComputePipeline;
       curl: GPUComputePipeline;
       blurCurl: GPUComputePipeline;
       confine: GPUComputePipeline;
@@ -351,8 +349,7 @@ export class FluidSim3D {
     },
     private readonly binds: {
       velPredict: Pair<GPUBindGroup>; // [vel] → scratch
-      velCorrect: Pair<GPUBindGroup>; // [vel] (+scratch) → flip(vel)
-      forces: Pair<Pair<GPUBindGroup>>; // [vel][den]
+      velCorrect: Pair<Pair<GPUBindGroup>>; // [vel][den] (+scratch) → flip(vel) — forces fusionnées
       curl: Pair<GPUBindGroup>; // [vel] → curl
       blurCurl: GPUBindGroup; // curl → velScratch (|ω| flouté, ω passthrough)
       confine: Pair<GPUBindGroup>; // [vel] (+scratch flouté) → flip(vel)
@@ -518,11 +515,7 @@ export class FluidSim3D {
         }),
         velCorrect: device.createBindGroupLayout({
           label: 'vel-correct-3d',
-          entries: [sampled3d(0), sampled3d(1), storage3d(2, 'rgba16float')],
-        }),
-        forces: device.createBindGroupLayout({
-          label: 'forces-3d',
-          entries: [sampled3d(0), sampled3d(1), storage3d(2, 'rgba16float')],
+          entries: [sampled3d(0), sampled3d(1), storage3d(2, 'rgba16float'), sampled3d(3)],
         }),
         curl: device.createBindGroupLayout({
           label: 'curl-3d',
@@ -659,11 +652,10 @@ export class FluidSim3D {
         }),
       };
 
-      const [advectVelM, advectDenM, forcesM, vorticityM, projectM, raymarchM, glowM, postM, clearM] =
+      const [advectVelM, advectDenM, vorticityM, projectM, raymarchM, glowM, postM, clearM] =
         await Promise.all([
           createShaderModule(device, 'advect_velocity3d.wgsl', advectVelWGSL),
           createShaderModule(device, 'advect_density3d.wgsl', advectDenWGSL),
-          createShaderModule(device, 'forces3d.wgsl', forcesWGSL),
           createShaderModule(device, 'vorticity3d.wgsl', vorticityWGSL),
           createShaderModule(device, 'project3d.wgsl', projectWGSL),
           createShaderModule(device, 'raymarch.wgsl', raymarchWGSL),
@@ -728,11 +720,10 @@ export class FluidSim3D {
         }),
         compute: { module: embersDrawM, entryPoint: 'occlude' },
       });
-      const [velPredict, velCorrect, forces, curlPipe, blurCurlPipe, confine, denPredict, denCorrect, divergencePipe, jacobi, gradient, mgSmoothRed, mgSmoothBlack, mgTinyPipe, mgRestrictPipe, mgProlongPipe, mgProlongPPPipe, clearOne, clearRgba, clearScalar, render, glowInjectPipe, glowBlurPipe, bloomDownPipe, bloomHPipe, bloomVPipe, presentPipe, gizmoPipe, embersUpdatePipe, embersDrawPipe] =
+      const [velPredict, velCorrect, curlPipe, blurCurlPipe, confine, denPredict, denCorrect, divergencePipe, jacobi, gradient, mgSmoothRed, mgSmoothBlack, mgTinyPipe, mgRestrictPipe, mgProlongPipe, mgProlongPPPipe, clearOne, clearRgba, clearScalar, render, glowInjectPipe, glowBlurPipe, bloomDownPipe, bloomHPipe, bloomVPipe, presentPipe, gizmoPipe, embersUpdatePipe, embersDrawPipe] =
         await Promise.all([
           compute('vel-predict-3d', L.velPredict, advectVelM, 'predict'),
           compute('vel-correct-3d', L.velCorrect, advectVelM, 'correct'),
-          compute('forces-3d', L.forces, forcesM, 'main'),
           compute('curl-3d', L.curl, vorticityM, 'curl'),
           compute('blur-curl-3d', L.curl, vorticityM, 'blur_curl'),
           compute('confine-3d', L.confine, vorticityM, 'confine'),
@@ -850,25 +841,15 @@ export class FluidSim3D {
           }),
         ),
         velCorrect: pair((v) =>
-          device.createBindGroup({
-            label: `vel-correct-3d-${v}`,
-            layout: L.velCorrect,
-            entries: [
-              { binding: 0, resource: velocity[v] },
-              { binding: 1, resource: velScratch },
-              { binding: 2, resource: velocity[flip(v)] },
-            ],
-          }),
-        ),
-        forces: pair((v) =>
           pair((d) =>
             device.createBindGroup({
-              label: `forces-3d-v${v}-d${d}`,
-              layout: L.forces,
+              label: `vel-correct-3d-v${v}-d${d}`,
+              layout: L.velCorrect,
               entries: [
                 { binding: 0, resource: velocity[v] },
-                { binding: 1, resource: density[d] },
+                { binding: 1, resource: velScratch },
                 { binding: 2, resource: velocity[flip(v)] },
+                { binding: 3, resource: density[d] },
               ],
             }),
           ),
@@ -1237,7 +1218,6 @@ export class FluidSim3D {
         {
           velPredict,
           velCorrect,
-          forces,
           curl: curlPipe,
           blurCurl: blurCurlPipe,
           confine,
@@ -1396,13 +1376,11 @@ export class FluidSim3D {
         cp.setPipeline(this.pipelines.velPredict);
         cp.setBindGroup(1, this.binds.velPredict[this.velIdx]);
         cp.dispatchWorkgroups(n, ny, n);
+        // Le correcteur porte AUSSI les forces (fusion 2026-08-28) : la passe
+        // séparée relisait et réécrivait la vitesse entière pour des termes
+        // locaux — un aller-retour de 450 Mo économisé à 384³.
         cp.setPipeline(this.pipelines.velCorrect);
-        cp.setBindGroup(1, this.binds.velCorrect[this.velIdx]);
-        cp.dispatchWorkgroups(n, ny, n);
-        this.velIdx = flip(this.velIdx);
-
-        cp.setPipeline(this.pipelines.forces);
-        cp.setBindGroup(1, this.binds.forces[this.velIdx][this.denIdx]);
+        cp.setBindGroup(1, this.binds.velCorrect[this.velIdx][this.denIdx]);
         cp.dispatchWorkgroups(n, ny, n);
         this.velIdx = flip(this.velIdx);
 

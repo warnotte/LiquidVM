@@ -980,8 +980,16 @@ VRAIE table à 384³/défaut : pression 17,7 ms · amont (advection vitesse + fo
 260 Mo de VRAM rendus — et pré-lissage fin des cycles enchaînés sauté) :
 17,7 → 13,5 ms, total 44,0 → 39,2, ~25 FPS au défaut, 27 FPS mesurés PENDANT une
 explosion de spectacle (captures REVE-384-*). À 512³ : 11 FPS (pression 33,
-amont 32 — la table ?profile y est encore plus parlante). La cible suivante est
-l'advection MacCormack de la vitesse (le gros de l'amont, 13,8 ms à 384³). Se
+amont 32 — la table ?profile y est encore plus parlante). Advection vitesse ATTAQUÉE
+(même soir) : forces FUSIONNÉES dans le correcteur MacCormack (termes locaux —
+la passe séparée payait un aller-retour vitesse de 450 Mo, forces3d.wgsl
+supprimé) et les traces avant/arrière d'une même face partagent leur première
+évaluation de vitesse (même valeur dans les deux formules RK2) : amont
+13,8 → 12,5 ms, résultat identique à la réassociation flottante près, les trois
+jauges re-passées. Le solde de la frame à 384³ : pression 13,7 · amont 12,5 ·
+aval 7,9 · divergence 2,0 · raymarch 2,8 ≈ 39 ms. Pour aller plus bas il faudra
+du STRUCTUREL (advection à échantillons partagés entre faces — quality gate
+serré —, tuiles creuses, ou accepter ~25 FPS comme régime de croisière 384³). Se
 souvenir : mesurer au PROFILEUR, plus aux toggles ; les gains de rendu se jugent
 sur une scène DENSE (le panache par défaut a trop peu de pas occupés)
 · qualité du confinement de vorticité · test smartphone (1024², limites WebGPU

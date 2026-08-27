@@ -33,6 +33,10 @@ struct Params {
   // x: bande LATÉRALE (voxels, 0 = parois closes), y: sa force,
   // z: bande de PLAFOND, w: sa force. Deux réglages parce que deux rôles.
   open_box: vec4f,
+  dust: vec4f,
+  // STRATIFICATION : x = chaleur gagnée par l'air ambiant entre l'altitude de
+  // base et le plafond, y = cette altitude de base (voxels).
+  strat: vec4f,
 }
 
 // BANDE ÉPONGE (« ciel ouvert ») — la boîte 3D est close de partout (Neumann par
@@ -104,6 +108,100 @@ fn n_sizef() -> vec3f {
 @group(1) @binding(0) var vel_src: texture_3d<f32>;
 @group(1) @binding(1) var aux: texture_3d<f32>;
 @group(1) @binding(2) var vel_dst: texture_storage_3d<rgba16float, write>;
+
+// Densités pour les FORCES (fusionnées dans le correcteur — voir plus bas).
+@group(1) @binding(3) var den_src: texture_3d<f32>;
+
+fn ambient_heat(alt: f32) -> f32 {
+  if (P.strat.x <= 0.0) {
+    return 0.0;
+  }
+  let top = n_sizef().y;
+  return P.strat.x * clamp((alt - P.strat.y) / max(top - P.strat.y, 1.0), 0.0, 1.0);
+}
+
+fn field_a(i: u32) -> vec4f {
+  switch i {
+    case 0u: { return P.field0_a; }
+    case 1u: { return P.field1_a; }
+    default: { return P.field2_a; }
+  }
+}
+
+fn field_b(i: u32) -> vec4f {
+  switch i {
+    case 0u: { return P.field0_b; }
+    case 1u: { return P.field1_b; }
+    default: { return P.field2_b; }
+  }
+}
+
+fn field_type(i: u32) -> f32 {
+  switch i {
+    case 0u: { return P.field_meta.y; }
+    case 1u: { return P.field_meta.z; }
+    default: { return P.field_meta.w; }
+  }
+}
+
+fn emitter_pos(i: u32) -> vec4f {
+  switch i {
+    case 0u: { return P.emitter; }
+    case 1u: { return P.emitter1; }
+    case 2u: { return P.emitter2; }
+    default: { return P.emitter3; }
+  }
+}
+
+fn density_at(p: vec3f) -> vec4f {
+  // Les densités sont aux centres des cellules : échantillonnage direct.
+  return textureSampleLevel(den_src, lin, p * inv_n(), 0.0);
+}
+
+fn emitter_gauss(p: vec3f) -> f32 {
+  var g = 0.0;
+  let count = u32(P.emit_meta.x + 0.5);
+  for (var i = 0u; i < count; i++) {
+    let e = emitter_pos(i);
+    let d = distance(p, e.xyz) / max(e.w, 1e-3);
+    g += exp(-d * d * 3.0);
+  }
+  return min(g, 1.5);
+}
+
+fn blow_gauss(p: vec3f) -> f32 {
+  if (P.blow_dir.w < 0.5) {
+    return 0.0;
+  }
+  let v = p - P.blow_origin.xyz;
+  let t = dot(v, P.blow_dir.xyz);
+  if (t < 0.0) {
+    return 0.0;
+  }
+  let d = distance(p, P.blow_origin.xyz + P.blow_dir.xyz * t) / max(P.blow_origin.w, 1e-3);
+  return exp(-d * d * 2.0);
+}
+
+fn field_force(p: vec3f, matter: f32) -> vec3f {
+  var f = vec3f(0.0);
+  let count = u32(P.field_meta.x);
+  for (var i = 0u; i < count; i++) {
+    let a = field_a(i);
+    let b = field_b(i);
+    let rel = p - a.xyz;
+    let radius = max(a.w, 1e-4);
+    let d = length(rel) / radius;
+    let fall = exp(-d * d * 2.0);
+    if (fall > 1e-3) {
+      if (field_type(i) < 0.5) {
+        f += cross(b.xyz, rel) / radius * b.w * fall;
+      } else {
+        f += b.xyz * b.w * fall * matter;
+      }
+    }
+  }
+  return f;
+}
 
 const OFF_U = vec3f(0.5, 0.0, 0.0);
 const OFF_V = vec3f(0.0, 0.5, 0.0);
@@ -191,6 +289,7 @@ fn correct(@builtin(global_invocation_id) gid: vec3u) {
     return;
   }
   let dt = P.misc.x;
+  let t = P.misc.y;
   let decay = 1.0 / (1.0 + P.diss.x * dt);
   let fc = vec3f(c);
   let orig = textureLoad(vel_src, c, 0);
@@ -200,13 +299,19 @@ fn correct(@builtin(global_invocation_id) gid: vec3u) {
   let pv = fc + vec3f(0.5, 0.0, 0.5);
   let pw = fc + vec3f(0.5, 0.5, 0.0);
 
-  // φ' = φ̂ + ½(φ − φ̃), clampé au stencil du point rétro-advecté (traces RK2).
-  var u = hat.x + 0.5 * (orig.x - aux_u(forwardtrace(pu, dt)));
-  var v = hat.y + 0.5 * (orig.y - aux_v(forwardtrace(pv, dt)));
-  var w = hat.z + 0.5 * (orig.z - aux_w(forwardtrace(pw, dt)));
-  let mu = stencil_minmax(backtrace(pu, dt), OFF_U, 0);
-  let mv = stencil_minmax(backtrace(pv, dt), OFF_V, 1);
-  let mw = stencil_minmax(backtrace(pw, dt), OFF_W, 2);
+  // φ' = φ̂ + ½(φ − φ̃), clampé au stencil du point rétro-advecté. Les traces
+  // avant et arrière d'une même face PARTAGENT leur première évaluation de
+  // vitesse (v1 = velocity_at(p)) : c'est le même terme dans les deux formules
+  // RK2 — le recalculer coûtait trois échantillons par face pour rien.
+  let vu = velocity_at(pu);
+  let vv = velocity_at(pv);
+  let vw = velocity_at(pw);
+  var u = hat.x + 0.5 * (orig.x - aux_u(pu + dt * velocity_at(pu + 0.5 * dt * vu)));
+  var v = hat.y + 0.5 * (orig.y - aux_v(pv + dt * velocity_at(pv + 0.5 * dt * vv)));
+  var w = hat.z + 0.5 * (orig.z - aux_w(pw + dt * velocity_at(pw + 0.5 * dt * vw)));
+  let mu = stencil_minmax(pu - dt * velocity_at(pu - 0.5 * dt * vu), OFF_U, 0);
+  let mv = stencil_minmax(pv - dt * velocity_at(pv - 0.5 * dt * vv), OFF_V, 1);
+  let mw = stencil_minmax(pw - dt * velocity_at(pw - 0.5 * dt * vw), OFF_W, 2);
   // Éponge : chaque composante est amortie à SA position MAC. Amortir la vitesse
   // ici introduit de la divergence, que la projection de la frame suivante
   // reprend — c'est le prix, et il est faible devant le jet qui longeait le
@@ -214,6 +319,49 @@ fn correct(@builtin(global_invocation_id) gid: vec3u) {
   u = clamp(u, mu.x, mu.y) * decay * sponge3(pu, dt);
   v = clamp(v, mv.x, mv.y) * decay * sponge3(pv, dt);
   w = clamp(w, mw.x, mw.y) * decay * sponge3(pw, dt);
+
+  // FORCES, fusionnées ici (2026-08-28) : tous les termes sont locaux à la
+  // cellule, et la passe séparée relisait puis réécrivait la vitesse entière
+  // (un aller-retour de 450 Mo à 384³) pour les ajouter. Même ordre qu'avant :
+  // advection puis forces puis conditions de bord — le résultat est identique.
+
+  // Boussinesq à deux voies : la chaleur pousse vers le haut, le poids propre
+  // des matières tire vers le bas. La poussée SATURE au plafond des flammes et
+  // ne compte que l'EXCÈS de chaleur sur l'air ambiant à cette altitude.
+  let dn = density_at(pv);
+  let lift = max(min(dn.w, 2.0) - ambient_heat(pv.y), 0.0);
+  v += dt * (P.diss.w * lift - dot(P.ink_weights.xyz, dn.xyz));
+
+  // VENT horizontal, différentiel (proportionnel à la matière — un vent
+  // uniforme serait annulé par la projection), au cap qui oscille.
+  if (P.wind.x > 0.0) {
+    let ang = P.wind.w + P.wind.y * sin(t * 6.28318 / max(P.wind.z, 0.25));
+    let du = density_at(pu);
+    let dw = density_at(pw);
+    u += dt * P.wind.x * cos(ang) * (du.x + du.y + du.z);
+    w += dt * P.wind.x * sin(ang) * (dw.x + dw.y + dw.z);
+  }
+
+  // CHAMPS DE FORCE posés dans la scène, évalués sur chaque face MAC.
+  if (P.field_meta.x > 0.5) {
+    let mfu = density_at(pu);
+    let mfv = density_at(pv);
+    let mfw = density_at(pw);
+    u += dt * field_force(pu, mfu.x + mfu.y + mfu.z).x;
+    v += dt * field_force(pv, mfv.x + mfv.y + mfv.z).y;
+    w += dt * field_force(pw, mfw.x + mfw.y + mfw.z).z;
+  }
+
+  // Impulsion de l'émetteur : jet montant + balancement latéral.
+  let lat = P.emit_vals.w * vec2f(sin(t * 2.9 + 1.3), cos(t * 2.3));
+  u += dt * emitter_gauss(pu) * lat.x;
+  v += dt * emitter_gauss(pv) * P.emit_vals.z;
+  w += dt * emitter_gauss(pw) * lat.y;
+
+  // Souffle du pointeur, par face.
+  u += dt * blow_gauss(pu) * P.blow_force.x;
+  v += dt * blow_gauss(pv) * P.blow_force.y;
+  w += dt * blow_gauss(pw) * P.blow_force.z;
 
   // Sphère-obstacle MOBILE : les faces bloquées portent SA vitesse (la boule
   // brasse le fluide) ; les parois de la boîte restent immobiles.
