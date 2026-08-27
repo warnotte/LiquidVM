@@ -951,6 +951,13 @@ budget : la fumée du feu voyant la surface de l'eau comme un obstacle mobile
 
 ## Pistes suivantes
 
+La DÉMO (D) est au mieux de ce que la boîte close à 256³ sait donner (montage en
+cuts, rendu verrouillé, journal des trois causes dans le commit c1adbd1) —
+verdict de Renaud : « pas super super », chantier ARRÊTÉ le 2026-08-28. Ne pas y
+retoucher sans une capacité moteur NOUVELLE qui change la donne (candidates :
+plusieurs charges simultanées — le slot d'explosion est unique —, ou 384³
+confortable, où tout est plus beau).
+
 Le chantier de l'EAU est **CLOS** (décision du 2026-08-25) : `eau.html` reste en
 ligne tel quel, J5 et J6 de PLAN-EAU ne seront pas faits, et l'articulation des
 modes décrite plus haut tombe avec — sa coquille 3D commune n'avait de sens que
