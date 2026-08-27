@@ -376,6 +376,13 @@ export class FluidSim3D {
       clearsScalar: readonly GPUBindGroup[];
     },
     private readonly mgLevels: readonly MGLevel3[],
+    /** Profil GPU par passe (?profile + feature timestamp-query) — null sinon. */
+    private readonly prof: {
+      readonly qs: GPUQuerySet;
+      readonly resolve: GPUBuffer;
+      readonly read: readonly GPUBuffer[];
+      readonly busy: boolean[];
+    } | null,
     private readonly denTextures: Pair<GPUTexture>,
     private readonly post: {
       readonly post2dLayout: GPUBindGroupLayout;
@@ -391,6 +398,10 @@ export class FluidSim3D {
   ) {
   }
 
+  /** Profil GPU (?profile) : ms lissées par section, lisible via __sim3d. */
+  readonly profileMs: Record<string, number> = {};
+  private readonly profWritten = new Array<boolean>(8).fill(false);
+
   /** Index de pression courant par niveau multigrid (tableau réutilisé, zéro alloc). */
 
   /** Cible HDR (raymarch → bloom → présentation) et bind groups qui la
@@ -403,7 +414,11 @@ export class FluidSim3D {
   private bloomDownBind: GPUBindGroup | null = null;
   private presentBind: GPUBindGroup | null = null;
 
-  static async create(device: GPUDevice, targetFormat: GPUTextureFormat): Promise<FluidSim3D> {
+  static async create(
+    device: GPUDevice,
+    targetFormat: GPUTextureFormat,
+    profile = false,
+  ): Promise<FluidSim3D> {
     // Les grosses grilles échouent en OUT-OF-MEMORY, pas en validation — sans ce
     // scope, l'échec est silencieux (écran noir, HUD à 60 FPS). Ici : erreur claire.
     device.pushErrorScope('out-of-memory');
@@ -1209,6 +1224,33 @@ export class FluidSim3D {
         };
       });
 
+      // PROFIL GPU PAR PASSE (?profile) : timestamps matériels aux bornes des
+      // passes — c'est l'instrument du chantier de perf, et la SEULE mesure qui
+      // ne passe pas par les paliers rAF/vsync. Coût nul sans le flag (aucun
+      // QuerySet créé) ; le readback est un instrument de dev assumé, hors du
+      // contrat zéro-readback de la boucle (même statut que l'export VDB).
+      const prof =
+        profile && device.features.has('timestamp-query')
+          ? {
+              qs: device.createQuerySet({ label: 'prof3d', type: 'timestamp', count: 16 }),
+              resolve: device.createBuffer({
+                label: 'prof3d-resolve',
+                size: 16 * 8,
+                usage: GPUBufferUsage.QUERY_RESOLVE | GPUBufferUsage.COPY_SRC,
+              }),
+              read: [0, 1].map((i) =>
+                device.createBuffer({
+                  label: `prof3d-read-${i}`,
+                  size: 16 * 8,
+                  usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+                }),
+              ),
+              busy: [false, false],
+            }
+          : null;
+      if (profile && prof === null) {
+        console.warn('?profile demandé mais timestamp-query absent de ce GPU.');
+      }
       return new FluidSim3D(
         device,
         simUniforms,
@@ -1250,6 +1292,7 @@ export class FluidSim3D {
         },
         binds,
         mgLevels,
+        prof,
         denTextures,
         {
           post2dLayout: L.post2d,
@@ -1328,8 +1371,25 @@ export class FluidSim3D {
     }
 
     const encoder = this.device.createCommandEncoder({ label: 'frame3d' });
+    // Bornes de section pour le profil GPU (?profile) : indices (2i, 2i+1) du
+    // QuerySet. Sections : 0 amont (advection vitesse, forces, vorticité) ·
+    // 1 divergence · 2 aval (gradient, densités+espèces) · 3 lueur · 4 occlusion
+    // braises · 5 raymarch · 6 bloom · 7 présentation. La PRESSION se déduit du
+    // creux entre la fin de 1 et le début de 2 (le multigrid a ses passes).
+    this.profWritten.fill(false);
+    const tw = (i: number): GPUComputePassTimestampWrites | undefined => {
+      if (this.prof === null) {
+        return undefined;
+      }
+      this.profWritten[i] = true;
+      return {
+        querySet: this.prof.qs,
+        beginningOfPassWriteIndex: 2 * i,
+        endOfPassWriteIndex: 2 * i + 1,
+      };
+    };
     if (running || input.reset) {
-      let cp = encoder.beginComputePass({ label: 'sim3d' });
+      let cp = encoder.beginComputePass({ label: 'sim3d-amont', timestampWrites: tw(0) });
       const n = DISPATCH3;
       const ny = DISPATCH3Y;
       // Initialisation / reset des espèces : O₂ = 1 partout.
@@ -1387,32 +1447,35 @@ export class FluidSim3D {
           this.velIdx = flip(this.velIdx);
         }
 
+        cp.end();
+        cp = encoder.beginComputePass({ label: 'sim3d-div', timestampWrites: tw(1) });
+        cp.setBindGroup(0, this.group0);
         cp.setPipeline(this.pipelines.divergence);
         cp.setBindGroup(1, this.binds.divergence[this.velIdx][this.denIdx][this.oxyIdx]);
         cp.dispatchWorkgroups(n, ny, n);
+        cp.end();
 
-        // Pression : V-cycles multigrid (défaut) ou Jacobi simple — warm start
-        // dans les deux cas, la pression de la frame précédente sert de départ.
+        // Pression : V-cycles multigrid (défaut, passes internes) ou Jacobi.
+        // Warm start dans les deux cas — la pression précédente sert de départ.
         if (input.multigrid) {
-          // Les V-cycles gèrent leurs PROPRES passes compute (voir le
-          // commentaire de découpe dans encodeVCycle3) : on suspend la passe
-          // sim et on la rouvre après.
-          cp.end();
           const cycles = Math.max(1, Math.round(input.vcycles));
           for (let k = 0; k < cycles; k++) {
             this.encodeVCycle3(encoder);
           }
-          cp = encoder.beginComputePass({ label: 'sim3d-suite' });
-          cp.setBindGroup(0, this.group0);
         } else {
+          cp = encoder.beginComputePass({ label: 'sim3d-jacobi' });
+          cp.setBindGroup(0, this.group0);
           cp.setPipeline(this.pipelines.jacobi);
           for (let i = 0; i < input.jacobiIterations; i++) {
             cp.setBindGroup(1, this.binds.jacobi[this.pressIdx]);
             cp.dispatchWorkgroups(n, ny, n);
             this.pressIdx = flip(this.pressIdx);
           }
+          cp.end();
         }
 
+        cp = encoder.beginComputePass({ label: 'sim3d-aval', timestampWrites: tw(2) });
+        cp.setBindGroup(0, this.group0);
         cp.setPipeline(this.pipelines.gradient);
         cp.setBindGroup(1, this.binds.gradient[this.pressIdx][this.velIdx]);
         cp.dispatchWorkgroups(n, ny, n);
@@ -1439,7 +1502,7 @@ export class FluidSim3D {
     {
       const gd = this.post.glowDispatch;
       const gdy = this.post.glowDispatchY;
-      const gp = encoder.beginComputePass({ label: 'glow3d' });
+      const gp = encoder.beginComputePass({ label: 'glow3d', timestampWrites: tw(3) });
       gp.setBindGroup(0, this.group0);
       gp.setPipeline(this.pipelines.glowInject);
       gp.setBindGroup(1, this.binds.glowInject[this.denIdx]);
@@ -1462,7 +1525,7 @@ export class FluidSim3D {
       // Occlusion des braises, par PARTICULE (voir `occlude`) — aussi en pause :
       // l'orbite de caméra change la ligne de visée, l'occlusion doit suivre.
       if (input.embersOn && input.emberStrength > 0) {
-        const op = encoder.beginComputePass({ label: 'embers-occ' });
+        const op = encoder.beginComputePass({ label: 'embers-occ', timestampWrites: tw(4) });
         op.setPipeline(this.pipelines.embersOcc);
         op.setBindGroup(0, this.binds.embersOcc[this.denIdx]);
         op.dispatchWorkgroups(EMBERS3 / 64);
@@ -1473,6 +1536,7 @@ export class FluidSim3D {
     // Raymarch → scène HDR linéaire.
     const rp = encoder.beginRenderPass({
       label: 'raymarch',
+      timestampWrites: tw(5),
       colorAttachments: [
         { view: this.hdrView!, loadOp: 'clear', storeOp: 'store', clearValue: { r: 0, g: 0, b: 0, a: 1 } },
       ],
@@ -1493,7 +1557,7 @@ export class FluidSim3D {
     {
       const bw = Math.ceil(this.post.bloomW / 8);
       const bh = Math.ceil(this.post.bloomH / 8);
-      const bp = encoder.beginComputePass({ label: 'bloom3d' });
+      const bp = encoder.beginComputePass({ label: 'bloom3d', timestampWrites: tw(6) });
       bp.setBindGroup(0, this.group0);
       bp.setPipeline(this.pipelines.bloomDown);
       bp.setBindGroup(1, this.bloomDownBind!);
@@ -1510,6 +1574,7 @@ export class FluidSim3D {
     // Présentation : HDR + bloom → canvas (tone-mapping, gamma).
     const pp = encoder.beginRenderPass({
       label: 'present',
+      timestampWrites: tw(7),
       colorAttachments: [{ view: target, loadOp: 'clear', storeOp: 'store', clearValue: { r: 0, g: 0, b: 0, a: 1 } }],
     });
     pp.setPipeline(this.pipelines.present);
@@ -1522,6 +1587,48 @@ export class FluidSim3D {
     pp.draw(GIZMO_VERTS);
     pp.end();
 
+    // Profil GPU : résoudre les timestamps et, si un buffer de lecture est
+    // libre, en copier un instantané. La lecture est asynchrone et lissée (EMA)
+    // — un instrument de dev (?profile), hors du contrat zéro-readback.
+    if (this.prof !== null) {
+      const prof = this.prof;
+      encoder.resolveQuerySet(prof.qs, 0, 16, prof.resolve, 0);
+      const free = prof.busy.indexOf(false);
+      if (free >= 0) {
+        prof.busy[free] = true;
+        encoder.copyBufferToBuffer(prof.resolve, 0, prof.read[free]!, 0, 16 * 8);
+      }
+      this.submitList[0] = encoder.finish();
+      this.device.queue.submit(this.submitList);
+      if (free >= 0) {
+        const written = [...this.profWritten];
+        void prof.read[free]!.mapAsync(GPUMapMode.READ).then(() => {
+          const q = new BigInt64Array(prof.read[free]!.getMappedRange());
+          const NOMS = ['amont', 'divergence', 'aval', 'lueur', 'occ braises', 'raymarch', 'bloom', 'présentation'];
+          const ema = (nom: string, ms: number): void => {
+            // Une résolution de timestamps peut rendre 0 (frame sautée) : ignorer.
+            if (ms <= 0 || ms > 1000) {
+              return;
+            }
+            this.profileMs[nom] = (this.profileMs[nom] ?? ms) * 0.9 + ms * 0.1;
+          };
+          for (let i = 0; i < 8; i++) {
+            if (written[i]) {
+              ema(NOMS[i]!, Number(q[2 * i + 1]! - q[2 * i]!) / 1e6);
+            }
+          }
+          if (written[1] && written[2]) {
+            ema('pression', Number(q[4]! - q[3]!) / 1e6);
+          }
+          if (written[0] && written[7]) {
+            ema('TOTAL GPU', Number(q[15]! - q[0]!) / 1e6);
+          }
+          prof.read[free]!.unmap();
+          prof.busy[free] = false;
+        });
+      }
+      return;
+    }
     this.submitList[0] = encoder.finish();
     this.device.queue.submit(this.submitList);
   }

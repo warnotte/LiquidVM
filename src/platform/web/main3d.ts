@@ -465,7 +465,9 @@ async function boot(): Promise<void> {
   resize();
   window.addEventListener('resize', resize);
 
-  const sim = await FluidSim3D.create(device, format);
+  // ?profile : timestamps GPU par passe, affichés au HUD — l'instrument du
+  // chantier de perf (voir sim3d). Coût nul sans le flag.
+  const sim = await FluidSim3D.create(device, format, urlParams.has('profile'));
 
   const input: Frame3DInput = {
     dt: 0,
@@ -1019,10 +1021,14 @@ async function boot(): Promise<void> {
         resize();
       }
       const solver = input.multigrid ? `MG ×${input.vcycles}` : `jacobi ${input.jacobiIterations} it.`;
+      const profil = Object.entries(sim.profileMs)
+        .map(([k, v]) => `${k} ${v.toFixed(1)}`)
+        .join(' · ');
       hud.innerHTML =
         `<b>LiquidVM 3D</b> · ${GRID3}³ · encre : ${INK_NAMES[input.emitInk] ?? '?'} · ${solver} · ${Math.round(fps)} FPS` +
         `${lockScale ? ' · rendu 100 % 🔒' : renderScale < 1 ? ` · rendu ${Math.round(renderScale * 100)} %` : ''}` +
         `${input.paused ? ' · ⏸ pause' : ''}${demoOn ? ' · <b>DÉMO</b> (D : reprendre la main)' : ' · D : démo'}<br>` +
+        `${profil !== '' ? `<b>GPU (ms)</b> · ${profil}<br>` : ''}` +
         '1/2/3 : encre · glisser un objet : déplacer · ses poignées : un seul axe · son bouton violet : orienter · A : + émetteur · X : supprimer · G : 💥 · M : 🍄 champignon · L : rendu 100 % · O : boule · B : braises · F : repères<br>' +
         'glisser : orbiter · clic droit : souffler · molette : zoom · Échap : désélectionner · espace : pause · R : reset · E : export .vdb';
     }

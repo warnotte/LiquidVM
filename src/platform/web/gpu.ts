@@ -40,6 +40,11 @@ export async function acquireDevice(): Promise<GpuInit> {
   //    160³ — d'où l'échec de validation qui a révélé la limite.
   const device = await adapter.requestDevice({
     label: 'liquidvm-device',
+    // timestamp-query : demandée si l'adapter l'offre — elle ne coûte rien tant
+    // qu'aucun QuerySet n'existe, et c'est elle qui permet le profil GPU par
+    // passe (?profile sur la page 3D). Les chiffres du chantier de perf sortent
+    // de là, pas d'imprécisions rAF.
+    requiredFeatures: adapter.features.has('timestamp-query') ? ['timestamp-query'] : [],
     requiredLimits: {
       maxBufferSize: adapter.limits.maxBufferSize,
       maxStorageBufferBindingSize: adapter.limits.maxStorageBufferBindingSize,

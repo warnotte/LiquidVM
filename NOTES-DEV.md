@@ -969,11 +969,16 @@ Reste, côté feu : 384³ à 60 FPS — le solveur est FAIT (rouge-noir ×2, jou
 2026-08-27) ; première passe sur le reste FAITE (2026-08-28 : vorticité en
 mi-résolution −4 ms, occlusion des braises par particule −4 ms, ombre du
 raymarch réutilisée un pas sur deux −4 ms sur scène DENSE — défaut ~21 FPS,
-fournaise 19,5 → 21,3). Encore au budget : fusionner les espèces dans le
-correcteur de densité, le confinement plein grain (3 forces MAC ≈ 21 lectures),
-l'advection MacCormack elle-même. Se souvenir : les paliers vsync écrasent les
-petits deltas — mesurer chaque poste par TOGGLE, et les gains de rendu sur une
-scène DENSE (le panache par défaut a trop peu de pas occupés pour juger)
+fournaise 19,5 → 21,3). Confinement à une évaluation et
+espèces fusionnées dans le correcteur : FAITS (~23 FPS au défaut). PROFILEUR GPU
+par passe : FAIT (?profile — timestamps matériels, table au HUD et dans
+__sim3d.profileMs ; les toggles rAF sous-estimaient la pression de moitié). La
+VRAIE table à 384³/défaut : pression 17,7 ms · amont (advection vitesse + forces
++ vorticité) 13,8 · aval (gradient + densités) 7,5 · divergence 2,0 · raymarch
+2,6 · reste ~0,3 — total 44. Les deux cibles suivantes sont donc la PRESSION
+(le 2e V-cycle coûte ~8,8 ms) et l'advection MacCormack de la vitesse. Se
+souvenir : mesurer au PROFILEUR, plus aux toggles ; les gains de rendu se jugent
+sur une scène DENSE (le panache par défaut a trop peu de pas occupés)
 · qualité du confinement de vorticité · test smartphone (1024², limites WebGPU
 mobiles).
 (« Encres colorées » a longtemps traîné ici : c'est FAIT depuis le 2026-08-21,
