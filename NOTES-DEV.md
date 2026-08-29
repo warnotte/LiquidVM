@@ -948,11 +948,24 @@ particules. Quand une limite n'apparaît qu'en WARNING console, écouter
          dehors, un autre plan du même champ de bataille) : même groupés, cinq
          impacts d'affilée finissent en dalle ; la leçon de l'acte V vaut
          dehors ;
-       · l'INVERSION (l'outil du champignon, strat 2,5/0,3) arrête les
-         colonnes aux deux tiers — c'est le plafond PLAT qui trahissait la
-         boîte. Cadence irrégulière (la régularité d'un métronome tue
-         l'artillerie), poussière à fenêtre courte mais réelle (1,6 s — c'est
-         elle qui fait « obus » et pas « pétard »).
+       · l'INVERSION (l'outil du champignon) arrête les colonnes aux deux
+         tiers — c'est le plafond PLAT qui trahissait la boîte. Cadence
+         irrégulière (la régularité d'un métronome tue l'artillerie),
+         poussière à fenêtre courte mais réelle (c'est elle qui fait « obus »
+         et pas « pétard »).
+      Second verdict de Renaud sur cette version : « de grosses explosions
+      GRASSES » à côté d'un bouquet « fin ». Le gras avait UNE cause : la
+      dissipation à 0,42 — mise là pour vider la boîte — FONDAIT les
+      filaments. La finesse du champignon n'est pas sa taille, c'est son
+      moteur de réglages : temps ralenti (la turbulence se développe sous
+      l'œil), dissipations quasi nulles, vorticité forte, suie sombre qui
+      dessine, charge PETITE devant le domaine. Le barrage repart donc de
+      TUNE_MUSHROOM tel quel et ne change que ce que six impacts imposent :
+      dissipation 0,12 (contre 0,02 — six nuages coexistent, le cut fait le
+      reste), suie 20, temps 0,6, éponges musclées, charges au calibre du
+      champignon (BOOM_MUSHROOM, amorce 130, poussière 2,2 s). Règle à
+      retenir : POUR QU'UNE EXPLOSION SOIT FINE, PARTIR DU MOTEUR DU
+      CHAMPIGNON et n'en dévier que sous contrainte mesurée.
    4. **Deux états qui fuyaient d'un acte à l'autre** : le gizmo de l'émetteur
       pilote trônait au milieu des boules de feu (repères coupés dès l'acte V,
       rendus par la boucle et la sortie) ; et après le premier tour, la boule
@@ -1090,9 +1103,38 @@ par défaut a trop peu de pas occupés).
 
 Pistes restantes, côté feu : qualité du confinement de vorticité · test
 smartphone (1024², limites WebGPU mobiles). Les charges multiples : FAITES
-(2026-08-29, entrée « CHARGES MULTIPLES » du chantier 3D) — la capacité qui
-pourrait relancer la démo existe désormais, la démo reste arrêtée tant que
-Renaud ne la relance pas.
+(2026-08-29, entrée « CHARGES MULTIPLES » du chantier 3D).
+
+**FEUX D'ARTIFICE COLORÉS — commande de Renaud (2026-08-29), les NÉCESSITÉS.**
+Le feu d'artifice aérien a échoué d'abord par la COULEUR : la lumière d'une
+explosion est du corps noir (or/orange/blanc) et sa fumée porte l'albédo des
+trois matières — il n'existe AUCUN chemin pour du vert ou du bleu
+pyrotechnique aujourd'hui. Ce qu'il faudrait, en deux étages :
+ 1. **CHARGES D'ENCRE (l'étage bon marché — 2-3 teintes fixes).** Une
+    détonation qui injecte de l'ENCRE (canaux x/y de la densité, palette
+    INK_COLORS) au lieu de fumée+carburant, avec son amorce en chaleur pour le
+    souffle. Le RENDU est déjà prêt (albédo mélangé par voxel). Nécessite : une
+    « encre de la charge » PAR SLOT — burst_b est plein (carburant/amorce/
+    poussière/graine), donc passer à 3 vec4 par charge (tampon sim 640 → 768 o)
+    — et un cas dans l'injection d'advect_density3d. Limite assumée : 2-3
+    teintes, pas une palette.
+ 2. **TEINTES ARBITRAIRES (le vrai feu d'artifice).** La grille de densité n'a
+    que 3 canaux à albédos FIXES : deux teintes différentes au même voxel sont
+    structurellement impossibles. La voie grille (2ᵉ texture de densité, ou
+    champ de teinte advecté) coûte cher et reste sale aux mélanges. La voie
+    PROBABLEMENT juste : des ÉTINCELLES COLORÉES par charge, famille des
+    braises — particules additives, occlusion par particule, la couleur vit
+    SUR la particule et pas dans la grille, mélanges propres par construction.
+    Un feu d'artifice est d'ailleurs PHYSIQUEMENT ça : des particules
+    incandescentes, pas un gaz coloré. Nécessite : un tampon d'étincelles par
+    teinte OU une teinte par particule (un float de plus dans le layout), des
+    naissances liées à la charge (position + kick radial) plutôt qu'à la
+    chaleur ambiante, et une variante de embers_draw sans corps noir (couleur
+    prescrite). La LUEUR resterait or (le volume de lueur injecte l'émission
+    corps noir) — une lueur teintée demanderait d'y injecter émission ×
+    albédo local, à juger à l'image.
+Et pour la FORME, la leçon du 2026-08-29 vaut d'avance : partir du moteur de
+réglages du champignon (fin), pas des défauts (gras).
 (« Encres colorées » a longtemps traîné ici : c'est FAIT depuis le 2026-08-21,
 commit 7cefd12 — touches 1/2/3, fumée/encre/carburant, albédo mélangé par voxel.
 La ligne datait d'avant ce commit et a survécu à une réécriture de la section.)

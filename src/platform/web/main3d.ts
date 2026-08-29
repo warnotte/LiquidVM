@@ -404,40 +404,45 @@ class DemoDriver {
     // Le barrage joue au contraire sur ce que le moteur fait le mieux.)
     // La CADENCE est IRRÉGULIÈRE — deux coups rapprochés, un temps mort : la
     // régularité d'un métronome tue l'impression d'artillerie. La poussière a
-    // une fenêtre courte mais réelle (1,6 s) : chaque impact nourrit sa
+    // une fenêtre courte mais réelle (2,2 s) : chaque impact nourrit sa
     // colonne, c'est elle qui fait « obus » et pas « pétard ».
     this.at(72, () => {
-      // Éponges MUSCLÉES et dissipation poussée : sept impacts serrés ont
-      // rempli le domaine en six secondes et la fumée accumulée dessinait un
-      // MONOLITHE aux arêtes de la boîte, plafond plat compris — la pire image
-      // possible contre un horizon ouvert (capturé). Parois franches, plafond
-      // large et doux : les colonnes vivent, leurs restes s'effacent avant de
-      // toucher les limites.
+      // Le MÊME MOTEUR DE RÉGLAGES QUE LE CHAMPIGNON — verdict de Renaud sur
+      // la première version : « de grosses explosions grasses » à côté d'un
+      // bouquet « fin ». La finesse du champignon ne vient pas de sa taille :
+      // temps ralenti (la turbulence se développe sous l'œil), dissipations
+      // quasi nulles (les filaments survivent), vorticité forte, suie sombre
+      // qui dessine. Ma dissipation à 0,42 — mise là pour vider la boîte —
+      // FONDAIT la structure : c'était ça, le gras. On repart de
+      // TUNE_MUSHROOM et on ne change que ce que SIX impacts imposent :
       this.apply({
-        emitHeat: 0,
-        emitInkRate: 0,
-        sootYield: 8,
-        inkDissipation: 0.42,
-        heatCeiling: 7,
+        ...TUNE_MUSHROOM,
+        // … une fumée qui s'efface quand même (0,12 contre 0,02 — six nuages
+        // coexistent, le cut fait le reste),
+        inkDissipation: 0.12,
+        sootYield: 20,
+        // … un temps un peu moins ralenti (le barrage doit garder du nerf),
+        timeScale: 0.6,
+        // … et les éponges MUSCLÉES du barrage : sept impacts serrés avaient
+        // dessiné un MONOLITHE aux arêtes de la boîte (capturé). Parois
+        // franches, plafond large et doux, inversion un peu plus haute que
+        // celle du champignon (les colonnes s'arrêtent aux deux tiers).
         openBand: 0.1,
         openStrength: 30,
         openCeilBand: 0.1,
         openCeilStrength: 12,
-        // INVERSION (l'outil du champignon) : les colonnes cessent de flotter
-        // aux deux tiers et s'y étalent en petites enclumes, au lieu de monter
-        // s'écraser au couvercle — c'est le plafond plat qui trahissait la
-        // boîte.
-        stratStrength: 2.5,
-        stratBase: 0.3,
+        stratBase: 0.24,
       });
       input.params.outdoor = true;
-      Object.assign(input, BOOM_DEFAULT, {
-        explosionRadius: 0.05,
-        explosionFuel: 45,
-        explosionSpark: 60,
-        dustRate: 5,
-        dustTime: 1.6,
-        dustRadius: 0.14,
+      // Charges au CALIBRE du champignon (petites — c'est aussi ça, la
+      // finesse : des détails petits devant le domaine), amorce incandescente,
+      // poussière réelle mais à fenêtre courte (2,2 s contre 5).
+      Object.assign(input, BOOM_MUSHROOM, {
+        explosionFuel: 48,
+        explosionSpark: 130,
+        dustRate: 8,
+        dustTime: 2.2,
+        dustRadius: 0.16,
       });
       input.reset = true;
       input.sphereActive = false;
