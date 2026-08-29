@@ -965,7 +965,10 @@ pour faire hériter l'eau de l'outillage du feu. La section qui la décrit reste
 comme ANALYSE (ce qui se mutualise, ce qui ne doit surtout pas fusionner), pas
 comme feuille de route.
 
-Reste, côté feu : 384³ à 60 FPS — le solveur est FAIT (rouge-noir ×2, journal du
+Le chantier PERF 384³ est **CLOS** (décision du 2026-08-29) : ~25 FPS au défaut
+(27 pendant une explosion de spectacle) est accepté comme régime de croisière —
+les 60 FPS auraient demandé de diviser la frame par 2,3, hors de portée du
+grattage. Son journal : le solveur est FAIT (rouge-noir ×2, journal du
 2026-08-27) ; première passe sur le reste FAITE (2026-08-28 : vorticité en
 mi-résolution −4 ms, occlusion des braises par particule −4 ms, ombre du
 raymarch réutilisée un pas sur deux −4 ms sur scène DENSE — défaut ~21 FPS,
@@ -987,13 +990,17 @@ supprimé) et les traces avant/arrière d'une même face partagent leur premièr
 évaluation de vitesse (même valeur dans les deux formules RK2) : amont
 13,8 → 12,5 ms, résultat identique à la réassociation flottante près, les trois
 jauges re-passées. Le solde de la frame à 384³ : pression 13,7 · amont 12,5 ·
-aval 7,9 · divergence 2,0 · raymarch 2,8 ≈ 39 ms. Pour aller plus bas il faudra
-du STRUCTUREL (advection à échantillons partagés entre faces — quality gate
-serré —, tuiles creuses, ou accepter ~25 FPS comme régime de croisière 384³). Se
-souvenir : mesurer au PROFILEUR, plus aux toggles ; les gains de rendu se jugent
-sur une scène DENSE (le panache par défaut a trop peu de pas occupés)
-· qualité du confinement de vorticité · test smartphone (1024², limites WebGPU
-mobiles).
+aval 7,9 · divergence 2,0 · raymarch 2,8 ≈ 39 ms. Rouvrir demanderait du
+STRUCTUREL — advection à échantillons partagés entre faces (quality gate
+serré), tuiles creuses, ou l'aval (7,9 ms, seul gros poste jamais fusionné) —
+et une décision explicite. Se souvenir, si réouverture : mesurer au PROFILEUR,
+plus aux toggles ; les gains de rendu se jugent sur une scène DENSE (le panache
+par défaut a trop peu de pas occupés).
+
+Pistes restantes, côté feu : qualité du confinement de vorticité · test
+smartphone (1024², limites WebGPU mobiles) · plusieurs charges simultanées (le
+slot d'explosion est unique — c'est aussi la capacité nouvelle qui pourrait
+relancer la démo).
 (« Encres colorées » a longtemps traîné ici : c'est FAIT depuis le 2026-08-21,
 commit 7cefd12 — touches 1/2/3, fumée/encre/carburant, albédo mélangé par voxel.
 La ligne datait d'avant ce commit et a survécu à une réécriture de la section.)
