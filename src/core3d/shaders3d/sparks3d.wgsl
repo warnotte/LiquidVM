@@ -20,13 +20,18 @@ struct Params {
   // L'ÉVÉNEMENT DE TIR — consommé en une frame (le patron des charges) :
   spark_a: vec4f, // xyz: centre de l'éclat (voxels), w: vitesse radiale (voxels/s)
   spark_b: vec4f, // xyz: couleur RGB prescrite, w: nombre à faire naître (0 = pas de tir)
-  spark_c: vec4f, // x: base de l'anneau, y: graine du tir, z: époque (reset), w: libre
+  spark_c: vec4f, // x: base de l'anneau, y: graine du tir, z: époque (reset), w: patron
 }
 
+// PATRONS de tir (spark_c.w à la naissance, puis encodés PAR PARTICULE dans
+// tint.w = époque × 8 + patron — deux patrons peuvent coexister en vol) :
+//  0 PIVOINE : la sphère classique — traînée moyenne, gravité douce.
+//  1 SAULE : longue retombée — vie longue, traînée lâche, gravité marquée.
+//  2 ÉCLAT : bref et nerveux — vif, vie courte, presque sans chute.
 struct Spark {
   pos: vec4f,  // xyz: voxels, w: âge (s)
   vel: vec4f,  // xyz: voxels/s, w: durée de vie (s, 0 = jamais née)
-  tint: vec4f, // xyz: couleur RGB, w: époque de naissance
+  tint: vec4f, // xyz: couleur RGB, w: époque × 8 + patron
 }
 
 @group(0) @binding(0) var<uniform> P: Params;
@@ -91,13 +96,20 @@ fn update(@builtin(global_invocation_id) gid: vec3u) {
       let dir = vec3f(rxy * cos(a), z, rxy * sin(a));
       // Vitesse étalée (0,55–1,2×) : le cœur reste dense, le front file — la
       // sphère a une épaisseur au lieu d'être une coquille.
-      let speed = P.spark_a.w * (0.55 + 0.65 * rand01(seed ^ 0x85ebca6bu));
+      var speed = P.spark_a.w * (0.55 + 0.65 * rand01(seed ^ 0x85ebca6bu));
+      var life = 1.4 + 1.2 * rand01(seed ^ 0xc2b2ae35u);
+      let patt = u32(P.spark_c.w + 0.5);
+      if (patt == 1u) { // saule : vie longue, départ un peu plus doux
+        life = 2.6 + 1.4 * rand01(seed ^ 0xc2b2ae35u);
+        speed *= 0.85;
+      }
+      if (patt == 2u) { // éclat : vif et bref
+        life = 0.45 + 0.45 * rand01(seed ^ 0xc2b2ae35u);
+        speed *= 1.5;
+      }
       e.pos = vec4f(P.spark_a.xyz, 0.0);
-      e.vel = vec4f(
-        velocity_at(P.spark_a.xyz) + dir * speed,
-        1.4 + 1.2 * rand01(seed ^ 0xc2b2ae35u),
-      );
-      e.tint = vec4f(P.spark_b.xyz, P.spark_c.z);
+      e.vel = vec4f(velocity_at(P.spark_a.xyz) + dir * speed, life);
+      e.tint = vec4f(P.spark_b.xyz, P.spark_c.z * 8.0 + f32(patt));
       sparks[i] = e;
       return;
     }
@@ -105,8 +117,9 @@ fn update(@builtin(global_invocation_id) gid: vec3u) {
 
   // ÉPOQUE : un reset est passé par là — tout ce qui est né avant meurt au
   // premier update qui suit (l'update précède le tracé dans la frame, donc
-  // aucune étoile rassie ne réapparaît à l'image).
-  if (e.vel.w > 0.0 && abs(e.tint.w - P.spark_c.z) > 0.5) {
+  // aucune étoile rassie ne réapparaît à l'image). L'époque vit dans les bits
+  // hauts de tint.w (× 8), le patron dans les bits bas.
+  if (e.vel.w > 0.0 && abs(floor(e.tint.w * 0.125) - P.spark_c.z) > 0.5) {
     e.vel.w = 0.0;
     sparks[i] = e;
     return;
@@ -117,13 +130,17 @@ fn update(@builtin(global_invocation_id) gid: vec3u) {
     return;
   }
 
-  // BALISTIQUE D'UNE ÉTOILE : gravité + traînée exponentielle vers le fluide.
-  // La traînée est plus lâche que celle des braises (1,8 contre 6) : l'élan
-  // radial de l'éclat doit survivre assez longtemps pour dessiner la sphère
-  // avant que le vent ne reprenne la main.
-  let k = 1.0 - exp(-1.8 * dt);
+  // BALISTIQUE D'UNE ÉTOILE : gravité + traînée exponentielle vers le fluide,
+  // toutes deux PAR PATRON. La traînée est plus lâche que celle des braises :
+  // l'élan radial de l'éclat doit survivre assez longtemps pour dessiner la
+  // sphère avant que le vent ne reprenne la main. Le saule tombe fort et
+  // freine peu (les retombées pendantes) ; l'éclat vit trop peu pour chuter.
+  let patt = u32(e.tint.w + 0.5) & 7u;
+  let drag = select(select(1.8, 0.9, patt == 1u), 2.6, patt == 2u);
+  let grav = select(select(0.12, 0.20, patt == 1u), 0.06, patt == 2u);
+  let k = 1.0 - exp(-drag * dt);
   var v = mix(e.vel.xyz, velocity_at(e.pos.xyz), k);
-  v.y -= 0.12 * n * dt;
+  v.y -= grav * n * dt;
   var pos = e.pos.xyz + v * dt;
   var age = e.pos.w + dt;
   // Hors boîte ou dans la boule : morte (ne renaîtra qu'au prochain tir).

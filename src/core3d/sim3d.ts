@@ -310,6 +310,8 @@ export class FluidSim3D {
     color: [0, 0, 0] as [number, number, number],
     count: 0,
     base: 0,
+    pattern: 0,
+    window: 3.0,
   };
   private sparkCursor = 0;
   private sparkSeed = 0;
@@ -2064,6 +2066,7 @@ export class FluidSim3D {
     b: number,
     count = 1500,
     speed = 0.16,
+    pattern = 0,
   ): void {
     const c = (v: number): number => Math.min(Math.max(v, 0.05), 0.95);
     this.sparkEvent.pos[0] = c(nx) * GRID3;
@@ -2075,6 +2078,10 @@ export class FluidSim3D {
     this.sparkEvent.color[2] = b;
     this.sparkEvent.count = Math.min(Math.max(Math.round(count), 1), SPARKS3);
     this.sparkEvent.base = this.sparkCursor;
+    // Patrons : 0 pivoine, 1 saule (vie longue — fenêtre de passes élargie),
+    // 2 éclat bref.
+    this.sparkEvent.pattern = Math.min(Math.max(Math.round(pattern), 0), 2);
+    this.sparkEvent.window = this.sparkEvent.pattern === 1 ? 4.5 : 3.0;
     this.sparkCursor = (this.sparkCursor + this.sparkEvent.count) % SPARKS3;
     this.sparkSeed = (this.sparkSeed + 7.31) % 97;
     this.sparkFire = true;
@@ -2124,12 +2131,13 @@ export class FluidSim3D {
       }
       // Les étincelles aussi : l'ÉPOQUE avance — le premier update qui suit
       // tue tout ce qui est né avant (le tracé vient après lui dans la frame,
-      // aucune étoile rassie ne réapparaît). Modulo 2²⁴ : le dernier entier
-      // exact en f32 — un modulo court pouvait boucler et ressusciter des
-      // étoiles gelées d'une vieille époque. Et le TIR EN ATTENTE est désarmé,
-      // comme les fenêtres des charges : un tir posé pendant la pause ne doit
-      // pas exploser en fantôme dans la scène neuve.
-      this.sparkEpoch = (this.sparkEpoch + 1) % 16777216;
+      // aucune étoile rassie ne réapparaît). Modulo 2²¹ : l'époque vit dans
+      // tint.w MULTIPLIÉE PAR 8 (les bits bas portent le patron), et 2²¹ × 8
+      // reste sous 2²⁴, le dernier entier exact en f32 — un modulo court
+      // pouvait boucler et ressusciter des étoiles gelées. Et le TIR EN
+      // ATTENTE est désarmé, comme les fenêtres des charges : un tir posé
+      // pendant la pause ne doit pas exploser en fantôme dans la scène neuve.
+      this.sparkEpoch = (this.sparkEpoch + 1) % 2097152;
       this.sparksAlive = 0;
       this.sparkFire = false;
     }
@@ -2222,7 +2230,7 @@ export class FluidSim3D {
     this.sparkFireNow = this.sparkFire && running && dt > 1e-6;
     if (this.sparkFireNow) {
       this.sparkFire = false;
-      this.sparksAlive = Math.max(this.sparksAlive, 3.0);
+      this.sparksAlive = Math.max(this.sparksAlive, this.sparkEvent.window);
     }
     if (running && this.sparksAlive > 0) {
       this.sparksAlive = Math.max(this.sparksAlive - dt, 0);
@@ -2749,6 +2757,7 @@ export class FluidSim3D {
     d[156] = sk.base;
     d[157] = this.sparkSeed;
     d[158] = this.sparkEpoch;
+    d[159] = sk.pattern;
     this.device.queue.writeBuffer(this.simUniforms, 0, d);
   }
 

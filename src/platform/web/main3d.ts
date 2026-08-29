@@ -751,6 +751,23 @@ async function boot(): Promise<void> {
       exporting = false;
     }
   };
+  // FEU D'ARTIFICE à la main (chantier PLAN-ARTIFICES, en attendant l'outil
+  // complet de J4) : chaque appui sur T tire la fusée SUIVANTE d'une table
+  // déterministe — position dans le haut de la boîte, teinte pyrotechnique,
+  // patron qui tourne (pivoine / saule / éclat). De quoi tester sans console.
+  let fireworkAt = 0;
+  const FIREWORKS: readonly {
+    x: number; y: number; z: number;
+    r: number; g: number; b: number;
+    name: string; pattern: number;
+  }[] = [
+    { x: 0.5, y: 0.6, z: 0.5, r: 0.15, g: 1.0, b: 0.25, name: 'pivoine verte', pattern: 0 },
+    { x: 0.36, y: 0.55, z: 0.62, r: 0.25, g: 0.45, b: 1.0, name: 'pivoine bleue', pattern: 0 },
+    { x: 0.64, y: 0.68, z: 0.42, r: 1.0, g: 0.72, b: 0.2, name: 'saule d’or', pattern: 1 },
+    { x: 0.45, y: 0.72, z: 0.35, r: 1.0, g: 0.28, b: 0.22, name: 'saule rouge', pattern: 1 },
+    { x: 0.6, y: 0.55, z: 0.65, r: 0.85, g: 0.3, b: 1.0, name: 'éclat violet', pattern: 2 },
+    { x: 0.42, y: 0.62, z: 0.52, r: 1.0, g: 1.0, b: 1.0, name: 'éclat blanc', pattern: 2 },
+  ];
   window.addEventListener('keydown', (e) => {
     if (e.code === 'Space') {
       e.preventDefault();
@@ -811,6 +828,10 @@ async function boot(): Promise<void> {
     } else if (k === 'f') {
       input.feedback = !input.feedback;
       toast(input.feedback ? 'retours visuels : actifs' : 'retours visuels : coupés');
+    } else if (k === 't') {
+      const fw = FIREWORKS[fireworkAt++ % FIREWORKS.length]!;
+      sim.launchFirework(fw.x, fw.y, fw.z, fw.r, fw.g, fw.b, 1500, 0.16, fw.pattern);
+      say(`🎆 ${fw.name}`);
     }
     if (e.code === 'Digit1' || e.code === 'Digit2' || e.code === 'Digit3') {
       say(`encre : ${INK_NAMES[input.emitInk] ?? '?'}`);
@@ -1142,7 +1163,7 @@ async function boot(): Promise<void> {
         `${lockScale ? ' · rendu 100 % 🔒' : renderScale < 1 ? ` · rendu ${Math.round(renderScale * 100)} %` : ''}` +
         `${input.paused ? ' · ⏸ pause' : ''}${demoOn ? ' · <b>DÉMO</b> (D : reprendre la main)' : ' · D : démo'}<br>` +
         `${profil !== '' ? `<b>GPU (ms)</b> · ${profil}<br>` : ''}` +
-        '1/2/3 : encre · glisser un objet : déplacer · ses poignées : un seul axe · son bouton violet : orienter · A : + émetteur · X : supprimer · G : 💥 · M : 🍄 champignon · L : rendu 100 % · O : boule · B : braises · F : repères<br>' +
+        '1/2/3 : encre · glisser un objet : déplacer · ses poignées : un seul axe · son bouton violet : orienter · A : + émetteur · X : supprimer · G : 💥 · T : 🎆 · M : 🍄 champignon · L : rendu 100 % · O : boule · B : braises · F : repères<br>' +
         'glisser : orbiter · clic droit : souffler · molette : zoom · Échap : désélectionner · espace : pause · R : reset · E : export .vdb';
     }
     if (selftest && frames === SELFTEST_FRAMES) {

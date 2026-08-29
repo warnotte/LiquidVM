@@ -127,3 +127,21 @@ le pilotage scripté et le harnais).
   la section « lueur », `sparks-occ` n'a pas de timestamps (le QuerySet est
   plein à 8 sections × 2). Sans gravité tant que le système est événementiel
   et bref ; à traiter si un acte de démo les fait vivre en continu.
+
+- **J1 — VERT (2026-08-29, machine de référence).** La balistique d'une
+  étoile, par PATRON : pivoine (traînée 1,8, gravité 0,12·N), saule (vie
+  2,6-4 s, traînée lâche 0,9, gravité 0,20·N), éclat (vif, 0,45-0,9 s,
+  presque sans chute). Le patron voyage AVEC l'époque dans `tint.w` = époque
+  × 8 + patron (époque modulo 2²¹ pour rester sous 2²⁴, l'exact f32) — deux
+  patrons coexistent en vol. Scintillement par l'ÂGE (pas d'horloge dans R :
+  l'âge avance par frame et suffit), fort dès la naissance pour l'éclat.
+  TRAÎNÉES par étirement écran : l'axe uv.y du billboard suit la vitesse
+  projetée (×10 pour le saule), le dégradé radial du fragment fait le reste —
+  la version simple a payé du premier coup, pas besoin de mieux pour l'instant.
+  Touche **T** sur la page 3D : chaque appui tire la fusée suivante d'une
+  table déterministe (le test à la main demandé par Renaud — l'outil visé
+  reste J4). Chronologie capturée (`cdp-sparks.mjs`, planches J1B-*) :
+  expansion freinée → suspension → chute → extinction, reconnaissable.
+  LEÇON du jalon : le fondu de fin de vie est un réglage DE PATRON — en
+  quadratique, le saule s'éteignait précisément pendant sa retombée, qui est
+  sa raison d'être ; il fond en linéaire et brûle jusqu'au sol.
