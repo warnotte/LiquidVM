@@ -174,7 +174,7 @@ const PRESETS: readonly {
  * en CUTS, trois charges SUPERPOSÉES par plan (les charges multiples : une
  * boule fraîche vit à côté du nuage qui noircit ; le montage garde sa raison
  * d'être — dans une boîte close la fumée s'accumule, un cut offre à chaque
- * VOLÉE son air pur) → dehors : FEU D'ARTIFICE de charges aériennes, puis le
+ * VOLÉE son air pur) → dehors : BARRAGE D'ARTILLERIE contre l'horizon, puis le
  * champignon en bouquet final. Le rendu est VERROUILLÉ à 100 % pendant le
  * spectacle (l'adaptation floutait précisément les détonations).
  * Les réglages de l'utilisateur sont SNAPSHOTÉS au lancement et RESTAURÉS à la
@@ -395,55 +395,83 @@ class DemoDriver {
     this.at(63.1, () => this.boomAt(0.62, input.explosionHeight, 0.66));
     this.at(64.6, () => this.boomAt(0.34, input.explosionHeight, 0.4));
     this.at(66.1, () => this.boomAt(0.55, input.explosionHeight, 0.24));
-    // ACTE VI — DEHORS, en deux temps. D'abord le FEU D'ARTIFICE : des charges
-    // EN L'AIR (la hauteur de détonation est un réglage de tir, pas de
-    // physique), PETITES, à l'amorce poussée, SANS poussière — rien à arracher
-    // en altitude. Contre le ciel, chaque bouffée est un éclat qui monte et se
-    // consume ; les braises font les étincelles. Trois choix calibrés sur
-    // captures : bouffées MINUSCULES (0,04 — plus grosses, leurs fumées
-    // fusionnent en un seul coussin rose), cadence DESSERRÉE (1,15 s — chaque
-    // éclat doit se lire seul), dissipation POUSSÉE (0,6 — un feu d'artifice
-    // est fait de flashs, pas de nuages ; c'est le seul endroit où « dissiper
-    // vite éteint la boule » est une qualité).
+    // ACTE VI — DEHORS, en deux temps. D'abord le BARRAGE D'ARTILLERIE : des
+    // impacts AU SOL contre l'horizon, chacun avec son flash, sa colonne de
+    // fumée sale et sa poussière arrachée. (Un feu d'artifice aérien a été
+    // essayé ici — verdict de Renaud : « pas top top, pas beaucoup de couleur,
+    // un peu plat ». Juste : la lumière des explosions est du corps noir,
+    // or/orange/blanc — pas de couleurs pyrotechniques sans charges d'encre.
+    // Le barrage joue au contraire sur ce que le moteur fait le mieux.)
+    // La CADENCE est IRRÉGULIÈRE — deux coups rapprochés, un temps mort : la
+    // régularité d'un métronome tue l'impression d'artillerie. La poussière a
+    // une fenêtre courte mais réelle (1,6 s) : chaque impact nourrit sa
+    // colonne, c'est elle qui fait « obus » et pas « pétard ».
     this.at(72, () => {
+      // Éponges MUSCLÉES et dissipation poussée : sept impacts serrés ont
+      // rempli le domaine en six secondes et la fumée accumulée dessinait un
+      // MONOLITHE aux arêtes de la boîte, plafond plat compris — la pire image
+      // possible contre un horizon ouvert (capturé). Parois franches, plafond
+      // large et doux : les colonnes vivent, leurs restes s'effacent avant de
+      // toucher les limites.
       this.apply({
         emitHeat: 0,
         emitInkRate: 0,
-        sootYield: 5,
-        inkDissipation: 0.6,
+        sootYield: 8,
+        inkDissipation: 0.42,
         heatCeiling: 7,
+        openBand: 0.1,
+        openStrength: 30,
+        openCeilBand: 0.1,
+        openCeilStrength: 12,
+        // INVERSION (l'outil du champignon) : les colonnes cessent de flotter
+        // aux deux tiers et s'y étalent en petites enclumes, au lieu de monter
+        // s'écraser au couvercle — c'est le plafond plat qui trahissait la
+        // boîte.
+        stratStrength: 2.5,
+        stratBase: 0.3,
       });
       input.params.outdoor = true;
       Object.assign(input, BOOM_DEFAULT, {
-        explosionRadius: 0.04,
-        explosionFuel: 30,
-        explosionSpark: 120,
-        dustRate: 0,
-        dustTime: 0,
+        explosionRadius: 0.05,
+        explosionFuel: 45,
+        explosionSpark: 60,
+        dustRate: 5,
+        dustTime: 1.6,
+        dustRadius: 0.14,
       });
       input.reset = true;
       input.sphereActive = false;
       input.embersOn = true;
-      input.glowStrength = 2.0;
-      // Caméra BASSE (élévation 0,06 : l'œil aux deux tiers de la boîte). À
-      // 0,2 la caméra dominait le plafond : tout éclat passait SOUS l'horizon
-      // et se lisait comme un impact au sol. Un feu d'artifice se regarde
-      // d'en bas.
-      this.act({ speed: 0.05, elevation: 0.06, radius: 2.9 });
+      input.glowStrength = 1.8;
+      this.act({ speed: 0.05, elevation: 0.12, radius: 2.85 });
       // Le narrateur repasse un instant : l'acte V a coupé les retours.
       input.feedback = true;
-      this.toast("Acte VI — dehors : feu d'artifice, puis le bouquet (D : reprendre la main)");
+      this.toast("Acte VI — dehors : barrage d'artillerie, puis le bouquet (D : reprendre la main)");
       // Comme le bouton « extérieur » : la boîte de verre et les gizmos n'ont
       // plus de sens face à l'horizon. Coupé APRÈS le toast (le narrateur passe
       // par feedback) ; rendu à la boucle et à la sortie.
       input.feedback = false;
     });
-    this.at(73.0, () => this.boomAt(0.2, 0.72, 0.7));
-    this.at(74.15, () => this.boomAt(0.78, 0.78, 0.35));
-    this.at(75.3, () => this.boomAt(0.5, 0.88, 0.6));
-    this.at(76.45, () => this.boomAt(0.25, 0.68, 0.3));
-    this.at(77.6, () => this.boomAt(0.75, 0.74, 0.72));
-    this.at(78.75, () => this.boomAt(0.45, 0.82, 0.2));
+    // Impacts GROUPÉS au centre de l'empreinte (0,38-0,65) : dispersés sur
+    // tout le sol, l'union des colonnes épousait la boîte — parois verticales
+    // taillées par l'éponge (capturé). Un barrage crédible dans ce domaine est
+    // un barrage sur UNE position, pas sur toute la plaine ; la profondeur
+    // varie pour la parallaxe. Et DEUX SALVES coupées d'un cut (reset + saut
+    // d'azimut — dehors, un autre plan du même champ de bataille) : même
+    // groupés, cinq impacts d'affilée finissaient en dalle aux arêtes de la
+    // boîte ; trois par ciel propre, jamais (capturé aussi). La leçon de
+    // l'acte V vaut dehors : le montage est la seule façon d'offrir à chaque
+    // salve son air pur.
+    this.at(73.0, () => this.boomAt(0.42, input.explosionHeight, 0.6));
+    this.at(74.1, () => this.boomAt(0.62, input.explosionHeight, 0.38));
+    this.at(75.4, () => this.boomAt(0.5, input.explosionHeight, 0.55));
+    this.at(77.2, () => {
+      input.reset = true;
+      input.cam.azimuth += 2.1;
+    });
+    this.at(77.8, () => this.boomAt(0.6, input.explosionHeight, 0.6));
+    this.at(78.9, () => this.boomAt(0.4, input.explosionHeight, 0.42));
+    this.at(80.2, () => this.boomAt(0.55, input.explosionHeight, 0.5));
     // LE BOUQUET FINAL — le champignon, même recette que le bouton « 🍄 »
     // (scène nettoyée par le reset : le ciel se vide des fumées du feu
     // d'artifice), en prise de vue extérieure : dans la boîte de verre, le

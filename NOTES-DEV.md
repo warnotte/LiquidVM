@@ -913,10 +913,11 @@ particules. Quand une limite n'apparaît qu'en WARNING console, écouter
       sautent les blocs d'un même pas quand rien n'est en vol.
   C'est la « capacité moteur nouvelle » que la note de la démo demandait — et
   Renaud a relancé la démo dessus le jour même (entrée suivante).
-- **DÉMO RELANCÉE : BOMBARDEMENT SUPERPOSÉ + FEU D'ARTIFICE (2026-08-29,
+- **DÉMO RELANCÉE : BOMBARDEMENT SUPERPOSÉ + BARRAGE D'ARTILLERIE (2026-08-29,
   demande de Renaud)** — l'acte V passe de trois tirs isolés en cuts à DEUX
-  PLANS DE TROIS CHARGES SUPERPOSÉES, et l'acte VI s'ouvre sur un feu
-  d'artifice aérien avant le champignon. Ce qui a été payé en captures :
+  PLANS DE TROIS CHARGES SUPERPOSÉES, et l'acte VI s'ouvre sur un barrage
+  d'artillerie contre l'horizon avant le champignon. Ce qui a été payé en
+  captures :
    1. **Chaque tir de l'ancienne démo était un tir CENTRÉ.** La visée au
       pointeur (`shoot(ndc)`) retombe au centre dès que le plan de charge est
       bas et la caméra rasante — le piège de visée documenté, et il valait pour
@@ -930,14 +931,28 @@ particules. Quand une limite n'apparaît qu'en WARNING console, écouter
       ampoule blanche sans texture), lueur 1,6, suie 10 — le contraste de
       l'acte est là : une boule d'or fraîche devant le nuage NOIRCI du tir
       précédent. Dissipation 0,35 entre les charges.
-   3. **Un feu d'artifice se regarde D'EN BAS.** À élévation 0,2 la caméra
-      dominait le plafond de la boîte : tout éclat passait sous l'horizon et se
-      lisait comme un impact au sol. Élévation 0,06 (l'œil aux deux tiers de la
-      boîte), éclats hauts (y 0,68-0,88). Bouffées MINUSCULES (0,04/30, amorce
-      120 — le flash), cadence 1,15 s (chaque éclat se lit seul), SANS
-      poussière, dissipation 0,6 — le seul endroit où « dissiper vite éteint la
-      boule » est une qualité : un feu d'artifice est fait de flashs, pas de
-      nuages. Braises ON = les étincelles.
+   3. **Le FEU D'ARTIFICE aérien a été essayé ici et REMPLACÉ** — verdict de
+      Renaud : « pas top top, pas beaucoup de couleur, un peu plat ». Le
+      diagnostic tient en une phrase : la lumière des explosions est du corps
+      noir (or/orange/blanc) — pas de couleurs pyrotechniques sans charges
+      d'ENCRE, une capacité qui n'existe pas. Leçon gardée au passage : un feu
+      d'artifice se regarde d'en bas (à élévation 0,2 la caméra dominait le
+      plafond de la boîte, tout éclat passait sous l'horizon). Remplacé par le
+      BARRAGE D'ARTILLERIE — des impacts au sol, ce que le moteur fait le
+      mieux — et le barrage a ses trois leçons, toutes capturées :
+       · les impacts se GROUPENT au centre de l'empreinte (0,38-0,65) — étalés
+         sur tout le sol, l'union des colonnes ÉPOUSE la boîte, parois
+         verticales taillées par l'éponge, la pire image contre un horizon
+         ouvert ;
+       · DEUX SALVES de trois, coupées d'un cut (reset + saut d'azimut —
+         dehors, un autre plan du même champ de bataille) : même groupés, cinq
+         impacts d'affilée finissent en dalle ; la leçon de l'acte V vaut
+         dehors ;
+       · l'INVERSION (l'outil du champignon, strat 2,5/0,3) arrête les
+         colonnes aux deux tiers — c'est le plafond PLAT qui trahissait la
+         boîte. Cadence irrégulière (la régularité d'un métronome tue
+         l'artillerie), poussière à fenêtre courte mais réelle (1,6 s — c'est
+         elle qui fait « obus » et pas « pétard »).
    4. **Deux états qui fuyaient d'un acte à l'autre** : le gizmo de l'émetteur
       pilote trônait au milieu des boules de feu (repères coupés dès l'acte V,
       rendus par la boucle et la sortie) ; et après le premier tour, la boule
