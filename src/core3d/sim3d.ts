@@ -114,6 +114,13 @@ export interface Frame3DInput {
  *  bouton d'orientation (un anneau de 24 segments face caméra + sa tige). */
 const GIZMO_VERTS = 3 * (64 * 2 * 3 + 6) + 4 * (32 * 2 + 6) + 24 + 3 * 6 + (24 * 2 + 2);
 
+/** Gravité de la fusée TRAÇANTE (fraction de N par s²) — DUPLIQUÉE dans
+ *  sparks3d.wgsl (patron 3) : le CPU intègre la même balistique que le shader
+ *  pour tirer l'éclat à l'apogée sans readback. */
+const ROCKET_G = 0.55;
+/** Hauteur de départ de la fusée (fraction de N) : juste au-dessus du sol. */
+const ROCKET_Y0 = 0.04;
+
 const COMPUTE = GPUShaderStage.COMPUTE;
 const FRAGMENT = GPUShaderStage.FRAGMENT;
 const VERTEX = GPUShaderStage.VERTEX;
@@ -290,6 +297,12 @@ export class FluidSim3D {
     dustFrac: 0,
     seed: 0,
     stamp: 0,
+    // Multiplicateurs PAR CHARGE des débits d'entrée (1 = la charge au
+    // pointeur, inchangée). L'éclat d'un feu d'artifice est une charge de
+    // chaleur PRESQUE SANS CARBURANT : petit calibre, carburant réduit — sans
+    // toucher aux réglages de l'utilisateur.
+    fuelMul: 1,
+    sparkMul: 1,
   }));
   private burstStamp = 0;
   /** Graine des grumeaux de la charge : avancée à chaque détonation pour que
@@ -297,13 +310,13 @@ export class FluidSim3D {
    *  même suite de détonations rejoue donc à l'identique, ce qu'on veut d'un
    *  simulateur dont on rebaie les sorties. */
   private burstSeed = 0;
-  /** ÉTINCELLES de feu d'artifice — l'ÉVÉNEMENT DE TIR (consommé en une frame,
-   *  le patron des charges) et son anneau. Le CURSEUR attribue les particules
-   *  par tranches contiguës — déterministe, pas d'atomics ; la graine avance
-   *  d'un pas fixe comme celle des charges ; l'ÉPOQUE tue au premier update
-   *  tout ce qui est né avant un reset. `sparksAlive` (secondes de temps
-   *  SIMULÉ) garde les trois passes entièrement sautées quand plus rien ne
-   *  vit. */
+  /** ÉTINCELLES de feu d'artifice — l'ÉVENEMENT DE TIR du pas courant
+   *  (consommé en une frame, le patron des charges) et son anneau. Le CURSEUR
+   *  attribue les particules par tranches contiguës — déterministe, pas
+   *  d'atomics ; la graine avance d'un pas fixe comme celle des charges et
+   *  VOYAGE avec l'événement ; l'ÉPOQUE tue au premier update tout ce qui est
+   *  né avant un reset. `sparksAlive` (secondes de temps SIMULÉ) garde les
+   *  trois passes entièrement sautées quand plus rien ne vit. */
   private readonly sparkEvent = {
     pos: [0, 0, 0] as [number, number, number],
     speed: 0,
@@ -312,13 +325,47 @@ export class FluidSim3D {
     base: 0,
     pattern: 0,
     window: 3.0,
+    seed: 0,
   };
+  /** FILE DES TIRS (anneau pré-alloué) : l'uniforme ne porte qu'UN événement
+   *  par pas simulé — un tir complet en produit deux (traçante au départ,
+   *  éclat à l'apogée) et deux fusées peuvent culminer la même frame. La file
+   *  les étale d'un pas au lieu de les écraser ; PLEINE, elle perd le tir
+   *  entrant (curseur et graine ont déjà avancé : le rejeu reste identique). */
+  private readonly sparkQueue = Array.from({ length: 8 }, () => ({
+    pos: [0, 0, 0] as [number, number, number],
+    speed: 0,
+    color: [0, 0, 0] as [number, number, number],
+    count: 0,
+    base: 0,
+    pattern: 0,
+    window: 3.0,
+    seed: 0,
+  }));
+  private sparkQHead = 0;
+  private sparkQLen = 0;
   private sparkCursor = 0;
   private sparkSeed = 0;
   private sparkEpoch = 0;
-  private sparkFire = false;
   private sparkFireNow = false;
   private sparksAlive = 0;
+  /** FUSÉES en vol (le tir complet, jalon J2) : cinématique CPU — même Euler
+   *  semi-implicite que la traçante GPU (patron 3), même gravité, AUCUNE
+   *  traînée : les deux trajectoires restent confondues sans readback. À
+   *  l'apogée (vy ≤ 0) le CPU tire l'éclat exactement là où la traçante meurt
+   *  — elle meurt du même critère, côté GPU. Slots pré-alloués, `stamp` pour
+   *  écraser la plus ancienne quand tout est en vol (patron des charges). */
+  private readonly rockets = Array.from({ length: 4 }, () => ({
+    live: false,
+    pos: [0, 0, 0] as [number, number, number],
+    vy: 0,
+    color: [0, 0, 0] as [number, number, number],
+    count: 0,
+    speed: 0,
+    pattern: 0,
+    stamp: 0,
+  }));
+  private rocketStamp = 0;
 
   /** Cible saisie : même encodage que `selected` (-2 = aucune). */
   private grabbed = -2;
@@ -2050,13 +2097,11 @@ export class FluidSim3D {
 
   /** Pilotage scripté : FEU D'ARTIFICE — un éclat d'étincelles à couleur
    *  PRESCRITE en (nx,ny,nz), fractions de N (convention explodeAt). Les
-   *  particules naissent par tranche d'anneau au prochain pas SIMULÉ — en
-   *  pause, le tir reste armé (mais un reset le désarme). Le diamètre de la
-   *  pivoine se règle par la vitesse radiale (`speed`, fraction de N par
-   *  seconde). UN ÉVÉNEMENT PAR PAS SIMULÉ : deux tirs dans la même frame — ou
-   *  plusieurs pendant une pause — s'écrasent et seul le dernier naît (curseur
-   *  et graine avancent quand même : le rejeu reste identique). Le scénario
-   *  espace ses tirs, comme les charges. */
+   *  particules naissent par tranche d'anneau au prochain pas SIMULÉ libre —
+   *  la FILE étale les tirs à un par pas (en pause ils attendent, un reset les
+   *  désarme). Le diamètre de la pivoine se règle par la vitesse radiale
+   *  (`speed`, fraction de N par seconde). Patrons : 0 pivoine, 1 saule (vie
+   *  longue — fenêtre de passes élargie), 2 éclat bref. */
   launchFirework(
     nx: number,
     ny: number,
@@ -2069,29 +2114,121 @@ export class FluidSim3D {
     pattern = 0,
   ): void {
     const c = (v: number): number => Math.min(Math.max(v, 0.05), 0.95);
-    this.sparkEvent.pos[0] = c(nx) * GRID3;
-    this.sparkEvent.pos[1] = c(ny) * GRID3;
-    this.sparkEvent.pos[2] = c(nz) * GRID3;
-    this.sparkEvent.speed = speed * GRID3;
-    this.sparkEvent.color[0] = r;
-    this.sparkEvent.color[1] = g;
-    this.sparkEvent.color[2] = b;
-    this.sparkEvent.count = Math.min(Math.max(Math.round(count), 1), SPARKS3);
-    this.sparkEvent.base = this.sparkCursor;
-    // Patrons : 0 pivoine, 1 saule (vie longue — fenêtre de passes élargie),
-    // 2 éclat bref.
-    this.sparkEvent.pattern = Math.min(Math.max(Math.round(pattern), 0), 2);
-    this.sparkEvent.window = this.sparkEvent.pattern === 1 ? 4.5 : 3.0;
-    this.sparkCursor = (this.sparkCursor + this.sparkEvent.count) % SPARKS3;
+    const patt = Math.min(Math.max(Math.round(pattern), 0), 2);
+    this.enqueueSpark(
+      c(nx) * GRID3,
+      c(ny) * GRID3,
+      c(nz) * GRID3,
+      speed * GRID3,
+      r,
+      g,
+      b,
+      count,
+      patt,
+      patt === 1 ? 4.5 : 3.0,
+    );
+  }
+
+  /** Pilotage scripté : TIR COMPLET (jalon J2) — la fusée traçante part du sol
+   *  en (nx,nz) et monte en balistique pure (gravité ROCKET_G, aucune
+   *  traînée) jusqu'à culminer vers `apexNy` (fraction de N), où le CPU tire
+   *  l'éclat : les étoiles au patron demandé PLUS une charge de chaleur
+   *  presque sans carburant (flash, poussée, fumée grise — poussière NULLE :
+   *  un éclat en l'air n'arrache pas le sol). La traçante GPU meurt au même
+   *  critère (vy ≤ 0) : les deux trajectoires sont le même Euler
+   *  semi-implicite — aucun readback. */
+  launchRocket(
+    nx: number,
+    nz: number,
+    apexNy = 0.6,
+    r = 1,
+    g = 1,
+    b = 1,
+    count = 1500,
+    speed = 0.16,
+    pattern = 0,
+  ): void {
+    const c = (v: number): number => Math.min(Math.max(v, 0.08), 0.92);
+    const x = c(nx) * GRID3;
+    const z = c(nz) * GRID3;
+    const y0 = ROCKET_Y0 * GRID3;
+    const apex = Math.max(apexNy * GRID3, y0 + 0.08 * GRID3);
+    // v² = 2·g·h — g en voxels/s², l'apogée tombe où on l'a demandée.
+    const vy0 = Math.sqrt(2 * ROCKET_G * GRID3 * (apex - y0));
+    let slot = this.rockets[0]!; // slots ≥ 1 : jamais vide
+    for (const rk of this.rockets) {
+      const rFree = !rk.live;
+      const sFree = !slot.live;
+      if (rFree !== sFree ? rFree : rk.stamp < slot.stamp) slot = rk;
+    }
+    slot.live = true;
+    slot.pos[0] = x;
+    slot.pos[1] = y0;
+    slot.pos[2] = z;
+    slot.vy = vy0;
+    slot.color[0] = r;
+    slot.color[1] = g;
+    slot.color[2] = b;
+    slot.count = count;
+    slot.speed = speed;
+    slot.pattern = Math.min(Math.max(Math.round(pattern), 0), 2);
+    slot.stamp = ++this.rocketStamp;
+    // La TRAÇANTE : une comète de quelques étoiles d'or qui monte — fenêtre de
+    // passes jusqu'à l'apogée (l'éclat ré-armera la sienne).
+    const tApex = vy0 / (ROCKET_G * GRID3);
+    this.enqueueSpark(x, y0, z, vy0, 1.0, 0.84, 0.55, 24, 3, tApex + 0.6);
+  }
+
+  /** Pousse un événement de tir dans la FILE (positions en VOXELS, vitesse en
+   *  voxels/s). Curseur et graine avancent à l'ENQUEUE et voyagent avec
+   *  l'événement — une file pleine PERD le tir entrant mais le rejeu reste
+   *  identique. */
+  private enqueueSpark(
+    px: number,
+    py: number,
+    pz: number,
+    speed: number,
+    r: number,
+    g: number,
+    b: number,
+    count: number,
+    pattern: number,
+    window: number,
+  ): void {
+    const n = Math.min(Math.max(Math.round(count), 1), SPARKS3);
+    const base = this.sparkCursor;
+    this.sparkCursor = (this.sparkCursor + n) % SPARKS3;
     this.sparkSeed = (this.sparkSeed + 7.31) % 97;
-    this.sparkFire = true;
+    if (this.sparkQLen >= this.sparkQueue.length) {
+      return;
+    }
+    const ev = this.sparkQueue[(this.sparkQHead + this.sparkQLen) % this.sparkQueue.length]!;
+    this.sparkQLen++;
+    ev.pos[0] = px;
+    ev.pos[1] = py;
+    ev.pos[2] = pz;
+    ev.speed = speed;
+    ev.color[0] = r;
+    ev.color[1] = g;
+    ev.color[2] = b;
+    ev.count = n;
+    ev.base = base;
+    ev.pattern = pattern;
+    ev.window = window;
+    ev.seed = this.sparkSeed;
   }
 
   /** Arme une charge (position en voxels) : slot ÉTEINT de préférence — les
    *  deux fenêtres consumées —, sinon le plus ancien (rang de tir `stamp`) :
    *  un bombardement recycle ses charges mortes avant d'amputer une charge en
    *  vol. */
-  private fireBurst(x: number, y: number, z: number, input: Frame3DInput): void {
+  private fireBurst(
+    x: number,
+    y: number,
+    z: number,
+    input: Frame3DInput,
+    opts?: { radius?: number; fuelMul?: number; sparkMul?: number; dustTime?: number },
+  ): void {
     let slot = this.bursts[0]!; // maxBursts ≥ 1 : jamais vide
     for (const b of this.bursts) {
       const bFree = b.left <= 0 && b.dustLeft <= 0;
@@ -2101,9 +2238,11 @@ export class FluidSim3D {
     slot.pos[0] = x;
     slot.pos[1] = y;
     slot.pos[2] = z;
-    slot.radius = input.explosionRadius * GRID3;
+    slot.radius = opts?.radius ?? input.explosionRadius * GRID3;
     slot.left = SIM3_DEFAULTS.explosionTime;
-    slot.dustLeft = input.dustTime;
+    slot.dustLeft = opts?.dustTime ?? input.dustTime;
+    slot.fuelMul = opts?.fuelMul ?? 1;
+    slot.sparkMul = opts?.sparkMul ?? 1;
     this.burstSeed = (this.burstSeed + 7.31) % 97;
     slot.seed = this.burstSeed;
     slot.stamp = ++this.burstStamp;
@@ -2134,12 +2273,16 @@ export class FluidSim3D {
       // aucune étoile rassie ne réapparaît). Modulo 2²¹ : l'époque vit dans
       // tint.w MULTIPLIÉE PAR 8 (les bits bas portent le patron), et 2²¹ × 8
       // reste sous 2²⁴, le dernier entier exact en f32 — un modulo court
-      // pouvait boucler et ressusciter des étoiles gelées. Et le TIR EN
-      // ATTENTE est désarmé, comme les fenêtres des charges : un tir posé
-      // pendant la pause ne doit pas exploser en fantôme dans la scène neuve.
+      // pouvait boucler et ressusciter des étoiles gelées. Et les TIRS EN
+      // ATTENTE sont désarmés (file vidée, fusées tuées), comme les fenêtres
+      // des charges : un tir posé pendant la pause ne doit pas exploser en
+      // fantôme dans la scène neuve.
       this.sparkEpoch = (this.sparkEpoch + 1) % 2097152;
       this.sparksAlive = 0;
-      this.sparkFire = false;
+      this.sparkQLen = 0;
+      for (const rk of this.rockets) {
+        rk.live = false;
+      }
     }
     this.sphereOn = input.sphereActive;
     // L'encre sélectionnée s'applique aux FUTURS émetteurs — et à celui qu'on tient
@@ -2223,14 +2366,61 @@ export class FluidSim3D {
         }
       }
     }
-    // ÉTINCELLES : le tir armé est consommé au premier pas SIMULÉ (en pause il
-    // attend — comme les fenêtres des charges), et il arme la fenêtre de vie
-    // des passes ; elle décroît en temps simulé et les trois passes sont
-    // entièrement sautées dès qu'elle est vide.
-    this.sparkFireNow = this.sparkFire && running && dt > 1e-6;
+    // FUSÉES : la cinématique CPU — le même Euler semi-implicite que la
+    // traçante GPU (patron 3), vitesse d'abord, position ensuite. À l'apogée
+    // (vy ≤ 0, ou le plafond de la boîte), le CPU tire l'éclat : les étoiles
+    // ET la charge de chaleur presque sans carburant (flash + poussée + fumée
+    // grise ; POUSSIÈRE NULLE — un éclat en l'air n'arrache pas le sol).
+    if (running && dt > 1e-6) {
+      for (const rk of this.rockets) {
+        if (!rk.live) continue;
+        rk.vy -= ROCKET_G * GRID3 * dt;
+        rk.pos[1] += rk.vy * dt;
+        if (rk.vy <= 0 || rk.pos[1] > GRID3Y - 2) {
+          rk.live = false;
+          this.launchFirework(
+            rk.pos[0] / GRID3,
+            rk.pos[1] / GRID3,
+            rk.pos[2] / GRID3,
+            rk.color[0],
+            rk.color[1],
+            rk.color[2],
+            rk.count,
+            rk.speed,
+            rk.pattern,
+          );
+          this.fireBurst(rk.pos[0], rk.pos[1], rk.pos[2], input, {
+            radius: 0.045 * GRID3,
+            fuelMul: 0.12,
+            sparkMul: 0.8,
+            dustTime: 0,
+          });
+        }
+      }
+    }
+    // ÉTINCELLES : le premier tir de la FILE est consommé à chaque pas SIMULÉ
+    // (en pause la file attend — comme les fenêtres des charges), et il arme
+    // la fenêtre de vie des passes ; elle décroît en temps simulé et les trois
+    // passes sont entièrement sautées dès qu'elle est vide.
+    this.sparkFireNow = running && dt > 1e-6 && this.sparkQLen > 0;
     if (this.sparkFireNow) {
-      this.sparkFire = false;
-      this.sparksAlive = Math.max(this.sparksAlive, this.sparkEvent.window);
+      const ev = this.sparkQueue[this.sparkQHead]!;
+      this.sparkQHead = (this.sparkQHead + 1) % this.sparkQueue.length;
+      this.sparkQLen--;
+      const sk = this.sparkEvent;
+      sk.pos[0] = ev.pos[0];
+      sk.pos[1] = ev.pos[1];
+      sk.pos[2] = ev.pos[2];
+      sk.speed = ev.speed;
+      sk.color[0] = ev.color[0];
+      sk.color[1] = ev.color[1];
+      sk.color[2] = ev.color[2];
+      sk.count = ev.count;
+      sk.base = ev.base;
+      sk.pattern = ev.pattern;
+      sk.window = ev.window;
+      sk.seed = ev.seed;
+      this.sparksAlive = Math.max(this.sparksAlive, ev.window);
     }
     if (running && this.sparksAlive > 0) {
       this.sparksAlive = Math.max(this.sparksAlive - dt, 0);
@@ -2736,8 +2926,8 @@ export class FluidSim3D {
       d[o + 1] = b.pos[1];
       d[o + 2] = b.pos[2];
       d[o + 3] = b.radius;
-      d[o + 4] = b.frac * input.explosionFuel;
-      d[o + 5] = b.frac * input.explosionSpark;
+      d[o + 4] = b.frac * input.explosionFuel * b.fuelMul;
+      d[o + 5] = b.frac * input.explosionSpark * b.sparkMul;
       d[o + 6] = b.dustFrac * input.dustRate;
       d[o + 7] = b.seed;
     }
@@ -2755,7 +2945,7 @@ export class FluidSim3D {
     d[154] = sk.color[2];
     d[155] = this.sparkFireNow ? sk.count : 0;
     d[156] = sk.base;
-    d[157] = this.sparkSeed;
+    d[157] = sk.seed;
     d[158] = this.sparkEpoch;
     d[159] = sk.pattern;
     this.device.queue.writeBuffer(this.simUniforms, 0, d);

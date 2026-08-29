@@ -752,9 +752,10 @@ async function boot(): Promise<void> {
     }
   };
   // FEU D'ARTIFICE à la main (chantier PLAN-ARTIFICES, en attendant l'outil
-  // complet de J4) : chaque appui sur T tire la fusée SUIVANTE d'une table
-  // déterministe — position dans le haut de la boîte, teinte pyrotechnique,
-  // patron qui tourne (pivoine / saule / éclat). De quoi tester sans console.
+  // complet de J4) : chaque appui sur T tire le TIR COMPLET suivant d'une
+  // table déterministe — la fusée traçante part du sol en (x,z), monte, et
+  // éclate vers la hauteur y avec sa teinte et son patron (pivoine / saule /
+  // éclat). De quoi tester sans console.
   let fireworkAt = 0;
   const FIREWORKS: readonly {
     x: number; y: number; z: number;
@@ -830,7 +831,7 @@ async function boot(): Promise<void> {
       toast(input.feedback ? 'retours visuels : actifs' : 'retours visuels : coupés');
     } else if (k === 't') {
       const fw = FIREWORKS[fireworkAt++ % FIREWORKS.length]!;
-      sim.launchFirework(fw.x, fw.y, fw.z, fw.r, fw.g, fw.b, 1500, 0.16, fw.pattern);
+      sim.launchRocket(fw.x, fw.z, fw.y, fw.r, fw.g, fw.b, 1500, 0.16, fw.pattern);
       say(`🎆 ${fw.name}`);
     }
     if (e.code === 'Digit1' || e.code === 'Digit2' || e.code === 'Digit3') {

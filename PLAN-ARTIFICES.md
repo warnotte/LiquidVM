@@ -145,3 +145,29 @@ le pilotage scripté et le harnais).
   LEÇON du jalon : le fondu de fin de vie est un réglage DE PATRON — en
   quadratique, le saule s'éteignait précisément pendant sa retombée, qui est
   sa raison d'être ; il fond en linéaire et brûle jusqu'au sol.
+
+- **J2 — VERT (2026-08-30, machine de référence).** Le tir complet, SANS
+  READBACK : la fusée est intégrée CÔTÉ CPU (même Euler semi-implicite que le
+  shader — vitesse d'abord, position ensuite —, même gravité ROCKET_G = 0,55·N,
+  traînée NULLE et vent ignoré, sinon les trajectoires divergent) pendant que
+  la TRAÇANTE GPU (patron 3 : comète d'or de 24 étoiles, étirement ×10 plafonné
+  à 7, scintillante dès la naissance) suit la même balistique. Les deux
+  culminent au MÊME critère (vy ≤ 0) : le CPU y tire l'éclat exactement là où
+  la comète s'éteint. L'éclat = les étoiles au patron demandé PLUS une charge
+  de chaleur presque sans carburant via le système de charges existant, doté
+  pour ça de MULTIPLICATEURS PAR CHARGE (calibre 0,045·N, carburant ×0,12,
+  amorce ×0,8, POUSSIÈRE NULLE — un éclat en l'air n'arrache pas le sol ; la
+  charge au pointeur reste ×1, inchangée). Calibration à l'image en trois
+  passes : amorce ×3 donnait un petit CHAMPIGNON salmon qui montait et
+  OCCULTAIT l'hémisphère haut de la sphère d'étoiles (l'occlusion par
+  particule fait son travail — contre nous) ; ×0,8 laisse un flash bref et
+  une bouffée tiède qui dérive. Plomberie neuve : FILE DES TIRS (anneau
+  pré-alloué de 8 — un tir complet = deux événements, launch et apogée, et
+  deux fusées peuvent culminer la même frame ; la file les étale d'un pas au
+  lieu de les écraser, la graine voyage avec l'événement), 4 fusées en vol
+  max (slots pré-alloués, patron des charges). API `launchRocket(x, z, apexY,
+  r, g, b, n?, vitesse?, patron?)` ; touche T = tirs complets. Mesuré
+  (`cdp-sparks.mjs`, planches J2F-*) : montée 400-1300 ms → flash 1600 →
+  sphère verte → retombée 2900 → fumée qui dérive 4200-6000 ; 60 FPS à 256³,
+  fenêtre refermée, braises fournaise INTACTES, saule/éclat/duo inchangés
+  (les constantes par patron refactorées en tableaux — valeurs identiques).

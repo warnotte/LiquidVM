@@ -37,7 +37,8 @@ fn tex_uvw(p: vec3f) -> vec3f {
 struct Spark {
   pos: vec4f,  // xyz: voxels, w: âge (s)
   vel: vec4f,  // xyz: voxels/s, w: durée de vie (s, 0 = jamais née)
-  tint: vec4f, // xyz: couleur RGB, w: époque × 8 + patron (0 pivoine, 1 saule, 2 éclat)
+  tint: vec4f, // xyz: couleur RGB, w: époque × 8 + patron
+               // (0 pivoine, 1 saule, 2 éclat, 3 traçante)
 }
 
 @group(0) @binding(0) var<uniform> R: RenderParams;
@@ -119,24 +120,30 @@ fn vs_sparks(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -
   let tint = mix(e.tint.xyz, vec3f(1.0), flash * 0.6);
   // SCINTILLEMENT par l'ÂGE (pas d'horloge dans R : l'âge avance par frame et
   // suffit) — chaque étoile stroboscope à sa fréquence en fin de vie, dès la
-  // naissance pour l'ÉCLAT (patron 2), c'est sa signature.
+  // naissance pour l'ÉCLAT (patron 2) et la TRAÇANTE (patron 3), leur
+  // signature.
   let strobe = 0.65 + 0.35 * sin(age * (16.0 + 14.0 * h1) + h1 * 6.283);
-  let when = select(smoothstep(0.35, 0.75, t), 1.0, patt == 2u);
+  let when = select(smoothstep(0.35, 0.75, t), 1.0, patt >= 2u);
   brightness *= mix(1.0, strobe, when);
   out.color = tint * brightness * (2.0 + 1.2 * h1);
 
   // Billboard ÉTIRÉ LE LONG DE LA VITESSE projetée à l'écran — la traînée
   // simple (celle des particules 2D) : l'axe uv.y suit le mouvement, uv.x
   // reste la largeur, le dégradé radial du fragment fait le reste. Le saule
-  // s'étire davantage : ce sont ses retombées pendantes.
-  let size = (0.0030 + 0.0030 * h1) * (1.0 - 0.35 * t);
+  // s'étire davantage (ses retombées pendantes) ; la traçante, plus grosse et
+  // très rapide, file en comète (plafond d'étirement relevé).
+  var size = (0.0030 + 0.0030 * h1) * (1.0 - 0.35 * t);
+  if (patt == 3u) {
+    size *= 1.7;
+  }
   let vx = dot(e.vel.xyz, R.cam_right.xyz);
   let vy = dot(e.vel.xyz, R.cam_up.xyz);
   let vlen = length(vec2f(vx, vy));
   let axis = select(vec2f(0.0, 1.0), vec2f(vx, vy) / max(vlen, 1e-4), vlen > 1e-3);
   let perp = vec2f(-axis.y, axis.x);
-  let strf = select(6.0, 10.0, patt == 1u);
-  let stretch = clamp(1.0 + (vlen / R.style.w) * strf, 1.0, 4.0);
+  var strfs = array<f32, 4>(6.0, 10.0, 6.0, 10.0);
+  let smax = select(4.0, 7.0, patt == 3u);
+  let stretch = clamp(1.0 + (vlen / R.style.w) * strfs[min(patt, 3u)], 1.0, smax);
   let o2 = (perp * out.uv.x + axis * out.uv.y * stretch) * size;
   let corner = world + (R.cam_right.xyz * o2.x + R.cam_up.xyz * o2.y);
   let d = corner - cam;

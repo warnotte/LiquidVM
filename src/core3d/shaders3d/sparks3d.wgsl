@@ -28,6 +28,9 @@ struct Params {
 //  0 PIVOINE : la sphère classique — traînée moyenne, gravité douce.
 //  1 SAULE : longue retombée — vie longue, traînée lâche, gravité marquée.
 //  2 ÉCLAT : bref et nerveux — vif, vie courte, presque sans chute.
+//  3 TRAÇANTE : la fusée qui monte — balistique PURE (aucune traînée, gravité
+//    0,55·N dupliquée côté CPU), meurt à l'apogée (vy ≤ 0) où le CPU tire
+//    l'éclat : la comète s'éteint exactement là où la sphère naît.
 struct Spark {
   pos: vec4f,  // xyz: voxels, w: âge (s)
   vel: vec4f,  // xyz: voxels/s, w: durée de vie (s, 0 = jamais née)
@@ -93,11 +96,12 @@ fn update(@builtin(global_invocation_id) gid: vec3u) {
       let z = rand01(seed) * 2.0 - 1.0;
       let a = rand01(seed ^ 0x9e3779b9u) * 6.28318;
       let rxy = sqrt(max(1.0 - z * z, 0.0));
-      let dir = vec3f(rxy * cos(a), z, rxy * sin(a));
+      var dir = vec3f(rxy * cos(a), z, rxy * sin(a));
       // Vitesse étalée (0,55–1,2×) : le cœur reste dense, le front file — la
       // sphère a une épaisseur au lieu d'être une coquille.
       var speed = P.spark_a.w * (0.55 + 0.65 * rand01(seed ^ 0x85ebca6bu));
       var life = 1.4 + 1.2 * rand01(seed ^ 0xc2b2ae35u);
+      var carried = velocity_at(P.spark_a.xyz);
       let patt = u32(P.spark_c.w + 0.5);
       if (patt == 1u) { // saule : vie longue, départ un peu plus doux
         life = 2.6 + 1.4 * rand01(seed ^ 0xc2b2ae35u);
@@ -107,8 +111,20 @@ fn update(@builtin(global_invocation_id) gid: vec3u) {
         life = 0.45 + 0.45 * rand01(seed ^ 0xc2b2ae35u);
         speed *= 1.5;
       }
+      if (patt == 3u) { // traçante : la comète presque verticale, tête au
+        // nominal (le CPU intègre LA MÊME trajectoire et tire l'éclat à
+        // l'apogée — ni vent ni étalement vers le haut, sinon elles divergent).
+        life = 9.0; // meurt à l'apogée (vy ≤ 0), jamais par l'âge
+        speed = P.spark_a.w * (1.0 - 0.10 * rand01(seed ^ 0x85ebca6bu));
+        dir = normalize(vec3f(
+          (rand01(seed) - 0.5) * 0.06,
+          1.0,
+          (rand01(seed ^ 0x9e3779b9u) - 0.5) * 0.06,
+        ));
+        carried = vec3f(0.0);
+      }
       e.pos = vec4f(P.spark_a.xyz, 0.0);
-      e.vel = vec4f(velocity_at(P.spark_a.xyz) + dir * speed, life);
+      e.vel = vec4f(carried + dir * speed, life);
       e.tint = vec4f(P.spark_b.xyz, P.spark_c.z * 8.0 + f32(patt));
       sparks[i] = e;
       return;
@@ -134,15 +150,23 @@ fn update(@builtin(global_invocation_id) gid: vec3u) {
   // toutes deux PAR PATRON. La traînée est plus lâche que celle des braises :
   // l'élan radial de l'éclat doit survivre assez longtemps pour dessiner la
   // sphère avant que le vent ne reprenne la main. Le saule tombe fort et
-  // freine peu (les retombées pendantes) ; l'éclat vit trop peu pour chuter.
+  // freine peu (les retombées pendantes) ; l'éclat vit trop peu pour chuter ;
+  // la traçante est en balistique PURE (traînée 0 : sa trajectoire doit
+  // rester confondue avec l'intégration CPU, qui tire l'éclat à l'apogée —
+  // gravité 0,55 dupliquée dans ROCKET_G, sim3d.ts).
   let patt = u32(e.tint.w + 0.5) & 7u;
-  let drag = select(select(1.8, 0.9, patt == 1u), 2.6, patt == 2u);
-  let grav = select(select(0.12, 0.20, patt == 1u), 0.06, patt == 2u);
-  let k = 1.0 - exp(-drag * dt);
+  var drags = array<f32, 4>(1.8, 0.9, 2.6, 0.0);
+  var gravs = array<f32, 4>(0.12, 0.20, 0.06, 0.55);
+  let k = 1.0 - exp(-drags[min(patt, 3u)] * dt);
   var v = mix(e.vel.xyz, velocity_at(e.pos.xyz), k);
-  v.y -= grav * n * dt;
+  v.y -= gravs[min(patt, 3u)] * n * dt;
   var pos = e.pos.xyz + v * dt;
   var age = e.pos.w + dt;
+  // TRAÇANTE : l'apogée est sa mort — le même critère (vy ≤ 0) que le CPU,
+  // qui y fait naître la sphère : la comète s'éteint là où l'éclat surgit.
+  if (patt == 3u && v.y <= 0.0) {
+    age = e.vel.w + 1.0;
+  }
   // Hors boîte ou dans la boule : morte (ne renaîtra qu'au prochain tir).
   let margin = 1.0;
   if (any(pos < vec3f(margin)) || any(pos > n_sizef() - vec3f(margin)) ||

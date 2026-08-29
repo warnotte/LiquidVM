@@ -73,9 +73,12 @@ typecheck strict + bundle. Aucune dépendance runtime.
   `cdp-sparks.mjs 9333 [tag]` : le banc des ÉTINCELLES de feu d'artifice
   (chantier PLAN-ARTIFICES) — pivoine VERTE (la teinte-preuve : le corps noir
   ne la produit pas), duo bicolore rapproché, chronologies saule et éclat,
-  puis NON-RÉGRESSION des braises en fournaise. Tir scripté :
-  `__sim3d.launchFirework(x, y, z, r, g, b, n?, vitesse?, patron?)` — à la
-  main : touche T sur la page 3D (table déterministe de fusées).
+  le TIR COMPLET (montée traçante → flash à l'apogée → sphère → retombée →
+  fumée), puis NON-RÉGRESSION des braises en fournaise. Tir scripté :
+  `__sim3d.launchFirework(x, y, z, r, g, b, n?, vitesse?, patron?)` (l'éclat
+  seul) et `__sim3d.launchRocket(x, z, apexY, r, g, b, n?, vitesse?, patron?)`
+  (le tir complet) — à la main : touche T sur la page 3D (table déterministe
+  de tirs complets).
   `cdp-obstacle-chaos.mjs 9333 [tag] [champignon|defaut] [posee[:x]|trainee|sans]
   [retouche-js]` : le banc de l'OBSTACLE. Une seule chose varie à la fois ; la
   détonation, la flamme coupée et la caméra sont tenues fixes. Le geste compte
