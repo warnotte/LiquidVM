@@ -80,8 +80,9 @@ typecheck strict + bundle. Aucune dépendance runtime.
   `__sim3d.launchFirework(x, y, z, r, g, b, n?, vitesse?, patron?)` (l'éclat
   seul) et `__sim3d.launchRocket(x, z, apexY, r, g, b, n?, vitesse?, patron?,
   r2?, g2?, b2?)` (le tir complet ; r2 ≥ 0 = bi-couleur, le cœur prend la
-  seconde teinte) — à la main : touche T sur la page 3D (table déterministe
-  de tirs complets).
+  seconde teinte) ; `launchRocketAt(ndcX, ndcY, ...)` = le même tir VISÉ
+  (rayon ∩ plan d'éclat, centre hors boîte). À la main : touche T sur la
+  page 3D — le tir suivant d'une table déterministe, visé au pointeur.
   `cdp-obstacle-chaos.mjs 9333 [tag] [champignon|defaut] [posee[:x]|trainee|sans]
   [retouche-js]` : le banc de l'OBSTACLE. Une seule chose varie à la fois ; la
   détonation, la flamme coupée et la caméra sont tenues fixes. Le geste compte

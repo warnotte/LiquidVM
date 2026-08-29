@@ -751,26 +751,26 @@ async function boot(): Promise<void> {
       exporting = false;
     }
   };
-  // FEU D'ARTIFICE à la main (chantier PLAN-ARTIFICES, en attendant l'outil
-  // complet de J4) : chaque appui sur T tire le TIR COMPLET suivant d'une
-  // table déterministe — la fusée traçante part du sol en (x,z), monte, et
-  // éclate vers la hauteur y avec sa teinte et son patron (pivoine / saule /
-  // éclat). De quoi tester sans console.
+  // L'OUTIL FUSÉE (jalon J4) : chaque appui sur T tire le TIR COMPLET
+  // suivant d'une table déterministe (teinte, patron, hauteur d'éclat),
+  // VISÉ AU POINTEUR — l'apogée est posée sous la souris (rayon ∩ plan à la
+  // hauteur d'éclat, centre si l'on vise hors boîte), la fusée part du sol à
+  // la verticale du point visé.
   let fireworkAt = 0;
   const FIREWORKS: readonly {
-    x: number; y: number; z: number;
+    y: number;
     r: number; g: number; b: number;
     name: string; pattern: number;
     r2?: number; g2?: number; b2?: number;
   }[] = [
-    { x: 0.5, y: 0.6, z: 0.5, r: 0.15, g: 1.0, b: 0.25, name: 'pivoine verte', pattern: 0 },
-    { x: 0.36, y: 0.55, z: 0.62, r: 0.25, g: 0.45, b: 1.0, name: 'pivoine bleue', pattern: 0 },
-    { x: 0.64, y: 0.68, z: 0.42, r: 1.0, g: 0.72, b: 0.2, name: 'saule d’or', pattern: 1 },
-    { x: 0.45, y: 0.72, z: 0.35, r: 1.0, g: 0.28, b: 0.22, name: 'saule rouge', pattern: 1 },
-    { x: 0.6, y: 0.55, z: 0.65, r: 0.85, g: 0.3, b: 1.0, name: 'éclat violet', pattern: 2 },
-    { x: 0.55, y: 0.64, z: 0.4, r: 0.2, g: 1.0, b: 0.3, name: 'pivoine cœur d’or', pattern: 0, r2: 1.0, g2: 0.75, b2: 0.2 },
-    { x: 0.4, y: 0.58, z: 0.55, r: 1.0, g: 0.3, b: 0.25, name: 'pivoine cœur bleu', pattern: 0, r2: 0.3, g2: 0.5, b2: 1.0 },
-    { x: 0.42, y: 0.62, z: 0.52, r: 1.0, g: 1.0, b: 1.0, name: 'éclat blanc', pattern: 2 },
+    { y: 0.6, r: 0.15, g: 1.0, b: 0.25, name: 'pivoine verte', pattern: 0 },
+    { y: 0.55, r: 0.25, g: 0.45, b: 1.0, name: 'pivoine bleue', pattern: 0 },
+    { y: 0.68, r: 1.0, g: 0.72, b: 0.2, name: 'saule d’or', pattern: 1 },
+    { y: 0.72, r: 1.0, g: 0.28, b: 0.22, name: 'saule rouge', pattern: 1 },
+    { y: 0.55, r: 0.85, g: 0.3, b: 1.0, name: 'éclat violet', pattern: 2 },
+    { y: 0.64, r: 0.2, g: 1.0, b: 0.3, name: 'pivoine cœur d’or', pattern: 0, r2: 1.0, g2: 0.75, b2: 0.2 },
+    { y: 0.58, r: 1.0, g: 0.3, b: 0.25, name: 'pivoine cœur bleu', pattern: 0, r2: 0.3, g2: 0.5, b2: 1.0 },
+    { y: 0.62, r: 1.0, g: 1.0, b: 1.0, name: 'éclat blanc', pattern: 2 },
   ];
   window.addEventListener('keydown', (e) => {
     if (e.code === 'Space') {
@@ -834,7 +834,7 @@ async function boot(): Promise<void> {
       toast(input.feedback ? 'retours visuels : actifs' : 'retours visuels : coupés');
     } else if (k === 't') {
       const fw = FIREWORKS[fireworkAt++ % FIREWORKS.length]!;
-      sim.launchRocket(fw.x, fw.z, fw.y, fw.r, fw.g, fw.b, 1500, 0.16, fw.pattern, fw.r2 ?? -1, fw.g2 ?? 0, fw.b2 ?? 0);
+      sim.launchRocketAt(input.pointer.ndcX, input.pointer.ndcY, fw.y, fw.r, fw.g, fw.b, 1500, 0.16, fw.pattern, fw.r2 ?? -1, fw.g2 ?? 0, fw.b2 ?? 0);
       say(`🎆 ${fw.name}`);
     }
     if (e.code === 'Digit1' || e.code === 'Digit2' || e.code === 'Digit3') {

@@ -2190,6 +2190,48 @@ export class FluidSim3D {
     this.enqueueSpark(x, y0, z, vy0, 1.0, 0.84, 0.55, 24, 3, tApex + 0.6);
   }
 
+  /** TIR VISÉ (l'outil fusée de J4) : l'apogée est posée sous le POINTEUR —
+   *  rayon du pointeur ∩ plan horizontal à `apexNy` (fraction de N), même
+   *  géométrie que la visée des charges, même piège : hors boîte, on retombe
+   *  au centre (une fusée mal visée doit éclater au milieu de la scène, pas
+   *  collée à une paroi). La fusée part du sol à la verticale du point visé. */
+  launchRocketAt(
+    ndcX: number,
+    ndcY: number,
+    apexNy = 0.6,
+    r = 1,
+    g = 1,
+    b = 1,
+    count = 1500,
+    speed = 0.16,
+    pattern = 0,
+    r2 = -1,
+    g2 = 0,
+    b2 = 0,
+  ): void {
+    this.computeRay(ndcX, ndcY);
+    const planeY = GRID3 * apexNy;
+    const t = (planeY - this.rayO[1]) / (this.rayD[1] || 1e-6);
+    const rawX = this.rayO[0] + t * this.rayD[0];
+    const rawZ = this.rayO[2] + t * this.rayD[2];
+    const inside = t > 0 && rawX > 0 && rawX < GRID3 && rawZ > 0 && rawZ < GRID3;
+    const clampXZ = (v: number): number => Math.min(Math.max(v, GRID3 * 0.14), GRID3 * 0.86);
+    this.launchRocket(
+      (inside ? clampXZ(rawX) : GRID3 * 0.5) / GRID3,
+      (inside ? clampXZ(rawZ) : GRID3 * 0.5) / GRID3,
+      apexNy,
+      r,
+      g,
+      b,
+      count,
+      speed,
+      pattern,
+      r2,
+      g2,
+      b2,
+    );
+  }
+
   /** Pousse un événement de tir dans la FILE (positions en VOXELS, vitesse en
    *  voxels/s). Curseur et graine avancent à l'ENQUEUE et voyagent avec
    *  l'événement — une file pleine PERD le tir entrant mais le rejeu reste

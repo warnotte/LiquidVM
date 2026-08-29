@@ -189,3 +189,19 @@ le pilotage scripté et le harnais).
   256³, braises intactes. La LUEUR TEINTÉE (le volume de lueur n'injecte que
   du corps noir) reste EN OPTION, non prise : à juger à l'image le jour où
   un acte de démo la réclame — somptueux ou criard.
+
+- **J4 — EN COURS (2026-08-30) : l'outil est livré, le spectacle attend
+  Renaud.** La touche T tire désormais VISÉ AU POINTEUR : l'apogée est posée
+  sous la souris (`launchRocketAt` — rayon ∩ plan horizontal à la hauteur
+  d'éclat de l'entrée de table, même géométrie que la visée des charges,
+  même rabattement au centre hors boîte), la fusée part du sol à la
+  verticale du point visé ; la table (8 tirs : cinq teintes, trois patrons,
+  deux bi-couleurs) fournit la rotation. PIÈGE de visée retrouvé à
+  l'identique, version plan HAUT : vu de la caméra basse du banc, un NDC à
+  +0,25 en Y passe AU-DESSUS du plan d'éclat dans la boîte et le coupe
+  derrière elle — rabattu au centre ; viser bas (+0,05) place les tirs
+  exactement où l'on pointe (banc `cdp-vise-fusee.mjs` du scratchpad :
+  deux tirs NDC ±0,35 → deux éclats gauche/droite ; vrai appui T par
+  Input.dispatchKeyEvent → pivoine au repos du pointeur, centre). RESTE de
+  J4, qui n'est pas à moi : Renaud tire, calibre, et l'acte de démo se
+  refait en couleurs SEULEMENT ensuite — sortie : son verdict.
