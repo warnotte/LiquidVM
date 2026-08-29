@@ -83,6 +83,11 @@ typecheck strict + bundle. Aucune dépendance runtime.
   seconde teinte) ; `launchRocketAt(ndcX, ndcY, ...)` = le même tir VISÉ
   (rayon ∩ plan d'éclat, centre hors boîte). À la main : touche T sur la
   page 3D — le tir suivant d'une table déterministe, visé au pointeur.
+  `cdp-nuit.mjs 9333 [tag]` : le banc A/B de la PRISE DE VUE NUIT — quatre
+  scènes (bougie, panache, fournaise+braises+boule, détonation) construites
+  puis FIGÉES, la seule prise de vue basculant sur l'état identique (le
+  patron de `cdp-suie-ab` : ambiante, clé et lueur se ressemblent à l'œil,
+  seul un A/B sur état gelé dit qui éclaire quoi).
   `cdp-obstacle-chaos.mjs 9333 [tag] [champignon|defaut] [posee[:x]|trainee|sans]
   [retouche-js]` : le banc de l'OBSTACLE. Une seule chose varie à la fois ; la
   détonation, la flamme coupée et la caméra sont tenues fixes. Le geste compte
@@ -516,6 +521,31 @@ particules. Quand une limite n'apparaît qu'en WARNING console, écouter
   in-scattering (∝ densité locale), le SOL reçoit une flaque de lumière chaude,
   la SPHÈRE est éclairée par la lueur. Slider « lueur du feu » (0–3, défaut
   1.8, input.glowStrength). Tourne aussi en pause (passe compute dédiée).
+  (1 ter, 2026-08-30) **PRISE DE VUE « NUIT » (bouton 🌙)** — la mise en
+  lumière, et le diagnostic qui l'a déclenchée. L'atelier est écrit SOMBRE en
+  linéaire (fond 0,045-0,13, tapis 0,075-0,098) mais le tone-map
+  `1−exp(−c·1,25)` puis le gamma 2.2 le remontent à **0,27-0,42 sRGB, du gris
+  moyen** : il n'y avait jamais d'obscurité à l'écran, donc le feu n'était
+  jamais une LUMIÈRE — seulement une forme claire sur un fond clair. Toute la
+  machinerie d'éclairage (volume de lueur, in-scattering, flaque au sol,
+  ombres à deux octaves, corps noir à deux domaines) était payée et
+  invisible. La nuit N'AJOUTE RIEN : elle éteint tout le reste. Cinq endroits,
+  et il faut les cinq — en manquer un suffit à trahir la scène :
+  fond quasi noir mais JAMAIS noir pur (un fond à zéro se lit comme un écran
+  éteint) · ambiante du tapis ÷7 et flaque ×1,8, portée du tapis 1,15 → 2,30
+  (ce qu'on veut n'est pas un tapis mais un CERCLE DE LUMIÈRE qui se perd) ·
+  clé directionnelle réduite à un clair de lune FROID (0,10/0,14/0,22) — une
+  couleur, pas un facteur, c'est l'écart chaud/froid qui fait lire la nuit ·
+  liseré de la boîte ×0,10 (laissé tel quel il devient l'objet le plus clair
+  et cadre le feu d'un néon) · et la boule : albédo écrasé ET sa clé réduite,
+  car baisser le seul albédo laissait, à la bougie, un galet gris en plein
+  soleil au milieu du noir. Encodage : `soot.x` porte TROIS valeurs
+  (0 atelier · 1 extérieur · 2 nuit) — le test d'extérieur devient donc un
+  INTERVALLE, sinon la nuit se lit comme un extérieur (ciel bleu à minuit).
+  Coût nul (des `select` par pas), 60 FPS à 256³, défaut inchangé (atelier).
+  Au passage : les presets ne réinitialisent plus la prise de vue
+  (`applyPreset`) — un point de vue n'est pas une propriété de la scène, et
+  chaque clic rallumait la lumière en pleine nuit. Banc : `cdp-nuit.mjs`.
   (1 bis, 2026-08-30) LUEUR TEINTÉE : les ÉTINCELLES de feu d'artifice
   splattent leur couleur dans un tampon à la résolution de la lueur (3 × u32
   par cellule, virgule fixe ×1024, atomicAdd dans sparks3d.wgsl — remis à

@@ -152,6 +152,7 @@ export interface Sim3Tuning {
   stratStrength: number;
   stratBase: number;
   outdoor: boolean;
+  night: boolean;
   sunHeight: number;
 }
 
@@ -180,6 +181,7 @@ export function defaultTuning3(): Sim3Tuning {
     stratStrength: SIM3_DEFAULTS.stratStrength,
     stratBase: SIM3_DEFAULTS.stratBase,
     outdoor: SIM3_DEFAULTS.outdoor,
+    night: SIM3_DEFAULTS.night,
     sunHeight: SIM3_DEFAULTS.sunHeight,
     oxygenRecover: SIM3_DEFAULTS.oxygenRecover,
     blowForce: SIM3_DEFAULTS.blowForce,
@@ -349,6 +351,13 @@ export const SIM3_DEFAULTS = {
    *  champignon reste une bouffée de fumée dans une boîte. `sunHeight` est la
    *  hauteur du soleil : bas, il sculpte les volutes ; haut, il les aplatit. */
   outdoor: false,
+  /** NUIT (troisième prise de vue, exclusive de `outdoor`) : l'ambiante, la clé
+   *  directionnelle, le liseré de la boîte et l'albédo de la boule s'éteignent
+   *  — le feu devient la seule source. N'ajoute AUCUN calcul : le volume de
+   *  lueur, l'in-scattering et la flaque au sol existaient déjà, ils étaient
+   *  seulement noyés sous un gris moyen (le tone-map remonte l'atelier, écrit
+   *  sombre en linéaire, à 0,27-0,42 sRGB). */
+  night: false,
   sunHeight: 0.18,
   /** Combustion (modèle Feldman/Fedkiw simplifié) : taux de réaction (1/s au-dessus
    *  de l'ignition), chaleur dégagée par unité de carburant, expansion volumique au

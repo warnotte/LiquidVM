@@ -848,13 +848,25 @@ async function boot(): Promise<void> {
   // preset était donc caché derrière une étape que personne ne devine.
   // La détonation est DIFFÉRÉE de quelques frames : le nettoyage de la scène
   // occupe la frame courante, et tirer dedans donnerait une boule amputée.
+  /** Applique un preset SANS toucher à la PRISE DE VUE. Un preset règle la
+   *  physique et le rendu du feu ; atelier / extérieur / nuit sont un POINT DE
+   *  VUE sur la scène, pas une propriété d'elle. Sans cette exception, chaque
+   *  clic de preset rallumait la lumière au milieu d'une scène de nuit — le
+   *  même piège que l'encre appliquée à distance : un réglage qui voyage plus
+   *  loin que ce qu'on croit régler. (La DÉMO garde son propre chemin : ses
+   *  actes pilotent l'extérieur exprès, et elle restaure tout à la sortie.) */
+  const applyPreset = (values: Partial<Sim3Tuning>): void => {
+    const vue = { outdoor: p.outdoor, night: p.night, sunHeight: p.sunHeight };
+    Object.assign(p, defaultTuning3(), values, vue);
+  };
+
   let boomIn = 0;
   const runMushroom = (): void => {
     const preset = PRESETS.find((x) => x.boom !== undefined);
     if (preset === undefined) {
       return;
     }
-    Object.assign(p, defaultTuning3(), preset.values);
+    applyPreset(preset.values);
     Object.assign(input, preset.boom ?? BOOM_DEFAULT);
     input.reset = true;
     input.sphereActive = false; // elle se tiendrait en plein dans le souffle
@@ -913,7 +925,7 @@ async function boot(): Promise<void> {
       buttons: PRESETS.map((preset) => ({
         label: preset.label,
         action: (): void => {
-          Object.assign(p, defaultTuning3(), preset.values);
+          applyPreset(preset.values);
           Object.assign(input, preset.boom ?? BOOM_DEFAULT);
           // Un preset de DÉTONATION est un scénario, pas une ambiance : il part
           // d'un air PROPRE. Sans ce nettoyage, on tire dans ce que la scène
@@ -1091,8 +1103,18 @@ async function boot(): Promise<void> {
         isActive: () => p.outdoor,
         action: () => {
           p.outdoor = !p.outdoor;
+          // Les trois prises de vue s'excluent.
+          if (p.outdoor) p.night = false;
           // Les repères et la boîte de verre n'ont plus de sens en extérieur.
           input.feedback = !p.outdoor;
+        },
+      },
+      {
+        label: '🌙 nuit',
+        isActive: () => p.night,
+        action: () => {
+          p.night = !p.night;
+          if (p.night) p.outdoor = false;
         },
       },
       { label: '🎬 démo', isActive: () => demoOn, action: toggleDemo },

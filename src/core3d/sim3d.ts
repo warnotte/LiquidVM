@@ -3174,7 +3174,9 @@ export class FluidSim3D {
     d[86] = axis?.[2] ?? 0;
     d[87] = axis === undefined ? 0 : handle * SIM3_DEFAULTS.handleAim;
     // Densité de suie AU RENDU (slot z du vec4 « soot » côté raymarch).
-    d[88] = input.params.outdoor ? 1 : 0;
+    // PRISE DE VUE, trois valeurs dans un seul slot (le shader teste un
+    // INTERVALLE pour l'extérieur) : 0 atelier · 1 extérieur · 2 nuit.
+    d[88] = input.params.outdoor ? 1 : input.params.night ? 2 : 0;
     d[89] = input.params.sunHeight;
     d[90] = input.params.sootDensity;
     // Hauteur monde du domaine : le rendu en a besoin pour borner la boîte et

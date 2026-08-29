@@ -163,8 +163,23 @@ fn hash12(p: vec2f) -> f32 {
 // qu'elle est immense — et l'échelle se lit sur un horizon, un ciel, un soleil
 // rasant, une silhouette à contre-jour. C'est du cadrage, pas de la physique,
 // et c'est ce qui manquait le plus.
+// PRISE DE VUE, TROIS VALEURS dans le même slot : 0 atelier · 1 extérieur ·
+// 2 NUIT. Le test d'extérieur est donc un INTERVALLE, pas un « > 0,5 » — sans
+// ça la nuit serait lue comme un extérieur (ciel bleu à minuit).
 fn is_outdoor() -> bool {
-  return R.soot.x > 0.5;
+  return R.soot.x > 0.5 && R.soot.x < 1.5;
+}
+
+// NUIT. Le constat qui l'a fait naître : l'atelier est écrit SOMBRE en linéaire
+// (0,045-0,13), mais le tone-map exponentiel puis le gamma 2.2 le remontent à
+// du gris moyen — il n'y a jamais d'obscurité à l'écran, donc le feu n'est
+// jamais une LUMIÈRE, seulement une forme claire sur un fond clair. Toute la
+// machinerie d'éclairage (volume de lueur, in-scattering, flaque au sol,
+// ombres à deux octaves) était payée et invisible. La nuit ne l'ajoute pas :
+// elle éteint tout le reste — ambiante, clé, liseré, albédo de la boule — pour
+// que le feu reste seul à éclairer.
+fn is_night() -> bool {
+  return R.soot.x > 1.5;
 }
 
 fn sun_dir() -> vec3f {
@@ -221,7 +236,10 @@ fn ground(p: vec3f, rd: vec3f) -> vec3f {
 // Ombrage du sol sous la boîte : tapis sombre qui reçoit l'ombre volumétrique de
 // la fumée (marche courte vers la lumière à travers la boîte) et celle de la boule.
 fn floor_shade(fp: vec3f, bg: vec3f, ldir: vec3f) -> vec3f {
-  let reach = smoothstep(1.15, 0.40, length(fp.xz));
+  // De NUIT le tapis porte plus loin : ce qu'on veut voir n'est pas un tapis
+  // mais un CERCLE DE LUMIÈRE qui se perd dans le noir, et il lui faut de la
+  // place pour s'éteindre. De jour la bordure resterait une tache pâle.
+  let reach = smoothstep(select(1.15, 2.30, is_night()), 0.40, length(fp.xz));
   if (reach <= 0.0) {
     return bg;
   }
@@ -239,10 +257,14 @@ fn floor_shade(fp: vec3f, bg: vec3f, ldir: vec3f) -> vec3f {
     occ += 3.0;
   }
   let shadow = exp(-occ * 0.8);
-  let base = vec3f(0.075, 0.080, 0.098);
+  // AMBIANTE du sol : de nuit elle tombe à presque rien — c'est la condition
+  // pour que la flaque du feu soit la seule chose qui éclaire le sol, donc la
+  // seule chose qu'on voie. Un sol qui garde son ambiante de jour absorbe la
+  // flaque et on retrouve le gris.
+  let base = select(vec3f(0.075, 0.080, 0.098), vec3f(0.011, 0.012, 0.017), is_night());
   // Flaque de lumière chaude sous la flamme : la lueur échantillonnée juste
   // au-dessus du sol éclaire le tapis (clamp-to-edge au-delà de la boîte).
-  let pool = glow_at(vec3f(fp.x, -0.46, fp.z)) * 0.5;
+  let pool = glow_at(vec3f(fp.x, -0.46, fp.z)) * select(0.5, 0.9, is_night());
   return mix(bg, base * (0.30 + 0.70 * shadow) + pool * shadow, reach);
 }
 
@@ -260,6 +282,13 @@ fn fs_main(frag: VSOut) -> @location(0) vec4f {
   // l'horizon). Le second ne change rien à la simulation — seulement ce qui
   // permet de lire une échelle.
   var bg = mix(vec3f(0.045, 0.05, 0.065), vec3f(0.10, 0.105, 0.13), frag.uv.y * 0.5 + 0.5);
+  if (is_night()) {
+    // Presque noir, et bleu — mais JAMAIS noir pur : un fond à zéro se lit
+    // comme un écran éteint, pas comme une nuit. Ces valeurs sont choisies
+    // APRÈS tone-map (exposition 1,25 puis gamma 2.2) : elles arrivent vers
+    // 15-25 sur 255, un ciel de nuit qui garde son dégradé.
+    bg = mix(vec3f(0.0016, 0.0021, 0.0036), vec3f(0.0052, 0.0062, 0.0100), frag.uv.y * 0.5 + 0.5);
+  }
   if (is_outdoor()) {
     bg = sky(rd);
   }
@@ -298,12 +327,24 @@ fn fs_main(frag: VSOut) -> @location(0) vec4f {
     let half = vec3f(0.5, max(R.soot.w, 1e-3) * 0.5, 0.5);
     let e = abs(entry - vec3f(0.0, -0.5 + half.y, 0.0)) / half * 0.5;
     let edge = smoothstep(0.485, 0.499, max(min(e.x, e.y), min(max(e.x, e.y), e.z)));
-    acc += vec3f(0.10, 0.11, 0.14) * edge * 0.5 * select(1.0, 0.0, is_outdoor());
+    // Le liseré de la boîte de verre est PÂLE : de nuit, laissé tel quel, il
+    // devient l'objet le plus clair de l'image et cadre le feu d'un néon. Très
+    // atténué — assez pour savoir où sont les parois quand on pose un objet.
+    var edge_k = select(1.0, 0.10, is_night());
+    edge_k = select(edge_k, 0.0, is_outdoor());
+    acc += vec3f(0.10, 0.11, 0.14) * edge * 0.5 * edge_k;
 
     let ldir = select(R.light.xyz, sun_dir(), is_outdoor());
     let shadow_step = 0.5 / 6.0;
     // Phase directionnelle : constante par rayon (mu = angle vue/lumière).
     let phase = phase_hg(dot(rd, ldir));
+    // CLÉ directionnelle. De nuit elle tombe à un clair de lune froid : c'est
+    // la pièce maîtresse. Sans cette chute, l'image est nocturne mais la fumée
+    // reste éclairée par un soleil qu'on ne voit pas — et c'est ce soleil
+    // fantôme, pas le fond, qui trahissait l'atelier. Une couleur, pas un
+    // facteur : la lune est froide, le feu chaud, et c'est leur ÉCART qui
+    // fait lire la nuit.
+    let key = select(vec3f(R.light.w), vec3f(0.10, 0.14, 0.22) * R.light.w, is_night());
     // PLAFOND DUR de la boucle. Il doit rester ≥ au maximum du curseur « pas de
     // marche » (main3d.ts) : au-delà, le rayon s'arrête AVANT la sortie de boîte
     // et tout ce qui est derrière disparaît — pas d'erreur, juste un nuage qui
@@ -382,7 +423,7 @@ fn fs_main(frag: VSOut) -> @location(0) vec4f {
         let albedo = mix(ink_albedo(s), SOOT_ALBEDO, clamp(soot_ext / max(ext, 1e-4), 0.0, 1.0));
         let lo = blackbody(s.w) * 2.2 +
           albedo * (
-            R.light.w * phase * (shade * 0.92 + 0.08) * 0.28 +
+            key * phase * (shade * 0.92 + 0.08) * 0.28 +
             // In-scattering de la lueur du feu : les volutes voisines de la
             // flamme baignent dans sa lumière (sans direction — déjà diffusée).
             glow_at(pos)
@@ -401,7 +442,19 @@ fn fs_main(frag: VSOut) -> @location(0) vec4f {
       let diff = max(dot(nrm, R.light.xyz), 0.0);
       let rim = pow(1.0 - max(dot(nrm, -rd), 0.0), 3.0);
       let heat_here = textureSampleLevel(density_tex, lin, tex_uvw(sp + nrm * 0.012), 0.0).w;
-      var sphere_col = vec3f(0.30, 0.32, 0.38) * (0.30 + 0.70 * diff) + vec3f(0.10) * rim;
+      // La boule est un gris CLAIR éclairé par la clé : de nuit elle resterait
+      // une lune de béton posée devant le feu. Albédo écrasé, ambiante réduite,
+      // liseré discret — ce qui l'éclaire ensuite, c'est la lueur du feu
+      // (`glow_at`, plus bas) et le corps noir quand la flamme la lèche.
+      let sph_base = select(vec3f(0.30, 0.32, 0.38), vec3f(0.050, 0.053, 0.066), is_night());
+      let sph_amb = select(0.30, 0.10, is_night());
+      let rim_k = select(0.10, 0.03, is_night());
+      // La CLÉ doit chuter ICI AUSSI. Baisser le seul albédo ne suffisait pas :
+      // à la bougie, la boule posée loin de la flamme restait un galet gris en
+      // plein soleil au milieu du noir — éclairé par la lumière qu'on venait
+      // précisément d'éteindre partout ailleurs.
+      let sph_key = select(1.0, 0.16, is_night());
+      var sphere_col = sph_base * (sph_amb + (1.0 - sph_amb) * diff * sph_key) + vec3f(rim_k) * rim;
       sphere_col += blackbody(heat_here) * 0.9;
       // La lueur du feu éclaire aussi la boule (lumière de zone diffusée).
       sphere_col += glow_at(sp) * 0.7;
