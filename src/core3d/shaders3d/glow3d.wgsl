@@ -11,6 +11,14 @@
 @group(0) @binding(1) var lin: sampler;
 @group(1) @binding(0) var src: texture_3d<f32>;
 @group(1) @binding(1) var dst: texture_storage_3d<rgba16float, write>;
+// LUEUR TEINTÉE : la lumière des étincelles, splattée en virgule fixe (×1024)
+// par leur passe d'update, cellule pour cellule — l'injection seule le lit
+// (les blurs restent sur le layout partagé avec curl).
+@group(1) @binding(2) var<storage, read> spark_glow: array<u32>;
+
+// Poids de la lumière d'étincelle face à l'émission corps noir — LE réglage
+// « somptueux ou criard » de l'essai lueur teintée.
+const SPARK_GLOW = 1.2;
 
 // Dupliqué de raymarch.wgsl (les shaders sont autonomes).
 fn blackbody(heat: f32) -> vec3f {
@@ -34,7 +42,14 @@ fn inject(@builtin(global_invocation_id) gid: vec3u) {
     let heat = textureSampleLevel(src, lin, base + (corner - vec3f(0.5)) * 0.5 * inv, 0.0).w;
     emis += blackbody(heat);
   }
-  textureStore(dst, gid, vec4f(emis * 0.125, 0.0));
+  var light = emis * 0.125;
+  // La lumière des étincelles s'AJOUTE au corps noir (hors moyenne des 8
+  // prises : le splat est déjà par cellule grossière) — le seul endroit du
+  // moteur où une lumière verte ou bleue peut naître.
+  let idx = ((gid.z * m.y + gid.y) * m.x + gid.x) * 3u;
+  light += vec3f(f32(spark_glow[idx]), f32(spark_glow[idx + 1u]), f32(spark_glow[idx + 2u])) *
+    (SPARK_GLOW / 1024.0);
+  textureStore(dst, gid, vec4f(light, 0.0));
 }
 
 // Diffusion : boîte 3³ (27 loads), bords clampés.

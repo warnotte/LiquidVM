@@ -509,6 +509,13 @@ particules. Quand une limite n'apparaît qu'en WARNING console, écouter
   in-scattering (∝ densité locale), le SOL reçoit une flaque de lumière chaude,
   la SPHÈRE est éclairée par la lueur. Slider « lueur du feu » (0–3, défaut
   1.8, input.glowStrength). Tourne aussi en pause (passe compute dédiée).
+  (1 bis, 2026-08-30) LUEUR TEINTÉE : les ÉTINCELLES de feu d'artifice
+  splattent leur couleur dans un tampon à la résolution de la lueur (3 × u32
+  par cellule, virgule fixe ×1024, atomicAdd dans sparks3d.wgsl — remis à
+  zéro par clearBuffer, l'update des étincelles précède la passe de lueur) ;
+  l'injection l'ajoute au corps noir (layout dédié `glowInject`, les blurs
+  restent sur celui de curl). Poids : const SPARK_GLOW (glow3d.wgsl) — le
+  seul chemin du moteur où une lumière verte/bleue existe.
   (2) OMBRE À DEUX OCTAVES (« powder ») : 0.62·exp(-τ·0.9) + 0.38·exp(-τ·0.22)
   — la lumière pénètre les cœurs épais. (3) PHASE Henyey-Greenstein g=0.45 sur
   la lumière directionnelle (constante par rayon) : liseré argenté à

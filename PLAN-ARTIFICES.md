@@ -205,3 +205,27 @@ le pilotage scripté et le harnais).
   Input.dispatchKeyEvent → pivoine au repos du pointeur, centre). RESTE de
   J4, qui n'est pas à moi : Renaud tire, calibre, et l'acte de démo se
   refait en couleurs SEULEMENT ensuite — sortie : son verdict.
+
+- **LUEUR TEINTÉE — PRISE À L'ESSAI (2026-08-30), après le doute de Renaud
+  (« pas super content […] on ne joue ici que sur des particules »).**
+  Diagnostic : les étoiles brillaient dans le VIDE — le spectacle n'utilisait
+  pas la force du moteur, la lumière volumétrique. L'option gardée au plan
+  est donc branchée : chaque étoile vivante SPLATTE sa couleur dans un tampon
+  à la résolution du volume de lueur (3 × u32 par cellule, virgule fixe
+  ×1024, atomicAdd dans la passe update — le premier atomics du feu, cantonné
+  à un tampon dédié), remis à zéro par `clearBuffer` au niveau encodeur ;
+  l'INJECTION l'ajoute à l'émission corps noir (layout dédié — les blurs
+  restent sur celui de curl) et toute la chaîne existante suit : diffusion
+  ×3, in-scattering ∝ densité, flaque au sol, sphère éclairée. L'update des
+  étincelles est passé AVANT la passe de lueur (l'injection lit le splat de
+  la frame même) ; pause = lumière gelée cohérente ; un clear de plus solde
+  le résidu à la mort du dernier tir. Poids face au corps noir :
+  `SPARK_GLOW` (glow3d.wgsl) — 0,35 trop discret, **1,2 retenu à l'essai** :
+  aura franche autour de la sphère, volutes voisines teintées, masse
+  lointaine neutre (physique, pas criard — l'in-scattering veut un MILIEU,
+  donc l'effet culmine en scène enfumée). Mesuré (`cdp-lueur.mjs` du
+  scratchpad, planches LU-B-* ; non-régression LU-C-*) : pivoine à aura
+  verte en boîte claire, brume illuminée en vert autour de l'éclat, SALVE
+  transfigurée (chaque tir teinte sa propre fumée), braises INTACTES,
+  60 FPS à 256³. Verdict final : Renaud, à la touche T — le réglage
+  « somptueux ou criard » est cette seule constante.

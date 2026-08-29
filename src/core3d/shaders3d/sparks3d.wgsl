@@ -41,6 +41,12 @@ struct Spark {
 @group(0) @binding(1) var lin: sampler;
 @group(1) @binding(0) var vel_src: texture_3d<f32>;
 @group(1) @binding(1) var<storage, read_write> sparks: array<Spark>;
+// LUEUR TEINTÉE : chaque étoile vivante dépose sa couleur dans ce tampon à la
+// résolution du volume de lueur (3 × u32 par cellule, virgule fixe ×1024,
+// remis à zéro par le CPU avant chaque update). L'injection de lueur l'ajoute
+// à l'émission corps noir — c'est ce qui fait qu'une pivoine ÉCLAIRE la fumée
+// et le sol au lieu de briller dans le vide.
+@group(1) @binding(2) var<storage, read_write> glow_splat: array<atomic<u32>>;
 
 // Grille non cubique : positions et bornes per-axe, vitesses en N horizontal
 // (les cellules sont cubiques) — même règle que les braises.
@@ -174,4 +180,24 @@ fn update(@builtin(global_invocation_id) gid: vec3u) {
     age = e.vel.w + 1.0;
   }
   sparks[i] = Spark(vec4f(pos, age), vec4f(v, e.vel.w), e.tint);
+
+  // SPLAT de lueur teintée — le fondu de fin de vie est celui du tracé
+  // (quadratique, linéaire pour le saule), sans strobo ni occlusion : la
+  // grille grossière et les trois blurs lissent tout de toute façon.
+  if (age < e.vel.w) {
+    let t = age / e.vel.w;
+    var fade = (1.0 - t) * (1.0 - t);
+    if (patt == 1u) {
+      fade = 1.0 - t;
+    }
+    let gn = max(n / 8.0, 16.0);
+    let gny = round(gn * P.misc.w);
+    let cellf = clamp(floor(pos / 8.0), vec3f(0.0), vec3f(gn - 1.0, gny - 1.0, gn - 1.0));
+    let cell = vec3u(cellf);
+    let idx = ((cell.z * u32(gny) + cell.y) * u32(gn) + cell.x) * 3u;
+    let lum = e.tint.xyz * (fade * 1024.0);
+    atomicAdd(&glow_splat[idx], u32(lum.x));
+    atomicAdd(&glow_splat[idx + 1u], u32(lum.y));
+    atomicAdd(&glow_splat[idx + 2u], u32(lum.z));
+  }
 }

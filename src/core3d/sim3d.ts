@@ -349,6 +349,9 @@ export class FluidSim3D {
   private sparkEpoch = 0;
   private sparkFireNow = false;
   private sparksAlive = 0;
+  /** Le splat de lueur teintée porte des valeurs : à solder d'un clearBuffer
+   *  après la mort du dernier tir (sinon un résidu de lumière colle). */
+  private sparkGlowDirty = false;
   /** FUSÉES en vol (le tir complet, jalon J2) : cinématique CPU — même Euler
    *  semi-implicite que la traçante GPU (patron 3), même gravité, AUCUNE
    *  traînée : les deux trajectoires restent confondues sans readback. À
@@ -481,6 +484,8 @@ export class FluidSim3D {
       readonly bloomH: number;
       readonly glowDispatch: number;
       readonly glowDispatchY: number;
+      /** Splat de LUEUR TEINTÉE des étincelles (remis à zéro par clearBuffer). */
+      readonly sparkGlow: GPUBuffer;
     },
   ) {
   }
@@ -582,6 +587,18 @@ export class FluidSim3D {
         label: 'sparks3d-occ',
         size: SPARKS3 * 4,
         usage: GPUBufferUsage.STORAGE,
+      });
+      // LUEUR TEINTÉE (essai, chantier PLAN-ARTIFICES) : les étincelles
+      // splattent leur couleur dans un tampon à la résolution du volume de
+      // lueur (3 × u32 par cellule, virgule fixe ×1024, atomicAdd dans la
+      // passe update) ; l'injection l'ajoute à l'émission corps noir — le
+      // seul endroit du moteur où une lumière VERTE peut naître. COPY_DST :
+      // remis à zéro par clearBuffer avant chaque update (et une fois après
+      // la mort du dernier tir, pour solder le résidu).
+      const sparkGlowBuf = device.createBuffer({
+        label: 'sparks3d-glow',
+        size: GLOW3 * GLOW3Y * GLOW3 * 3 * 4,
+        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       });
 
       const sampler = device.createSampler({
@@ -755,13 +772,26 @@ export class FluidSim3D {
           ],
         }),
         // Étincelles : l'update ne lit que la vitesse (naissance par événement,
-        // pas de rejet sur la chaleur — donc pas de densités) ; tracé et
-        // occlusion clonent le patron des braises.
+        // pas de rejet sur la chaleur — donc pas de densités) et SPLATTE la
+        // lueur teintée (binding 2, atomics) ; tracé et occlusion clonent le
+        // patron des braises.
         sparksSim: device.createBindGroupLayout({
           label: 'sparks-sim-3d',
           entries: [
             sampled3d(0),
             { binding: 1, visibility: COMPUTE, buffer: { type: 'storage' } },
+            { binding: 2, visibility: COMPUTE, buffer: { type: 'storage' } },
+          ],
+        }),
+        // L'injection de lueur quitte le layout partagé avec curl : elle lit
+        // EN PLUS le splat de lueur teintée des étincelles (les blurs, eux,
+        // restent sur le layout curl).
+        glowInject: device.createBindGroupLayout({
+          label: 'glow-inject-3d',
+          entries: [
+            sampled3d(0),
+            storage3d(1, 'rgba16float'),
+            { binding: 2, visibility: COMPUTE, buffer: { type: 'read-only-storage' } },
           ],
         }),
         sparksDraw: device.createBindGroupLayout({
@@ -908,7 +938,7 @@ export class FluidSim3D {
             fragment: { module: raymarchM, entryPoint: 'fs_main', targets: [{ format: 'rgba16float' }] },
             primitive: { topology: 'triangle-list' },
           }),
-          compute('glow-inject-3d', L.curl, glowM, 'inject'),
+          compute('glow-inject-3d', L.glowInject, glowM, 'inject'),
           compute('glow-blur-3d', L.curl, glowM, 'blur'),
           compute('bloom-down-3d', L.post2d, postM, 'bloom_down'),
           compute('bloom-h-3d', L.post2d, postM, 'bloom_h'),
@@ -1149,10 +1179,11 @@ export class FluidSim3D {
         glowInject: pair((d) =>
           device.createBindGroup({
             label: `glow-inject-3d-${d}`,
-            layout: L.curl,
+            layout: L.glowInject,
             entries: [
               { binding: 0, resource: density[d] },
               { binding: 1, resource: glow[0] },
+              { binding: 2, resource: { buffer: sparkGlowBuf } },
             ],
           }),
         ),
@@ -1235,6 +1266,7 @@ export class FluidSim3D {
             entries: [
               { binding: 0, resource: velocity[v] },
               { binding: 1, resource: { buffer: sparkBuffer } },
+              { binding: 2, resource: { buffer: sparkGlowBuf } },
             ],
           }),
         ),
@@ -1472,6 +1504,7 @@ export class FluidSim3D {
           bloomH: BLOOM_H,
           glowDispatch,
           glowDispatchY,
+          sparkGlow: sparkGlowBuf,
         },
       );
     });
@@ -1664,6 +1697,23 @@ export class FluidSim3D {
     {
       const gd = this.post.glowDispatch;
       const gdy = this.post.glowDispatchY;
+      // Étincelles : l'update PRÉCÈDE désormais la lueur — il splatte la
+      // couleur des étoiles dans le tampon de lueur teintée (remis à zéro
+      // ici, au niveau encodeur), que l'injection lit dans la foulée. La
+      // vitesse est la même qu'après la section sim : rien d'autre ne bouge.
+      if (running && this.sparksAlive > 0) {
+        encoder.clearBuffer(this.post.sparkGlow);
+        const sp = encoder.beginComputePass({ label: 'sparks-sim' });
+        sp.setBindGroup(0, this.group0);
+        sp.setPipeline(this.pipelines.sparksUpdate);
+        sp.setBindGroup(1, this.binds.sparksSim[this.velIdx]);
+        sp.dispatchWorkgroups(SPARKS3 / 64);
+        sp.end();
+        this.sparkGlowDirty = true;
+      } else if (this.sparkGlowDirty && (running || input.reset)) {
+        encoder.clearBuffer(this.post.sparkGlow);
+        this.sparkGlowDirty = false;
+      }
       const gp = encoder.beginComputePass({ label: 'glow3d', timestampWrites: tw(3) });
       gp.setBindGroup(0, this.group0);
       gp.setPipeline(this.pipelines.glowInject);
@@ -1682,13 +1732,6 @@ export class FluidSim3D {
         gp.setPipeline(this.pipelines.embersUpdate);
         gp.setBindGroup(1, this.binds.embersSim[this.velIdx][this.denIdx]);
         gp.dispatchWorkgroups(EMBERS3 / 64);
-      }
-      // Étincelles de feu d'artifice : naissance par événement de tir +
-      // balistique — passes entièrement sautées dès que plus rien ne vit.
-      if (running && this.sparksAlive > 0) {
-        gp.setPipeline(this.pipelines.sparksUpdate);
-        gp.setBindGroup(1, this.binds.sparksSim[this.velIdx]);
-        gp.dispatchWorkgroups(SPARKS3 / 64);
       }
       gp.end();
       // Occlusion des braises, par PARTICULE (voir `occlude`) — aussi en pause :
