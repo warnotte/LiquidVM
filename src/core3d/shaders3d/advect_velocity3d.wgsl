@@ -28,7 +28,7 @@ struct Params {
   field0_a: vec4f, field0_b: vec4f,
   field1_a: vec4f, field1_b: vec4f,
   field2_a: vec4f, field2_b: vec4f,
-  burst_a: vec4f, burst_b: vec4f,
+  libre_a: vec4f, libre_b: vec4f, // (ancien slot d'explosion unique, libéré)
   soot: vec4f,
   // x: bande LATÉRALE (voxels, 0 = parois closes), y: sa force,
   // z: bande de PLAFOND, w: sa force. Deux réglages parce que deux rôles.

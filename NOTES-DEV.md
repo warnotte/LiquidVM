@@ -53,6 +53,18 @@ typecheck strict + bundle. Aucune dépendance runtime.
   nuage, et c'est ce qui a démasqué la suie qui ne se produisait pas.
   `cdp-timeline.mjs 9333 [action] [index] [ms] [n] [tag] [urlFilter]` : captures
   périodiques — l'outil pour localiser une mort dans le temps.
+  `cdp-salve.mjs 9333 [tag] [ecartMs]` : trois détonations VISÉES à 0,5 s
+  d'écart — le banc des charges multiples, jugé sur la COEXISTENCE (une boule
+  fraîche à côté d'un nuage déjà noirci) et sur les slots (centres distincts).
+  Il NAVIGUE À NEUF d'abord : les slots de charge survivent au reset, un banc
+  précédent sur la même page fausserait l'attribution.
+  `cdp-vise.mjs 9333` : sonde de visée — rejoue le calcul de rayon hors tir et
+  dit quels points NDC tombent DANS la boîte sur le plan de charge. À passer
+  AVANT d'écrire un banc qui vise : le plan est bas, une visée à peine trop
+  haute ou large le coupe hors boîte et le tir est rabattu au centre.
+  `cdp-profil384.mjs 9333` : recharge en ?grid=384&profile&lock et imprime la
+  médiane de la table ?profile par passe — la jauge avant/après d'une retouche
+  de shader.
   `cdp-obstacle-chaos.mjs 9333 [tag] [champignon|defaut] [posee[:x]|trainee|sans]
   [retouche-js]` : le banc de l'OBSTACLE. Une seule chose varie à la fois ; la
   détonation, la flamme coupée et la caméra sont tenues fixes. Le geste compte
@@ -869,6 +881,34 @@ particules. Quand une limite n'apparaît qu'en WARNING console, écouter
   Aller plus loin demanderait un domaine anisotrope (grille plus haute que
   large), donc un pas de grille différent selon l'axe — dans l'advection, le
   laplacien et le rendu. Chantier réel, non entrepris.
+- **CHARGES MULTIPLES (2026-08-29)** — le slot d'explosion unique devient
+  QUATRE charges en vol (`maxBursts`, config3d) : tirer n'ampute plus la charge
+  précédente — une salve donne une boule incandescente fraîche À CÔTÉ du nuage
+  déjà noirci du tir d'avant (banc `cdp-salve.mjs`). Ce qui ne se devine pas :
+   1. **Chaque charge porte SES DEUX fenêtres** (injection ET poussière) : un
+      champignon garde son pied alimenté 5 s même si on tire ailleurs pendant.
+      Le débit de poussière est passé PAR CHARGE (`bursts[2k+1].z` — `dust.x`
+      libéré) ; rayon/épaisseur de la galette restent des réglages communs.
+   2. **Attribution de slot** : un slot ÉTEINT de préférence (les deux fenêtres
+      consumées), sinon le plus ancien (rang de tir `stamp`) — un bombardement
+      recycle ses charges mortes avant d'amputer une charge en vol. La graine
+      reste GLOBALE, avancée d'un pas fixe par tir : la même suite de
+      détonations rejoue à l'identique, slots ou pas.
+   3. **Le RESET éteint les fenêtres.** Avant, le tir suivant écrasait l'unique
+      slot ; avec plusieurs, la poussière d'un champignon re-cliqué aurait
+      survécu au reset et arraché le sol de la scène NEUVE au point de l'ancien
+      impact. Positions et graine restent (inertes).
+   4. **Uniforme** : tampon sim 512 → 640 o, charges en `array<vec4f, 8>` aux
+      floats 116-147 (2 vec4 par charge), les slots 92-99 de l'ancien slot
+      unique sont LIBRES. Seul advect_density3d lit les charges — les autres
+      shaders n'ont pas bougé (un struct préfixe suffit). Le drapeau binaire
+      « injection en cours » a disparu : un débit nul gate le bloc.
+   5. **Coût : nul, mesuré** (`cdp-profil384.mjs`) : aval 7,89 ms contre 7,9 de
+      référence — la boucle des 4 charges est en contrôle UNIFORME, les groupes
+      sautent les blocs d'un même pas quand rien n'est en vol.
+  C'est la « capacité moteur nouvelle » que la note de la démo demandait
+  (bombardements réellement superposés) — la démo reste ARRÊTÉE, à re-juger si
+  l'envie revient.
 - **Prochaines briques** : séquences VDB animées (File System Access API) ;
   encres colorées (canaux yz réservés dans la densité) ; qualité du confinement
   de vorticité (flouter |ω|).
@@ -998,9 +1038,10 @@ plus aux toggles ; les gains de rendu se jugent sur une scène DENSE (le panache
 par défaut a trop peu de pas occupés).
 
 Pistes restantes, côté feu : qualité du confinement de vorticité · test
-smartphone (1024², limites WebGPU mobiles) · plusieurs charges simultanées (le
-slot d'explosion est unique — c'est aussi la capacité nouvelle qui pourrait
-relancer la démo).
+smartphone (1024², limites WebGPU mobiles). Les charges multiples : FAITES
+(2026-08-29, entrée « CHARGES MULTIPLES » du chantier 3D) — la capacité qui
+pourrait relancer la démo existe désormais, la démo reste arrêtée tant que
+Renaud ne la relance pas.
 (« Encres colorées » a longtemps traîné ici : c'est FAIT depuis le 2026-08-21,
 commit 7cefd12 — touches 1/2/3, fumée/encre/carburant, albédo mélangé par voxel.
 La ligne datait d'avant ce commit et a survécu à une réécriture de la section.)

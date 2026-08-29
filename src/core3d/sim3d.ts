@@ -73,7 +73,9 @@ export interface Frame3DInput {
   fieldType: number;
   fieldStrength: number;
   fieldRadius: number;
-  /** EXPLOSION : détonation sous le pointeur (consommée), et son calibre. */
+  /** EXPLOSION : détonation sous le pointeur (consommée), et son calibre.
+   *  Jusqu'à `maxBursts` charges vivent en même temps — tirer n'ampute plus la
+   *  charge précédente. */
   explode: boolean;
   explosionRadius: number;
   explosionFuel: number;
@@ -218,8 +220,9 @@ export class FluidSim3D {
   /** Première frame : initialiser la texture d'espèces (O₂ = 1 partout). */
   private needSpeciesInit = true;
 
-  // 116 floats utilisés (29 vec4) depuis la stratification.
-  private readonly simData = new Float32Array(116);
+  // 148 floats utilisés (37 vec4) depuis les charges multiples (2 vec4 par
+  // charge aux slots 116-147 ; 92-99, l'ancien slot unique, sont libres).
+  private readonly simData = new Float32Array(148);
   // 92 floats utilisés (23 vec4) depuis la suie.
   private readonly renderData = new Float32Array(92);
   private lastRender = new Float32Array(92).fill(Number.NaN);
@@ -263,21 +266,28 @@ export class FluidSim3D {
   private sphereOn = true;
   /** Vitesse de la sphère (voxels/s) — condition de bord mobile, lissée EMA. */
   private readonly sphereVel: [number, number, number] = [0, 0, 0];
-  /** BOUFFÉE D'EXPLOSION en cours : centre (voxels), rayon (voxels) et temps
-   *  d'injection RESTANT (secondes). Injecter « pendant une frame » donnerait un
-   *  résultat dépendant du framerate ; on injecte à débit constant pendant une
-   *  durée fixe, et la même détonation rend la même boule à 30 comme à 120 FPS. */
-  private readonly burstPos: [number, number, number] = [0, 0, 0];
-  private burstRadius = 0;
-  private burstLeft = 0;
-  /** Fraction de CETTE frame passée dans la fenêtre d'injection (0 à 1). Les
-   *  débits sont multipliés par elle : la charge délivrée vaut alors exactement
-   *  débit × durée, quel que soit le pas de temps. */
-  private burstFrac = 0;
-  /** Même mécanique pour la POUSSIÈRE, mais sur sa propre fenêtre : le sol
-   *  s'arrache tant que le courant monte, pas seulement pendant la détonation. */
-  private dustLeft = 0;
-  private dustFrac = 0;
+  /** CHARGES EN VOL (jusqu'à `maxBursts` simultanées) : centre (voxels), rayon
+   *  (voxels), et le temps RESTANT de chaque fenêtre — l'injection de la charge
+   *  et l'arrachement de la POUSSIÈRE, chacune la sienne (le sol s'arrache tant
+   *  que le courant monte, pas seulement pendant la détonation). Injecter
+   *  « pendant une frame » donnerait un résultat dépendant du framerate ; on
+   *  injecte à débit constant pendant une durée fixe, et la même détonation rend
+   *  la même boule à 30 comme à 120 FPS. `frac`/`dustFrac` = fraction de CETTE
+   *  frame passée dans la fenêtre (0 à 1) : les débits en sont multipliés, la
+   *  charge délivrée vaut exactement débit × durée quel que soit le pas de
+   *  temps. Slots pré-alloués (zéro allocation par frame) ; `stamp` = rang de
+   *  tir, pour écraser le plus ancien quand tout est en vol. */
+  private readonly bursts = Array.from({ length: SIM3_DEFAULTS.maxBursts }, () => ({
+    pos: [0, 0, 0] as [number, number, number],
+    radius: 0,
+    left: 0,
+    frac: 0,
+    dustLeft: 0,
+    dustFrac: 0,
+    seed: 0,
+    stamp: 0,
+  }));
+  private burstStamp = 0;
   /** Graine des grumeaux de la charge : avancée à chaque détonation pour que
    *  deux explosions ne soient pas jumelles, mais AVANCÉE D'UN PAS FIXE — la
    *  même suite de détonations rejoue donc à l'identique, ce qu'on veut d'un
@@ -490,8 +500,8 @@ export class FluidSim3D {
       });
       const simUniforms = device.createBuffer({
         label: 'sim3d-uniforms',
-        // 512 o : 100 floats utilisés depuis la bouffée d'explosion.
-        size: 512,
+        // 640 o : 148 floats utilisés depuis les charges multiples.
+        size: 640,
         usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
       });
       const renderUniforms = device.createBuffer({
@@ -1867,6 +1877,16 @@ export class FluidSim3D {
       this.spherePos[0] = GRID3 * SIM3_DEFAULTS.sphereStart[0];
       this.spherePos[1] = GRID3 * SIM3_DEFAULTS.sphereStart[1];
       this.spherePos[2] = GRID3 * SIM3_DEFAULTS.sphereStart[2];
+      // Les fenêtres des charges s'éteignent : une poussière encore en cours
+      // (champignon = 5 s) continuerait sinon d'arracher le sol de la scène
+      // NEUVE au point de l'ancien impact. Avec le slot unique, le tir suivant
+      // écrasait tout ; avec plusieurs slots, il faut éteindre explicitement.
+      // Graine et positions restent (inertes) : la suite de détonations rejoue
+      // à l'identique.
+      for (const b of this.bursts) {
+        b.left = 0;
+        b.dustLeft = 0;
+      }
     }
     this.sphereOn = input.sphereActive;
     // L'encre sélectionnée s'applique aux FUTURS émetteurs — et à celui qu'on tient
@@ -1919,13 +1939,24 @@ export class FluidSim3D {
       const inside =
         t > 0 && rawX > 0 && rawX < GRID3 && rawZ > 0 && rawZ < GRID3;
       const clampXZ = (v: number): number => Math.min(Math.max(v, GRID3 * 0.14), GRID3 * 0.86);
-      this.burstPos[0] = inside ? clampXZ(rawX) : GRID3 * 0.5;
-      this.burstPos[1] = planeY;
-      this.burstPos[2] = inside ? clampXZ(rawZ) : GRID3 * 0.5;
-      this.burstRadius = input.explosionRadius * GRID3;
-      this.burstLeft = SIM3_DEFAULTS.explosionTime;
-      this.dustLeft = input.dustTime;
+      // SLOT : un éteint de préférence (les deux fenêtres consumées), sinon le
+      // plus ancien — un bombardement recycle ses charges mortes avant
+      // d'amputer une charge en vol.
+      let slot = this.bursts[0]!; // maxBursts ≥ 1 : jamais vide
+      for (const b of this.bursts) {
+        const bFree = b.left <= 0 && b.dustLeft <= 0;
+        const sFree = slot.left <= 0 && slot.dustLeft <= 0;
+        if (bFree !== sFree ? bFree : b.stamp < slot.stamp) slot = b;
+      }
+      slot.pos[0] = inside ? clampXZ(rawX) : GRID3 * 0.5;
+      slot.pos[1] = planeY;
+      slot.pos[2] = inside ? clampXZ(rawZ) : GRID3 * 0.5;
+      slot.radius = input.explosionRadius * GRID3;
+      slot.left = SIM3_DEFAULTS.explosionTime;
+      slot.dustLeft = input.dustTime;
       this.burstSeed = (this.burstSeed + 7.31) % 97;
+      slot.seed = this.burstSeed;
+      slot.stamp = ++this.burstStamp;
     }
     // TRANCHE de la fenêtre d'injection couverte par cette frame. Le `min` est
     // tout le sujet : sans lui, la charge délivrée dépend du PAS DE TEMPS, donc
@@ -1937,16 +1968,18 @@ export class FluidSim3D {
     // détonation strictement sans effet, ce qui est le cas des grosses grilles.
     // La fenêtre ne s'écoule pas non plus en PAUSE : sinon la charge se consume
     // pendant qu'on regarde, et repartir donne une explosion amputée.
-    this.burstFrac = 0;
-    this.dustFrac = 0;
-    if (running && dt > 1e-6) {
-      if (this.burstLeft > 0) {
-        this.burstFrac = Math.min(this.burstLeft, dt) / dt;
-        this.burstLeft = Math.max(this.burstLeft - dt, 0);
-      }
-      if (this.dustLeft > 0) {
-        this.dustFrac = Math.min(this.dustLeft, dt) / dt;
-        this.dustLeft = Math.max(this.dustLeft - dt, 0);
+    for (const b of this.bursts) {
+      b.frac = 0;
+      b.dustFrac = 0;
+      if (running && dt > 1e-6) {
+        if (b.left > 0) {
+          b.frac = Math.min(b.left, dt) / dt;
+          b.left = Math.max(b.left - dt, 0);
+        }
+        if (b.dustLeft > 0) {
+          b.dustFrac = Math.min(b.dustLeft, dt) / dt;
+          b.dustLeft = Math.max(b.dustLeft - dt, 0);
+        }
       }
     }
     // CHAMPS DE FORCE : posés à mi-hauteur, là où le panache passe.
@@ -2418,20 +2451,7 @@ export class FluidSim3D {
       d[o + 6] = f?.axis[2] ?? 0;
       d[o + 7] = (f?.strength ?? 0) * SCALE3;
     }
-    // Bouffée d'explosion : centre + rayon, puis les débits. Le débit tombe à
-    // zéro dès que la durée d'injection est écoulée — la boule vit ensuite de sa
-    // seule combustion, comme il se doit.
-    d[92] = this.burstPos[0];
-    d[93] = this.burstPos[1];
-    d[94] = this.burstPos[2];
-    d[95] = this.burstRadius;
-    // Les DÉBITS portent la fraction de frame ; le drapeau reste binaire (il ne
-    // sert qu'à sauter le bloc dans le shader).
-    const firing = this.burstFrac;
-    d[96] = firing * input.explosionFuel;
-    d[97] = firing * input.explosionSpark;
-    d[98] = firing > 0 ? 1 : 0;
-    d[99] = this.burstSeed;
+    // (Slots 92-99 : libres — les charges vivent en 116-147, en fin de tampon.)
     // Suie : rendement et évanouissement (le rendu lit sa densité côté render).
     d[100] = p.sootYield;
     d[101] = p.sootFade;
@@ -2441,9 +2461,8 @@ export class FluidSim3D {
     d[105] = p.openStrength;
     d[106] = p.openCeilBand * GRID3;
     d[107] = p.openCeilStrength;
-    // Poussière soulevée : débit, puis rayon et épaisseur EN VOXELS. Le débit ne
-    // vaut que pendant la fenêtre d'injection, comme la charge elle-même.
-    d[108] = this.dustFrac * input.dustRate;
+    // Poussière soulevée : rayon et épaisseur EN VOXELS — communs à toutes les
+    // charges. Le DÉBIT, lui, suit chaque charge (fenêtre propre), plus bas.
     d[109] = input.dustRadius * GRID3;
     d[110] = SIM3_DEFAULTS.dustHeight * GRID3;
     d[111] = p.heatCeiling;
@@ -2453,6 +2472,22 @@ export class FluidSim3D {
     // Oxygène : apport du souffle (blow_force.w) et récupération lente.
     d[27] = D.blowOxygen;
     d[59] = p.oxygenRecover;
+    // CHARGES : deux vec4 par charge — centre + rayon, puis les débits et la
+    // graine. Les débits portent déjà la fraction de frame de LEUR fenêtre ;
+    // une charge éteinte a ses trois débits à zéro et le shader saute ses blocs.
+    for (let i = 0; i < this.bursts.length; i++) {
+      const b = this.bursts[i];
+      if (!b) continue;
+      const o = 116 + i * 8;
+      d[o] = b.pos[0];
+      d[o + 1] = b.pos[1];
+      d[o + 2] = b.pos[2];
+      d[o + 3] = b.radius;
+      d[o + 4] = b.frac * input.explosionFuel;
+      d[o + 5] = b.frac * input.explosionSpark;
+      d[o + 6] = b.dustFrac * input.dustRate;
+      d[o + 7] = b.seed;
+    }
     this.device.queue.writeBuffer(this.simUniforms, 0, d);
   }
 

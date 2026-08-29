@@ -29,22 +29,33 @@ struct Params {
   field1_b: vec4f,
   field2_a: vec4f,
   field2_b: vec4f,
-  // EXPLOSION : xyz centre (voxels), w rayon (voxels).
-  burst_a: vec4f,
-  // x: débit de carburant (1/s), y: débit de l'amorce en chaleur (1/s),
-  // z: injection en cours (0/1) — les deux débits sont déjà à zéro sinon,
-  // w: graine des grumeaux (décalage du bruit, change à chaque détonation).
-  burst_b: vec4f,
+  // (libres — l'ancien slot d'explosion UNIQUE ; les charges vivent dans
+  // `bursts`, en queue de struct.)
+  libre_a: vec4f,
+  libre_b: vec4f,
   // x: rendement de suie, y: évanouissement, z: refroidissement PAR la suie.
   soot: vec4f,
   // x: bande LATÉRALE (voxels, 0 = parois closes), y: sa force,
   // z: bande de PLAFOND, w: sa force. Deux réglages parce que deux rôles.
   open_box: vec4f,
-  // POUSSIÈRE soulevée : x débit, y rayon horizontal (voxels), z épaisseur,
-  // w: PLAFOND du canal de chaleur — 2 pour une flamme, bien plus pour une
-  // boule de feu (voir le second domaine de `blackbody` dans raymarch.wgsl).
+  // POUSSIÈRE soulevée : y rayon horizontal (voxels), z épaisseur — communs à
+  // toutes les charges (x est libre : le débit, lui, est PAR CHARGE, dans
+  // `bursts`), w: PLAFOND du canal de chaleur — 2 pour une flamme, bien plus
+  // pour une boule de feu (voir le second domaine de `blackbody`, raymarch.wgsl).
   dust: vec4f,
+  // (stratification — lue par l'advection de VITESSE ; déclarée ici pour caler
+  // l'offset des charges.)
+  strat: vec4f,
+  // CHARGES en vol (jusqu'à MAX_BURSTS simultanées) : deux vec4 par charge —
+  //  [2k]   xyz centre (voxels), w rayon (voxels) ;
+  //  [2k+1] x débit de carburant (1/s), y débit d'amorce en chaleur,
+  //         z débit de poussière, w graine des grumeaux. Les débits portent
+  //         déjà la fraction de frame de LEUR fenêtre (injection et poussière,
+  //         chacune la sienne) ; une charge éteinte a ses trois débits à zéro.
+  bursts: array<vec4f, 8>,
 }
+
+const MAX_BURSTS = 4u;
 
 // BANDE ÉPONGE (« ciel ouvert ») — la boîte 3D est close de partout (Neumann par
 // clamp), donc tout ce qu'on injecte finit par la remplir : un panache plafonne
@@ -276,39 +287,45 @@ fn correct(@builtin(global_invocation_id) gid: vec3u) {
       val.w + heat_rate * dt * g,
     );
   }
-  // EXPLOSION : une bouffée de CARBURANT avec son AMORCE en chaleur. Rien
-  // d'autre — la combustion trois lignes plus haut fait la boule de feu, la suie
-  // et (par l'expansion, dans la passe de divergence) le souffle. L'amorce est
-  // plus resserrée que le carburant : le cœur part le premier et le front gagne
-  // le bord, ce qui donne une boule qui S'OUVRE au lieu de s'allumer d'un bloc.
-  if (P.burst_b.z > 0.5) {
-    let dq = distance(center, P.burst_a.xyz) / max(P.burst_a.w, 1e-3);
-    let gauss = exp(-dq * dq * 3.0);
-    if (gauss > 1e-3) {
-      // Grumeaux de charge : le bruit est ancré sur le CENTRE de la bouffée (il
-      // ne glisse donc pas d'une frame à l'autre) et décalé par une graine, pour
-      // que deux détonations ne soient pas jumelles. Deux octaves, taille de
-      // motif ≈ un tiers du rayon.
-      let q = (center - P.burst_a.xyz) / max(P.burst_a.w, 1e-3) * 3.4 + P.burst_b.w;
-      let n = vnoise(q) * 0.65 + vnoise(q * 2.7) * 0.35;
-      // Le CARBURANT est fortement modulé (c'est lui qui dessine les langues de
-      // flamme), l'AMORCE beaucoup moins : le cœur doit partir à coup sûr, sinon
-      // la charge couve au lieu de détoner.
-      val.z += P.burst_b.x * dt * gauss * mix(0.25, 1.75, n);
-      val.w += P.burst_b.y * dt * exp(-dq * dq * 7.0) * mix(0.8, 1.2, n);
+  // EXPLOSIONS : chaque charge en vol injecte une bouffée de CARBURANT avec son
+  // AMORCE en chaleur. Rien d'autre — la combustion trois lignes plus haut fait
+  // la boule de feu, la suie et (par l'expansion, dans la passe de divergence)
+  // le souffle. L'amorce est plus resserrée que le carburant : le cœur part le
+  // premier et le front gagne le bord, ce qui donne une boule qui S'OUVRE au
+  // lieu de s'allumer d'un bloc. Les débits d'une charge éteinte sont à zéro :
+  // le contrôle est uniforme, les groupes sautent ses blocs d'un même pas.
+  for (var k = 0u; k < MAX_BURSTS; k++) {
+    let a = P.bursts[k * 2u];
+    let b = P.bursts[k * 2u + 1u];
+    if (b.x + b.y > 0.0) {
+      let dq = distance(center, a.xyz) / max(a.w, 1e-3);
+      let gauss = exp(-dq * dq * 3.0);
+      if (gauss > 1e-3) {
+        // Grumeaux de charge : le bruit est ancré sur le CENTRE de la bouffée
+        // (il ne glisse donc pas d'une frame à l'autre) et décalé par une
+        // graine, pour que deux détonations ne soient pas jumelles. Deux
+        // octaves, taille de motif ≈ un tiers du rayon.
+        let q = (center - a.xyz) / max(a.w, 1e-3) * 3.4 + b.w;
+        let n = vnoise(q) * 0.65 + vnoise(q * 2.7) * 0.35;
+        // Le CARBURANT est fortement modulé (c'est lui qui dessine les langues
+        // de flamme), l'AMORCE beaucoup moins : le cœur doit partir à coup sûr,
+        // sinon la charge couve au lieu de détoner.
+        val.z += b.x * dt * gauss * mix(0.25, 1.75, n);
+        val.w += b.y * dt * exp(-dq * dq * 7.0) * mix(0.8, 1.2, n);
+      }
     }
-  }
-
-  // POUSSIÈRE SOULEVÉE : une galette de matière FROIDE plaquée au sol, autour du
-  // point d'impact. Le pied d'un champignon n'est pas fait de la charge — il est
-  // fait du sol arraché, que le courant ascendant de la boule aspire ensuite
-  // derrière elle. Sans ce terme, on obtient un chapeau qui flotte sans colonne.
-  // Froide, donc : elle ne monte que parce qu'on l'entraîne, ce qui est
-  // exactement ce qui donne au pied sa lenteur et son étranglement.
-  if (P.dust.x > 0.0) {
-    let dr = length(center.xz - P.burst_a.xz) / max(P.dust.y, 1e-3);
-    let dh = center.y / max(P.dust.z, 1e-3);
-    val.x += P.dust.x * dt * exp(-dr * dr * 1.4) * exp(-dh * dh * 2.0);
+    // POUSSIÈRE SOULEVÉE : une galette de matière FROIDE plaquée au sol, autour
+    // du point d'impact. Le pied d'un champignon n'est pas fait de la charge —
+    // il est fait du sol arraché, que le courant ascendant de la boule aspire
+    // ensuite derrière elle. Sans ce terme, on obtient un chapeau qui flotte
+    // sans colonne. Froide, donc : elle ne monte que parce qu'on l'entraîne, ce
+    // qui est exactement ce qui donne au pied sa lenteur et son étranglement.
+    // La fenêtre d'arrachement est PROPRE à chaque charge.
+    if (b.z > 0.0) {
+      let dr = length(center.xz - a.xz) / max(P.dust.y, 1e-3);
+      let dh = center.y / max(P.dust.z, 1e-3);
+      val.x += b.z * dt * exp(-dr * dr * 1.4) * exp(-dh * dh * 2.0);
+    }
   }
 
   val = min(val, vec4f(3.0, 3.0, 3.0, max(P.dust.w, 2.0)));

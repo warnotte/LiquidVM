@@ -270,6 +270,11 @@ export const SIM3_DEFAULTS = {
   explosionFuel: 55,
   explosionSpark: 22,
   explosionTime: 0.05,
+  /** CHARGES EN VOL simultanées (2 vec4 d'uniforme par charge, slots 116-147).
+   *  Une détonation prend un slot ÉTEINT — les deux fenêtres consumées —, ou à
+   *  défaut écrase le plus ancien : un bombardement recycle ses charges mortes
+   *  avant d'amputer une charge en vol. */
+  maxBursts: 4,
   /** HAUTEUR de la détonation (fraction de N). Au RAS DU SOL par défaut : c'est
    *  ce qui distingue une boule de feu en l'air d'une explosion « au sol », et
    *  c'est la seule position qui produise un pied de champignon. */
