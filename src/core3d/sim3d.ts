@@ -17,6 +17,8 @@ import postWGSL from './shaders3d/post3d.wgsl?raw';
 import gizmoWGSL from './shaders3d/gizmo3d.wgsl?raw';
 import embersWGSL from './shaders3d/embers3d.wgsl?raw';
 import embersDrawWGSL from './shaders3d/embers_draw.wgsl?raw';
+import sparksWGSL from './shaders3d/sparks3d.wgsl?raw';
+import sparksDrawWGSL from './shaders3d/sparks_draw.wgsl?raw';
 import clearWGSL from './shaders3d/clear3d.wgsl?raw';
 import {
   DISPATCH3,
@@ -32,6 +34,7 @@ import {
   MG3_POST_SMOOTH,
   SCALE3,
   SIM3_DEFAULTS,
+  SPARKS3,
   WG3,
   type Sim3Tuning,
 } from './config3d';
@@ -220,9 +223,10 @@ export class FluidSim3D {
   /** Première frame : initialiser la texture d'espèces (O₂ = 1 partout). */
   private needSpeciesInit = true;
 
-  // 148 floats utilisés (37 vec4) depuis les charges multiples (2 vec4 par
-  // charge aux slots 116-147 ; 92-99, l'ancien slot unique, sont libres).
-  private readonly simData = new Float32Array(148);
+  // 160 floats = les 640 o du tampon : 148 pour la simulation (2 vec4 par
+  // charge aux slots 116-147 ; 92-99, l'ancien slot unique, sont libres) puis
+  // TROIS vec4 en queue (148-159) pour l'événement de tir des étincelles.
+  private readonly simData = new Float32Array(160);
   // 92 floats utilisés (23 vec4) depuis la suie.
   private readonly renderData = new Float32Array(92);
   private lastRender = new Float32Array(92).fill(Number.NaN);
@@ -293,6 +297,26 @@ export class FluidSim3D {
    *  même suite de détonations rejoue donc à l'identique, ce qu'on veut d'un
    *  simulateur dont on rebaie les sorties. */
   private burstSeed = 0;
+  /** ÉTINCELLES de feu d'artifice — l'ÉVÉNEMENT DE TIR (consommé en une frame,
+   *  le patron des charges) et son anneau. Le CURSEUR attribue les particules
+   *  par tranches contiguës — déterministe, pas d'atomics ; la graine avance
+   *  d'un pas fixe comme celle des charges ; l'ÉPOQUE tue au premier update
+   *  tout ce qui est né avant un reset. `sparksAlive` (secondes de temps
+   *  SIMULÉ) garde les trois passes entièrement sautées quand plus rien ne
+   *  vit. */
+  private readonly sparkEvent = {
+    pos: [0, 0, 0] as [number, number, number],
+    speed: 0,
+    color: [0, 0, 0] as [number, number, number],
+    count: 0,
+    base: 0,
+  };
+  private sparkCursor = 0;
+  private sparkSeed = 0;
+  private sparkEpoch = 0;
+  private sparkFire = false;
+  private sparkFireNow = false;
+  private sparksAlive = 0;
 
   /** Cible saisie : même encodage que `selected` (-2 = aucune). */
   private grabbed = -2;
@@ -356,6 +380,9 @@ export class FluidSim3D {
       embersUpdate: GPUComputePipeline;
       embersOcc: GPUComputePipeline;
       embersDraw: GPURenderPipeline;
+      sparksUpdate: GPUComputePipeline;
+      sparksOcc: GPUComputePipeline;
+      sparksDraw: GPURenderPipeline;
     },
     private readonly binds: {
       velPredict: Pair<GPUBindGroup>; // [vel] → scratch
@@ -378,6 +405,9 @@ export class FluidSim3D {
       embersSim: Pair<Pair<GPUBindGroup>>; // [vel][den] + particules + R
       embersDraw: Pair<GPUBindGroup>; // [den] + particules + occlusion précalculée
       embersOcc: Pair<GPUBindGroup>; // [den] — la passe compute d'occlusion
+      sparksSim: Pair<GPUBindGroup>; // [vel] + étincelles (naissance par événement)
+      sparksDraw: Pair<GPUBindGroup>; // [den] + étincelles + occlusion précalculée
+      sparksOcc: Pair<GPUBindGroup>; // [den] — occlusion des étincelles
       clearsRgba: readonly GPUBindGroup[];
       clearsScalar: readonly GPUBindGroup[];
     },
@@ -487,6 +517,19 @@ export class FluidSim3D {
       const emberOcc = device.createBuffer({
         label: 'embers3d-occ',
         size: EMBERS3 * 4,
+        usage: GPUBufferUsage.STORAGE,
+      });
+      // Étincelles de feu d'artifice : même doctrine que les braises (buffer
+      // fixe zéro-initialisé = toutes mortes), 48 o/particule — la couleur
+      // prescrite et l'époque vivent dans un troisième vec4.
+      const sparkBuffer = device.createBuffer({
+        label: 'sparks3d',
+        size: SPARKS3 * 48,
+        usage: GPUBufferUsage.STORAGE,
+      });
+      const sparkOcc = device.createBuffer({
+        label: 'sparks3d-occ',
+        size: SPARKS3 * 4,
         usage: GPUBufferUsage.STORAGE,
       });
 
@@ -660,6 +703,36 @@ export class FluidSim3D {
             { binding: 5, visibility: COMPUTE, buffer: { type: 'storage' } },
           ],
         }),
+        // Étincelles : l'update ne lit que la vitesse (naissance par événement,
+        // pas de rejet sur la chaleur — donc pas de densités) ; tracé et
+        // occlusion clonent le patron des braises.
+        sparksSim: device.createBindGroupLayout({
+          label: 'sparks-sim-3d',
+          entries: [
+            sampled3d(0),
+            { binding: 1, visibility: COMPUTE, buffer: { type: 'storage' } },
+          ],
+        }),
+        sparksDraw: device.createBindGroupLayout({
+          label: 'sparks-draw-3d',
+          entries: [
+            { binding: 0, visibility: VERTEX, buffer: { type: 'uniform' } },
+            { binding: 1, visibility: VERTEX, sampler: { type: 'filtering' } },
+            sampled3d(2, VERTEX),
+            { binding: 3, visibility: VERTEX, buffer: { type: 'read-only-storage' } },
+            { binding: 4, visibility: VERTEX, buffer: { type: 'read-only-storage' } },
+          ],
+        }),
+        sparksOcc: device.createBindGroupLayout({
+          label: 'sparks-occ-3d',
+          entries: [
+            { binding: 0, visibility: COMPUTE, buffer: { type: 'uniform' } },
+            { binding: 1, visibility: COMPUTE, sampler: { type: 'filtering' } },
+            { binding: 2, visibility: COMPUTE, texture: { sampleType: 'float', viewDimension: '3d' } },
+            { binding: 3, visibility: COMPUTE, buffer: { type: 'read-only-storage' } },
+            { binding: 5, visibility: COMPUTE, buffer: { type: 'storage' } },
+          ],
+        }),
       };
 
       const [advectVelM, advectDenM, vorticityM, projectM, raymarchM, glowM, postM, clearM] =
@@ -673,9 +746,11 @@ export class FluidSim3D {
           createShaderModule(device, 'post3d.wgsl', postWGSL),
           createShaderModule(device, 'clear3d.wgsl', clearWGSL),
         ]);
-      const [embersM, embersDrawM, gizmoM] = await Promise.all([
+      const [embersM, embersDrawM, sparksM, sparksDrawM, gizmoM] = await Promise.all([
         createShaderModule(device, 'embers3d.wgsl', embersWGSL),
         createShaderModule(device, 'embers_draw.wgsl', embersDrawWGSL),
+        createShaderModule(device, 'sparks3d.wgsl', sparksWGSL),
+        createShaderModule(device, 'sparks_draw.wgsl', sparksDrawWGSL),
         createShaderModule(device, 'gizmo3d.wgsl', gizmoWGSL),
       ]);
       const multigridM = await createShaderModule(device, 'multigrid3d.wgsl', multigridWGSL);
@@ -730,7 +805,15 @@ export class FluidSim3D {
         }),
         compute: { module: embersDrawM, entryPoint: 'occlude' },
       });
-      const [velPredict, velCorrect, curlPipe, blurCurlPipe, confine, denPredict, denCorrect, divergencePipe, jacobi, gradient, mgSmoothRed, mgSmoothBlack, mgTinyPipe, mgRestrictPipe, mgProlongPipe, mgProlongPPPipe, clearOne, clearRgba, clearScalar, render, glowInjectPipe, glowBlurPipe, bloomDownPipe, bloomHPipe, bloomVPipe, presentPipe, gizmoPipe, embersUpdatePipe, embersDrawPipe] =
+      const sparksOccPipe = await device.createComputePipelineAsync({
+        label: 'sparks-occ-3d',
+        layout: device.createPipelineLayout({
+          label: 'sparks-occ-3d-pl',
+          bindGroupLayouts: [L.sparksOcc],
+        }),
+        compute: { module: sparksDrawM, entryPoint: 'occlude' },
+      });
+      const [velPredict, velCorrect, curlPipe, blurCurlPipe, confine, denPredict, denCorrect, divergencePipe, jacobi, gradient, mgSmoothRed, mgSmoothBlack, mgTinyPipe, mgRestrictPipe, mgProlongPipe, mgProlongPPPipe, clearOne, clearRgba, clearScalar, render, glowInjectPipe, glowBlurPipe, bloomDownPipe, bloomHPipe, bloomVPipe, presentPipe, gizmoPipe, embersUpdatePipe, embersDrawPipe, sparksUpdatePipe, sparksDrawPipe] =
         await Promise.all([
           compute('vel-predict-3d', L.velPredict, advectVelM, 'predict'),
           compute('vel-correct-3d', L.velCorrect, advectVelM, 'correct'),
@@ -816,6 +899,30 @@ export class FluidSim3D {
             fragment: {
               module: embersDrawM,
               entryPoint: 'fs_embers',
+              targets: [
+                {
+                  format: 'rgba16float',
+                  blend: {
+                    color: { srcFactor: 'one', dstFactor: 'one', operation: 'add' },
+                    alpha: { srcFactor: 'one', dstFactor: 'one', operation: 'add' },
+                  },
+                },
+              ],
+            },
+            primitive: { topology: 'triangle-list' },
+          }),
+          compute('sparks-update-3d', L.sparksSim, sparksM, 'update'),
+          // Étincelles : mêmes billboards additifs, couleur PRESCRITE.
+          device.createRenderPipelineAsync({
+            label: 'sparks-draw-3d',
+            layout: device.createPipelineLayout({
+              label: 'sparks-draw-3d-pl',
+              bindGroupLayouts: [L.sparksDraw],
+            }),
+            vertex: { module: sparksDrawM, entryPoint: 'vs_sparks' },
+            fragment: {
+              module: sparksDrawM,
+              entryPoint: 'fs_sparks',
               targets: [
                 {
                   format: 'rgba16float',
@@ -1070,6 +1177,42 @@ export class FluidSim3D {
             ],
           }),
         ),
+        sparksSim: pair((v) =>
+          device.createBindGroup({
+            label: `sparks-sim-3d-v${v}`,
+            layout: L.sparksSim,
+            entries: [
+              { binding: 0, resource: velocity[v] },
+              { binding: 1, resource: { buffer: sparkBuffer } },
+            ],
+          }),
+        ),
+        sparksDraw: pair((d) =>
+          device.createBindGroup({
+            label: `sparks-draw-3d-${d}`,
+            layout: L.sparksDraw,
+            entries: [
+              { binding: 0, resource: { buffer: renderUniforms } },
+              { binding: 1, resource: sampler },
+              { binding: 2, resource: density[d] },
+              { binding: 3, resource: { buffer: sparkBuffer } },
+              { binding: 4, resource: { buffer: sparkOcc } },
+            ],
+          }),
+        ),
+        sparksOcc: pair((d) =>
+          device.createBindGroup({
+            label: `sparks-occ-3d-${d}`,
+            layout: L.sparksOcc,
+            entries: [
+              { binding: 0, resource: { buffer: renderUniforms } },
+              { binding: 1, resource: sampler },
+              { binding: 2, resource: density[d] },
+              { binding: 3, resource: { buffer: sparkBuffer } },
+              { binding: 5, resource: { buffer: sparkOcc } },
+            ],
+          }),
+        ),
         clearsRgba: [velocity[0], velocity[1], density[0], density[1]].map((view, i) =>
           device.createBindGroup({
             label: `clear-rgba-3d-${i}`,
@@ -1256,6 +1399,9 @@ export class FluidSim3D {
           embersUpdate: embersUpdatePipe,
           embersOcc: embersOccPipe,
           embersDraw: embersDrawPipe,
+          sparksUpdate: sparksUpdatePipe,
+          sparksOcc: sparksOccPipe,
+          sparksDraw: sparksDrawPipe,
         },
         binds,
         mgLevels,
@@ -1486,6 +1632,13 @@ export class FluidSim3D {
         gp.setBindGroup(1, this.binds.embersSim[this.velIdx][this.denIdx]);
         gp.dispatchWorkgroups(EMBERS3 / 64);
       }
+      // Étincelles de feu d'artifice : naissance par événement de tir +
+      // balistique — passes entièrement sautées dès que plus rien ne vit.
+      if (running && this.sparksAlive > 0) {
+        gp.setPipeline(this.pipelines.sparksUpdate);
+        gp.setBindGroup(1, this.binds.sparksSim[this.velIdx]);
+        gp.dispatchWorkgroups(SPARKS3 / 64);
+      }
       gp.end();
       // Occlusion des braises, par PARTICULE (voir `occlude`) — aussi en pause :
       // l'orbite de caméra change la ligne de visée, l'occlusion doit suivre.
@@ -1495,6 +1648,14 @@ export class FluidSim3D {
         op.setBindGroup(0, this.binds.embersOcc[this.denIdx]);
         op.dispatchWorkgroups(EMBERS3 / 64);
         op.end();
+      }
+      // Occlusion des étincelles — même logique, même raison d'exister en pause.
+      if (this.sparksAlive > 0) {
+        const sp = encoder.beginComputePass({ label: 'sparks-occ' });
+        sp.setPipeline(this.pipelines.sparksOcc);
+        sp.setBindGroup(0, this.binds.sparksOcc[this.denIdx]);
+        sp.dispatchWorkgroups(SPARKS3 / 64);
+        sp.end();
       }
     }
 
@@ -1515,6 +1676,12 @@ export class FluidSim3D {
       rp.setPipeline(this.pipelines.embersDraw);
       rp.setBindGroup(0, this.binds.embersDraw[this.denIdx]);
       rp.draw(6, EMBERS3);
+    }
+    // Étincelles : même chemin, couleur prescrite par particule.
+    if (this.sparksAlive > 0) {
+      rp.setPipeline(this.pipelines.sparksDraw);
+      rp.setBindGroup(0, this.binds.sparksDraw[this.denIdx]);
+      rp.draw(6, SPARKS3);
     }
     rp.end();
 
@@ -1879,6 +2046,40 @@ export class FluidSim3D {
     this.fireBurst(c(nx) * GRID3, c(ny) * GRID3, c(nz) * GRID3, input);
   }
 
+  /** Pilotage scripté : FEU D'ARTIFICE — un éclat d'étincelles à couleur
+   *  PRESCRITE en (nx,ny,nz), fractions de N (convention explodeAt). Les
+   *  particules naissent par tranche d'anneau au prochain pas SIMULÉ — en
+   *  pause, le tir reste armé (mais un reset le désarme). Le diamètre de la
+   *  pivoine se règle par la vitesse radiale (`speed`, fraction de N par
+   *  seconde). UN ÉVÉNEMENT PAR PAS SIMULÉ : deux tirs dans la même frame — ou
+   *  plusieurs pendant une pause — s'écrasent et seul le dernier naît (curseur
+   *  et graine avancent quand même : le rejeu reste identique). Le scénario
+   *  espace ses tirs, comme les charges. */
+  launchFirework(
+    nx: number,
+    ny: number,
+    nz: number,
+    r: number,
+    g: number,
+    b: number,
+    count = 1500,
+    speed = 0.16,
+  ): void {
+    const c = (v: number): number => Math.min(Math.max(v, 0.05), 0.95);
+    this.sparkEvent.pos[0] = c(nx) * GRID3;
+    this.sparkEvent.pos[1] = c(ny) * GRID3;
+    this.sparkEvent.pos[2] = c(nz) * GRID3;
+    this.sparkEvent.speed = speed * GRID3;
+    this.sparkEvent.color[0] = r;
+    this.sparkEvent.color[1] = g;
+    this.sparkEvent.color[2] = b;
+    this.sparkEvent.count = Math.min(Math.max(Math.round(count), 1), SPARKS3);
+    this.sparkEvent.base = this.sparkCursor;
+    this.sparkCursor = (this.sparkCursor + this.sparkEvent.count) % SPARKS3;
+    this.sparkSeed = (this.sparkSeed + 7.31) % 97;
+    this.sparkFire = true;
+  }
+
   /** Arme une charge (position en voxels) : slot ÉTEINT de préférence — les
    *  deux fenêtres consumées —, sinon le plus ancien (rang de tir `stamp`) :
    *  un bombardement recycle ses charges mortes avant d'amputer une charge en
@@ -1921,6 +2122,16 @@ export class FluidSim3D {
         b.left = 0;
         b.dustLeft = 0;
       }
+      // Les étincelles aussi : l'ÉPOQUE avance — le premier update qui suit
+      // tue tout ce qui est né avant (le tracé vient après lui dans la frame,
+      // aucune étoile rassie ne réapparaît). Modulo 2²⁴ : le dernier entier
+      // exact en f32 — un modulo court pouvait boucler et ressusciter des
+      // étoiles gelées d'une vieille époque. Et le TIR EN ATTENTE est désarmé,
+      // comme les fenêtres des charges : un tir posé pendant la pause ne doit
+      // pas exploser en fantôme dans la scène neuve.
+      this.sparkEpoch = (this.sparkEpoch + 1) % 16777216;
+      this.sparksAlive = 0;
+      this.sparkFire = false;
     }
     this.sphereOn = input.sphereActive;
     // L'encre sélectionnée s'applique aux FUTURS émetteurs — et à celui qu'on tient
@@ -2003,6 +2214,18 @@ export class FluidSim3D {
           b.dustLeft = Math.max(b.dustLeft - dt, 0);
         }
       }
+    }
+    // ÉTINCELLES : le tir armé est consommé au premier pas SIMULÉ (en pause il
+    // attend — comme les fenêtres des charges), et il arme la fenêtre de vie
+    // des passes ; elle décroît en temps simulé et les trois passes sont
+    // entièrement sautées dès qu'elle est vide.
+    this.sparkFireNow = this.sparkFire && running && dt > 1e-6;
+    if (this.sparkFireNow) {
+      this.sparkFire = false;
+      this.sparksAlive = Math.max(this.sparksAlive, 3.0);
+    }
+    if (running && this.sparksAlive > 0) {
+      this.sparksAlive = Math.max(this.sparksAlive - dt, 0);
     }
     // CHAMPS DE FORCE : posés à mi-hauteur, là où le panache passe.
     if (input.addField && this.fields.length < SIM3_DEFAULTS.maxFields) {
@@ -2510,6 +2733,22 @@ export class FluidSim3D {
       d[o + 6] = b.dustFrac * input.dustRate;
       d[o + 7] = b.seed;
     }
+    // ÉTINCELLES : l'événement de tir, trois vec4 en QUEUE de tampon (au-delà
+    // des 148 floats de la simulation — le shader y accède par un struct à
+    // blocs de padding). Le compte n'est non nul QUE la frame du tir : comme
+    // les charges, l'événement se consume tout seul.
+    const sk = this.sparkEvent;
+    d[148] = sk.pos[0];
+    d[149] = sk.pos[1];
+    d[150] = sk.pos[2];
+    d[151] = sk.speed;
+    d[152] = sk.color[0];
+    d[153] = sk.color[1];
+    d[154] = sk.color[2];
+    d[155] = this.sparkFireNow ? sk.count : 0;
+    d[156] = sk.base;
+    d[157] = this.sparkSeed;
+    d[158] = this.sparkEpoch;
     this.device.queue.writeBuffer(this.simUniforms, 0, d);
   }
 

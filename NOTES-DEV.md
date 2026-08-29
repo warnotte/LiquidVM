@@ -70,6 +70,10 @@ typecheck strict + bundle. Aucune dépendance runtime.
   `__demo3d.t` (le mural dérive du boot), plus le début du tour 2 de boucle —
   c'est là qu'un état oublié par un acte se voit. S'appuie sur `?demo=<s>` qui
   cale l'horloge au lancement (les actes antérieurs s'appliquent en un tick).
+  `cdp-sparks.mjs 9333 [tag]` : le banc des ÉTINCELLES de feu d'artifice
+  (chantier PLAN-ARTIFICES) — pivoine VERTE (la teinte-preuve : le corps noir
+  ne la produit pas), duo bicolore rapproché, puis NON-RÉGRESSION des braises
+  en fournaise. Tir scripté : `__sim3d.launchFirework(x, y, z, r, g, b)`.
   `cdp-obstacle-chaos.mjs 9333 [tag] [champignon|defaut] [posee[:x]|trainee|sans]
   [retouche-js]` : le banc de l'OBSTACLE. Une seule chose varie à la fois ; la
   détonation, la flamme coupée et la caméra sont tenues fixes. Le geste compte

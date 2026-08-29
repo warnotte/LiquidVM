@@ -76,6 +76,12 @@ export function setGrid3(n: number, stretch = HEIGHT3): void {
  *  L'autorégulation par rejet fait que seule une fraction vit à la fois. */
 export const EMBERS3 = 32768;
 
+/** ÉTINCELLES de feu d'artifice (chantier PLAN-ARTIFICES) : particules à
+ *  COULEUR PRESCRITE, nées par ÉVÉNEMENT DE TIR (curseur en anneau, pas de
+ *  rejet sur la chaleur). Buffer fixe 48 o/particule = 3 Mo, zéro-initialisé =
+ *  toutes mortes. Distinctes des braises — fonctionnalité validée, intouchée. */
+export const SPARKS3 = 65536;
+
 /** Workgroups 4×4×4 = 64 threads ; dispatch cubique. */
 export const WG3 = 4;
 export let DISPATCH3 = Math.ceil(GRID3 / WG3);
