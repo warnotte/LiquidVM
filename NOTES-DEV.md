@@ -304,6 +304,13 @@ Config actuelle : sim 1024², dye/scène 2048².
 - **Candidat à rapatrier seul depuis `marbrure`** : l'aperçu fantôme des outils
   (`platform/web/preview.ts` + son câblage main.ts/styles) — il sert TOUS les
   outils, pas que la marbrure.
+- **FEUX D'ARTIFICE (chantier PLAN-ARTIFICES) — RANGÉ le 2026-08-30**, cas
+  différent : mergé DANS main, fonctionnel et inerte par défaut (système
+  événementiel, coût au repos nul). Étincelles à couleur prescrite, tirs
+  complets visés (touche T), salves, bi-couleurs, lueur teintée. Verdict de
+  Renaud : « pas ce que j'avais vraiment espéré, même s'il y a de l'idée » —
+  J4 (acte de démo en couleurs) non fait. Ne pas re-proposer ; reprise
+  éventuelle par le journal de PLAN-ARTIFICES.md.
 
 ## Chantier suivant : EAU liquide (branche `eau`)
 

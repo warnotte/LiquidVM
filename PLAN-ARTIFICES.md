@@ -1,5 +1,13 @@
 # PLAN — FEUX D'ARTIFICE COLORÉS (chantier ouvert le 2026-08-29)
 
+**CHANTIER RANGÉ (2026-08-30) — verdict de Renaud : « ce n'est pas que je
+n'aime pas, mais ce n'est pas ce que j'avais vraiment espéré, même s'il y a
+de l'idée. »** J0-J3 verts et mergés, outil de tir visé (touche T) et lueur
+teintée livrés — tout est DANS main et INERTE par défaut (système
+événementiel, coût au repos strictement nul, passes sautées). NE PAS
+RE-PROPOSER ; à re-évaluer seulement si Renaud le relance — le journal
+ci-dessous dit où tout se trouve, rien n'est à re-coder.
+
 Commande de Renaud, après l'échec du feu d'artifice « gaz » de la démo (« pas
 top top, pas beaucoup de couleur, un peu plat ») : de VRAIS feux d'artifice,
 colorés. Ce document est la référence du chantier — à relire avant d'écrire du
@@ -229,3 +237,14 @@ le pilotage scripté et le harnais).
   transfigurée (chaque tir teinte sa propre fumée), braises INTACTES,
   60 FPS à 256³. Verdict final : Renaud, à la touche T — le réglage
   « somptueux ou criard » est cette seule constante.
+
+- **RANGEMENT (2026-08-30).** Verdict de Renaud, après l'essai lueur
+  teintée : « ce n'est pas que je n'aime pas, mais ce n'est pas ce que
+  j'avais vraiment espéré, même s'il y a de l'idée. » Le chantier s'arrête
+  là — J4 reste non validé (pas d'acte de démo en couleurs). Rien n'est
+  retiré : étincelles, tirs complets, salves, bi-couleurs et lueur teintée
+  restent dans main, inertes par défaut, jouables à la touche T et pilotables
+  par `launchFirework` / `launchRocket` / `launchRocketAt`. Reprise
+  éventuelle : relire ce journal — l'architecture (couleur sur particules,
+  file des tirs, splat de lueur) est complète et vérifiée, seule la mise en
+  scène manque.
