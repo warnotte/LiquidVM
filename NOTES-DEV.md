@@ -74,10 +74,13 @@ typecheck strict + bundle. Aucune dépendance runtime.
   (chantier PLAN-ARTIFICES) — pivoine VERTE (la teinte-preuve : le corps noir
   ne la produit pas), duo bicolore rapproché, chronologies saule et éclat,
   le TIR COMPLET (montée traçante → flash à l'apogée → sphère → retombée →
-  fumée), puis NON-RÉGRESSION des braises en fournaise. Tir scripté :
+  fumée), la SALVE de cinq teintes (coexistence, mélanges propres), le
+  BI-COULEUR (coque + cœur), puis NON-RÉGRESSION des braises en fournaise.
+  Tir scripté :
   `__sim3d.launchFirework(x, y, z, r, g, b, n?, vitesse?, patron?)` (l'éclat
-  seul) et `__sim3d.launchRocket(x, z, apexY, r, g, b, n?, vitesse?, patron?)`
-  (le tir complet) — à la main : touche T sur la page 3D (table déterministe
+  seul) et `__sim3d.launchRocket(x, z, apexY, r, g, b, n?, vitesse?, patron?,
+  r2?, g2?, b2?)` (le tir complet ; r2 ≥ 0 = bi-couleur, le cœur prend la
+  seconde teinte) — à la main : touche T sur la page 3D (table déterministe
   de tirs complets).
   `cdp-obstacle-chaos.mjs 9333 [tag] [champignon|defaut] [posee[:x]|trainee|sans]
   [retouche-js]` : le banc de l'OBSTACLE. Une seule chose varie à la fois ; la

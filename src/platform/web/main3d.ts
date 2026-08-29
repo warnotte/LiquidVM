@@ -761,12 +761,15 @@ async function boot(): Promise<void> {
     x: number; y: number; z: number;
     r: number; g: number; b: number;
     name: string; pattern: number;
+    r2?: number; g2?: number; b2?: number;
   }[] = [
     { x: 0.5, y: 0.6, z: 0.5, r: 0.15, g: 1.0, b: 0.25, name: 'pivoine verte', pattern: 0 },
     { x: 0.36, y: 0.55, z: 0.62, r: 0.25, g: 0.45, b: 1.0, name: 'pivoine bleue', pattern: 0 },
     { x: 0.64, y: 0.68, z: 0.42, r: 1.0, g: 0.72, b: 0.2, name: 'saule d’or', pattern: 1 },
     { x: 0.45, y: 0.72, z: 0.35, r: 1.0, g: 0.28, b: 0.22, name: 'saule rouge', pattern: 1 },
     { x: 0.6, y: 0.55, z: 0.65, r: 0.85, g: 0.3, b: 1.0, name: 'éclat violet', pattern: 2 },
+    { x: 0.55, y: 0.64, z: 0.4, r: 0.2, g: 1.0, b: 0.3, name: 'pivoine cœur d’or', pattern: 0, r2: 1.0, g2: 0.75, b2: 0.2 },
+    { x: 0.4, y: 0.58, z: 0.55, r: 1.0, g: 0.3, b: 0.25, name: 'pivoine cœur bleu', pattern: 0, r2: 0.3, g2: 0.5, b2: 1.0 },
     { x: 0.42, y: 0.62, z: 0.52, r: 1.0, g: 1.0, b: 1.0, name: 'éclat blanc', pattern: 2 },
   ];
   window.addEventListener('keydown', (e) => {
@@ -831,7 +834,7 @@ async function boot(): Promise<void> {
       toast(input.feedback ? 'retours visuels : actifs' : 'retours visuels : coupés');
     } else if (k === 't') {
       const fw = FIREWORKS[fireworkAt++ % FIREWORKS.length]!;
-      sim.launchRocket(fw.x, fw.z, fw.y, fw.r, fw.g, fw.b, 1500, 0.16, fw.pattern);
+      sim.launchRocket(fw.x, fw.z, fw.y, fw.r, fw.g, fw.b, 1500, 0.16, fw.pattern, fw.r2 ?? -1, fw.g2 ?? 0, fw.b2 ?? 0);
       say(`🎆 ${fw.name}`);
     }
     if (e.code === 'Digit1' || e.code === 'Digit2' || e.code === 'Digit3') {

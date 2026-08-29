@@ -171,3 +171,21 @@ le pilotage scripté et le harnais).
   sphère verte → retombée 2900 → fumée qui dérive 4200-6000 ; 60 FPS à 256³,
   fenêtre refermée, braises fournaise INTACTES, saule/éclat/duo inchangés
   (les constantes par patron refactorées en tableaux — valeurs identiques).
+
+- **J3 — VERT (2026-08-30, machine de référence).** Palette et variété — le
+  gros du jalon était DÉJÀ LÀ (la teinte, le calibre — vitesse et compte — et
+  le patron sont des paramètres depuis J0/J1) ; ce qui manquait : le
+  BI-COULEUR et la preuve de la salve. Bi-couleur par la FILE DES TIRS, aucun
+  slot d'uniforme de plus : à l'apogée, deux éclats au même point — la coque
+  à la teinte principale (65 % des étoiles, pleine vitesse), le CŒUR à la
+  seconde (35 %, vitesse ×0,55) — étalés d'un pas simulé par la file,
+  invisible à l'œil. `launchRocket(..., r2, g2, b2)`, r2 ≥ 0 arme le
+  bi-couleur ; deux entrées bi-colores dans la table de la touche T (cœur
+  d'or, cœur bleu). Mesuré (`cdp-sparks.mjs`, planches J3A-salve-*/
+  J3A-bicolore-*) : SALVE de cinq tirs complets étagés de 350 ms — rouge,
+  vert, bleu, or, violet — les cinq sphères COEXISTENT, chaque teinte
+  lisible, mélanges propres (l'anneau sépare, comme au duo de J0) ; le
+  bi-couleur se lit nettement à 2,1 s (coque verte, cœur d'or). 60 FPS à
+  256³, braises intactes. La LUEUR TEINTÉE (le volume de lueur n'injecte que
+  du corps noir) reste EN OPTION, non prise : à juger à l'image le jour où
+  un acte de démo la réclame — somptueux ou criard.

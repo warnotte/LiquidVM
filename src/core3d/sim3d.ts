@@ -360,6 +360,8 @@ export class FluidSim3D {
     pos: [0, 0, 0] as [number, number, number],
     vy: 0,
     color: [0, 0, 0] as [number, number, number],
+    // Seconde teinte (bi-couleur, jalon J3) : x < 0 = tir monochrome.
+    color2: [-1, 0, 0] as [number, number, number],
     count: 0,
     speed: 0,
     pattern: 0,
@@ -2136,7 +2138,10 @@ export class FluidSim3D {
    *  presque sans carburant (flash, poussée, fumée grise — poussière NULLE :
    *  un éclat en l'air n'arrache pas le sol). La traçante GPU meurt au même
    *  critère (vy ≤ 0) : les deux trajectoires sont le même Euler
-   *  semi-implicite — aucun readback. */
+   *  semi-implicite — aucun readback. BI-COULEUR (r2 ≥ 0) : la coque garde la
+   *  teinte principale, le CŒUR prend la seconde — deux éclats au même point
+   *  (65 % à pleine vitesse, 35 % à 0,55×), que la file étale d'un pas
+   *  simulé, invisible à l'œil. */
   launchRocket(
     nx: number,
     nz: number,
@@ -2147,6 +2152,9 @@ export class FluidSim3D {
     count = 1500,
     speed = 0.16,
     pattern = 0,
+    r2 = -1,
+    g2 = 0,
+    b2 = 0,
   ): void {
     const c = (v: number): number => Math.min(Math.max(v, 0.08), 0.92);
     const x = c(nx) * GRID3;
@@ -2169,6 +2177,9 @@ export class FluidSim3D {
     slot.color[0] = r;
     slot.color[1] = g;
     slot.color[2] = b;
+    slot.color2[0] = r2;
+    slot.color2[1] = g2;
+    slot.color2[2] = b2;
     slot.count = count;
     slot.speed = speed;
     slot.pattern = Math.min(Math.max(Math.round(pattern), 0), 2);
@@ -2378,17 +2389,18 @@ export class FluidSim3D {
         rk.pos[1] += rk.vy * dt;
         if (rk.vy <= 0 || rk.pos[1] > GRID3Y - 2) {
           rk.live = false;
-          this.launchFirework(
-            rk.pos[0] / GRID3,
-            rk.pos[1] / GRID3,
-            rk.pos[2] / GRID3,
-            rk.color[0],
-            rk.color[1],
-            rk.color[2],
-            rk.count,
-            rk.speed,
-            rk.pattern,
-          );
+          const px = rk.pos[0] / GRID3;
+          const py = rk.pos[1] / GRID3;
+          const pz = rk.pos[2] / GRID3;
+          if (rk.color2[0] >= 0) {
+            // BI-COULEUR : la coque à la teinte principale, le cœur (plus
+            // lent, donc plus petit) à la seconde — la file étale d'un pas.
+            const shell = Math.round(rk.count * 0.65);
+            this.launchFirework(px, py, pz, rk.color[0], rk.color[1], rk.color[2], shell, rk.speed, rk.pattern);
+            this.launchFirework(px, py, pz, rk.color2[0], rk.color2[1], rk.color2[2], rk.count - shell, rk.speed * 0.55, rk.pattern);
+          } else {
+            this.launchFirework(px, py, pz, rk.color[0], rk.color[1], rk.color[2], rk.count, rk.speed, rk.pattern);
+          }
           this.fireBurst(rk.pos[0], rk.pos[1], rk.pos[2], input, {
             radius: 0.045 * GRID3,
             fuelMul: 0.12,
