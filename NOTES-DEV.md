@@ -65,6 +65,11 @@ typecheck strict + bundle. Aucune dépendance runtime.
   `cdp-profil384.mjs 9333` : recharge en ?grid=384&profile&lock et imprime la
   médiane de la table ?profile par passe — la jauge avant/après d'une retouche
   de shader.
+  `cdp-artifice.mjs 9333 [tag]` : les actes V-VI de la démo (bombardement, feu
+  d'artifice, bouquet) capturés AUX INSTANTS DU SCÉNARIO en lisant l'horloge
+  `__demo3d.t` (le mural dérive du boot), plus le début du tour 2 de boucle —
+  c'est là qu'un état oublié par un acte se voit. S'appuie sur `?demo=<s>` qui
+  cale l'horloge au lancement (les actes antérieurs s'appliquent en un tick).
   `cdp-obstacle-chaos.mjs 9333 [tag] [champignon|defaut] [posee[:x]|trainee|sans]
   [retouche-js]` : le banc de l'OBSTACLE. Une seule chose varie à la fois ; la
   détonation, la flamme coupée et la caméra sont tenues fixes. Le geste compte
@@ -906,9 +911,41 @@ particules. Quand une limite n'apparaît qu'en WARNING console, écouter
    5. **Coût : nul, mesuré** (`cdp-profil384.mjs`) : aval 7,89 ms contre 7,9 de
       référence — la boucle des 4 charges est en contrôle UNIFORME, les groupes
       sautent les blocs d'un même pas quand rien n'est en vol.
-  C'est la « capacité moteur nouvelle » que la note de la démo demandait
-  (bombardements réellement superposés) — la démo reste ARRÊTÉE, à re-juger si
-  l'envie revient.
+  C'est la « capacité moteur nouvelle » que la note de la démo demandait — et
+  Renaud a relancé la démo dessus le jour même (entrée suivante).
+- **DÉMO RELANCÉE : BOMBARDEMENT SUPERPOSÉ + FEU D'ARTIFICE (2026-08-29,
+  demande de Renaud)** — l'acte V passe de trois tirs isolés en cuts à DEUX
+  PLANS DE TROIS CHARGES SUPERPOSÉES, et l'acte VI s'ouvre sur un feu
+  d'artifice aérien avant le champignon. Ce qui a été payé en captures :
+   1. **Chaque tir de l'ancienne démo était un tir CENTRÉ.** La visée au
+      pointeur (`shoot(ndc)`) retombe au centre dès que le plan de charge est
+      bas et la caméra rasante — le piège de visée documenté, et il valait pour
+      TOUS les tirs scriptés. Remplacée par `sim.explodeAt(nx, ny, nz, input)`
+      (pilotage scripté, pendant de driveSphere/addEmitterAt — fractions de N,
+      même convention que `explosionHeight`) : le réalisateur pose ses marques,
+      il ne vise pas. Les bancs y gagnent le même pistolet.
+   2. **À trois charges par boîte, les réglages « spectacle » d'un tir unique
+      saturent.** Calibre 0,06/48 (le volume injecté par VOLÉE ≈ un tir
+      d'avant), amorce 55 (à 90 + lueur 2,2, chaque boule jeune brûlait en
+      ampoule blanche sans texture), lueur 1,6, suie 10 — le contraste de
+      l'acte est là : une boule d'or fraîche devant le nuage NOIRCI du tir
+      précédent. Dissipation 0,35 entre les charges.
+   3. **Un feu d'artifice se regarde D'EN BAS.** À élévation 0,2 la caméra
+      dominait le plafond de la boîte : tout éclat passait sous l'horizon et se
+      lisait comme un impact au sol. Élévation 0,06 (l'œil aux deux tiers de la
+      boîte), éclats hauts (y 0,68-0,88). Bouffées MINUSCULES (0,04/30, amorce
+      120 — le flash), cadence 1,15 s (chaque éclat se lit seul), SANS
+      poussière, dissipation 0,6 — le seul endroit où « dissiper vite éteint la
+      boule » est une qualité : un feu d'artifice est fait de flashs, pas de
+      nuages. Braises ON = les étincelles.
+   4. **Deux états qui fuyaient d'un acte à l'autre** : le gizmo de l'émetteur
+      pilote trônait au milieu des boules de feu (repères coupés dès l'acte V,
+      rendus par la boucle et la sortie) ; et après le premier tour, la boule
+      de l'acte IV restait désactivée — le lemniscate tournait à vide (l'acte I
+      la rallume). La boucle passe à ~107 s (bouquet décalé à 82).
+  Vérifié par `cdp-artifice.mjs` (chronologie des trois segments + tour 2 de
+  boucle), 60 FPS constants à 256³. Le champignon extérieur du bouquet est à
+  parité avec sa référence EXT256-*.
 - **Prochaines briques** : séquences VDB animées (File System Access API) ;
   encres colorées (canaux yz réservés dans la densité) ; qualité du confinement
   de vorticité (flouter |ω|).
@@ -991,12 +1028,11 @@ budget : la fumée du feu voyant la surface de l'eau comme un obstacle mobile
 
 ## Pistes suivantes
 
-La DÉMO (D) est au mieux de ce que la boîte close à 256³ sait donner (montage en
-cuts, rendu verrouillé, journal des trois causes dans le commit c1adbd1) —
-verdict de Renaud : « pas super super », chantier ARRÊTÉ le 2026-08-28. Ne pas y
-retoucher sans une capacité moteur NOUVELLE qui change la donne (candidates :
-plusieurs charges simultanées — le slot d'explosion est unique —, ou 384³
-confortable, où tout est plus beau).
+La DÉMO (D) : arrêtée le 2026-08-28 (« pas super super » — l'état de la boîte
+close en cuts, journal dans le commit c1adbd1), RELANCÉE par Renaud le
+2026-08-29 sur la capacité charges multiples : acte V en volées superposées,
+acte VI feu d'artifice + bouquet (entrée « DÉMO RELANCÉE » du chantier 3D).
+En attente de son verdict sur cette version.
 
 Le chantier de l'EAU est **CLOS** (décision du 2026-08-25) : `eau.html` reste en
 ligne tel quel, J5 et J6 de PLAN-EAU ne seront pas faits, et l'articulation des

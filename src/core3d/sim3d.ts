@@ -1867,6 +1867,40 @@ export class FluidSim3D {
     this.selected = this.emitters.length - 1;
   }
 
+  /** Pilotage scripté : DÉTONATION à (nx,ny,nz) — le pendant de driveSphere et
+   *  addEmitterAt. La démo et les bancs posent leurs charges en clair au lieu
+   *  de viser au pointeur : un plan de charge BAS vu d'une caméra rasante se
+   *  coupe hors boîte et le tir serait rabattu au centre (piège documenté de la
+   *  visée). Les fractions sont de N, la LARGEUR — même convention que
+   *  `explosionHeight`. Calibre et fenêtres viennent de l'entrée, comme au
+   *  pointeur. */
+  explodeAt(nx: number, ny: number, nz: number, input: Frame3DInput): void {
+    const c = (v: number): number => Math.min(Math.max(v, 0.05), 0.95);
+    this.fireBurst(c(nx) * GRID3, c(ny) * GRID3, c(nz) * GRID3, input);
+  }
+
+  /** Arme une charge (position en voxels) : slot ÉTEINT de préférence — les
+   *  deux fenêtres consumées —, sinon le plus ancien (rang de tir `stamp`) :
+   *  un bombardement recycle ses charges mortes avant d'amputer une charge en
+   *  vol. */
+  private fireBurst(x: number, y: number, z: number, input: Frame3DInput): void {
+    let slot = this.bursts[0]!; // maxBursts ≥ 1 : jamais vide
+    for (const b of this.bursts) {
+      const bFree = b.left <= 0 && b.dustLeft <= 0;
+      const sFree = slot.left <= 0 && slot.dustLeft <= 0;
+      if (bFree !== sFree ? bFree : b.stamp < slot.stamp) slot = b;
+    }
+    slot.pos[0] = x;
+    slot.pos[1] = y;
+    slot.pos[2] = z;
+    slot.radius = input.explosionRadius * GRID3;
+    slot.left = SIM3_DEFAULTS.explosionTime;
+    slot.dustLeft = input.dustTime;
+    this.burstSeed = (this.burstSeed + 7.31) % 97;
+    slot.seed = this.burstSeed;
+    slot.stamp = ++this.burstStamp;
+  }
+
   /** Saisie, ajout/retrait d'émetteurs, sphère — tout l'état interactif. */
   private processInteraction(input: Frame3DInput, dt: number, running: boolean): void {
     if (input.reset) {
@@ -1939,24 +1973,12 @@ export class FluidSim3D {
       const inside =
         t > 0 && rawX > 0 && rawX < GRID3 && rawZ > 0 && rawZ < GRID3;
       const clampXZ = (v: number): number => Math.min(Math.max(v, GRID3 * 0.14), GRID3 * 0.86);
-      // SLOT : un éteint de préférence (les deux fenêtres consumées), sinon le
-      // plus ancien — un bombardement recycle ses charges mortes avant
-      // d'amputer une charge en vol.
-      let slot = this.bursts[0]!; // maxBursts ≥ 1 : jamais vide
-      for (const b of this.bursts) {
-        const bFree = b.left <= 0 && b.dustLeft <= 0;
-        const sFree = slot.left <= 0 && slot.dustLeft <= 0;
-        if (bFree !== sFree ? bFree : b.stamp < slot.stamp) slot = b;
-      }
-      slot.pos[0] = inside ? clampXZ(rawX) : GRID3 * 0.5;
-      slot.pos[1] = planeY;
-      slot.pos[2] = inside ? clampXZ(rawZ) : GRID3 * 0.5;
-      slot.radius = input.explosionRadius * GRID3;
-      slot.left = SIM3_DEFAULTS.explosionTime;
-      slot.dustLeft = input.dustTime;
-      this.burstSeed = (this.burstSeed + 7.31) % 97;
-      slot.seed = this.burstSeed;
-      slot.stamp = ++this.burstStamp;
+      this.fireBurst(
+        inside ? clampXZ(rawX) : GRID3 * 0.5,
+        planeY,
+        inside ? clampXZ(rawZ) : GRID3 * 0.5,
+        input,
+      );
     }
     // TRANCHE de la fenêtre d'injection couverte par cette frame. Le `min` est
     // tout le sujet : sans lui, la charge délivrée dépend du PAS DE TEMPS, donc
