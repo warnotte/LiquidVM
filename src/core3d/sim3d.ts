@@ -3079,7 +3079,9 @@ export class FluidSim3D {
     // (Les accélérations, elles, se mettent bien à l'échelle : une accélération
     //  en monde/s² vaut N fois plus en voxels/s². D'où la poussée, le vent, le
     //  poids des matières et la force des champs, tous ×SCALE3 à juste titre.)
-    d[35] = p.expansion;
+    // (voir `hollow` plus bas : une coquille fermée n'accepte aucune source de
+    // masse — l'expansion y est coupée, quel que soit le preset en cours.)
+    d[35] = input.obstacleShape === 3 && this.sphereOn ? 0 : p.expansion;
     for (let i = 1; i < 4; i++) {
       if (i < this.emitters.length) {
         emitterSlot(32 + i * 4, i);
@@ -3089,9 +3091,26 @@ export class FluidSim3D {
       d[48 + i] = this.emitters[i]?.ink ?? 0;
     }
     // Vitesse de la sphère (voxels/s) : condition de bord mobile.
-    d[52] = this.sphereOn ? this.sphereVel[0] : 0;
-    d[53] = this.sphereOn ? this.sphereVel[1] : 0;
-    d[54] = this.sphereOn ? this.sphereVel[2] : 0;
+    // OBSTACLE CREUX (la cloche) : sa vitesse n'est PAS prescrite au bord, et
+    // l'expansion de combustion est coupée. Les deux pour la même raison, qui
+    // est structurelle et pas cosmétique — une COQUILLE FERMÉE crée une seconde
+    // région de fluide, isolée :
+    //  · le solveur de pression n'ancre qu'UNE constante (le pin p(0,0,0)=0) ;
+    //    la cavité a son propre espace nul, et un débit prescrit sur son bord
+    //    doit s'y sommer EXACTEMENT à zéro pour que le système reste soluble.
+    //    En escalier discret il ne le fait pas : le résidu n'a nulle part où
+    //    aller, la pression enfle, et la scène part en vrille.
+    //  · une SOURCE DE MASSE (l'expansion) dans un volume clos est
+    //    intenable par construction — c'est le runaway déjà payé à la boîte
+    //    close, en pire.
+    // Physiquement ce n'est pas un renoncement : on soulève une cloche de
+    // verre, l'air qu'elle enferme ne se fait pas traîner en bloc.
+    // `input` est la SOURCE : ne pas dépendre d'un champ écrit par une autre
+    // passe (l'ordre des écritures d'uniformes est un détail, pas un contrat).
+    const hollow = input.obstacleShape === 3;
+    d[52] = this.sphereOn && !hollow ? this.sphereVel[0] : 0;
+    d[53] = this.sphereOn && !hollow ? this.sphereVel[1] : 0;
+    d[54] = this.sphereOn && !hollow ? this.sphereVel[2] : 0;
     // Poids propre des matières (fumée / encre / carburant).
     d[56] = D.inkWeights[0] * SCALE3;
     d[57] = D.inkWeights[1] * SCALE3;

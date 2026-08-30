@@ -217,3 +217,32 @@ groups pré-créés, mots réservés WGSL (from, target, move, smooth, ref, acti
   (stœchiométrie, défaut 0,55 = l'historique), instrument `sampleOxygen`, banc
   `cdp-o2.mjs` (les nombres) et `cdp-etouffe.mjs` (les images), tous deux avec
   leurs deux témoins.
+
+- **LA CLOCHE QUI BOUGE (2026-08-30, signalé par Renaud : « si je bouge la
+  cloche tout explose »).** Je n'ai PAS reproduit son explosion — ni au
+  pilotage scripté (glissement doux, puis secousse violente), ni par de vrais
+  événements souris (qui ont orbité la caméra au lieu d'attraper). Ce que je
+  n'ai pas reproduit, je ne prétends pas l'avoir corrigé.
+  En revanche le diagnostic STRUCTUREL, lui, ne dépend pas du geste, et il est
+  dur : **une coquille fermée crée une seconde région de fluide isolée**, et
+  deux choses y sont intenables.
+   1. **Un débit prescrit sur son bord.** Le solveur n'ancre qu'UNE constante
+      de pression (le pin p(0,0,0)=0, documenté comme vital). La cavité a son
+      propre espace nul, et la somme des débits imposés sur son bord doit
+      valoir EXACTEMENT zéro pour que le système reste soluble. En escalier
+      discret elle ne le vaut pas : le résidu n'a nulle part où aller. Donc
+      **une coquille creuse ne prescrit plus sa vitesse au bord** — on soulève
+      une cloche de verre, l'air qu'elle enferme ne se fait pas traîner en
+      bloc. La sphère, elle, continue de brasser le fluide comme avant.
+   2. **Une source de masse.** L'expansion de combustion est une source de
+      divergence ; dans un volume clos elle n'a aucune sortie. Elle est donc
+      COUPÉE tant qu'une coquille est présente, quel que soit le preset —
+      c'était déjà 0 dans le preset « cloche », mais un preset appliqué
+      par-dessus la rendait, et le runaway revenait par cette porte.
+  Vérifié après correctif : secousse violente (aller-retour large + vertical à
+  la vitesse maximale acceptée), aucune divergence, O₂ et FPS sains, sphère et
+  autres formes indiscernables (60 FPS).
+  **Reste à faire** : obtenir de Renaud le geste exact. Deux suspects que je
+  n'ai pas pu écarter — la SAISIE au pointeur teste encore l'englobante (dette
+  connue de J0 : on attrape la cloche par son trou), et rien n'empêche de la
+  traîner hors de la boîte.
