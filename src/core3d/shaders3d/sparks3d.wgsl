@@ -16,7 +16,9 @@ struct Params {
   // dans les trois derniers, au-delà des 37 vec4 de la simulation).
   pad0: array<vec4f, 6>,
   sphere: vec4f, // xyz: centre (voxels), w: rayon (voxels, ≤0 = absente)
-  pad1: array<vec4f, 29>,
+  pad1: array<vec4f, 15>,
+  shape: vec4f,   // OBSTACLE : x type, yzw paramètres (#23)
+  pad2: array<vec4f, 13>,
   // L'ÉVÉNEMENT DE TIR — consommé en une frame (le patron des charges) :
   spark_a: vec4f, // xyz: centre de l'éclat (voxels), w: vitesse radiale (voxels/s)
   spark_b: vec4f, // xyz: couleur RGB prescrite, w: nombre à faire naître (0 = pas de tir)
@@ -47,6 +49,29 @@ struct Spark {
 // à l'émission corps noir — c'est ce qui fait qu'une pivoine ÉCLAIRE la fumée
 // et le sol au lieu de briller dans le vide.
 @group(1) @binding(2) var<storage, read_write> glow_splat: array<atomic<u32>>;
+
+// OBSTACLE — DISTANCE SIGNÉE en voxels, négative dedans (voir PLAN-OBSTACLES).
+// Le prédicat n'est plus « dans la sphère » mais « sd < 0 » : l'opérateur ne
+// change pas, seul le masque binaire de cellules change. `sphere.w` reste LE
+// rayon (≤ 0 = pas d'obstacle), les paramètres de forme sont des RATIOS de ce
+// rayon. Dupliquée dans chaque passe — les shaders sont autonomes.
+fn solid_sd(p: vec3f) -> f32 {
+  let r = P.sphere.w;
+  if (r <= 0.0) {
+    return 1e9;
+  }
+  let q = p - P.sphere.xyz;
+  let kind = i32(P.shape.x + 0.5);
+  if (kind == 1) { // BOÎTE : demi-côtés = rayon × ratios
+    let d = abs(q) - r * P.shape.yzw;
+    return length(max(d, vec3f(0.0))) + min(max(d.x, max(d.y, d.z)), 0.0);
+  }
+  if (kind == 2) { // TORE d'axe vertical : grand rayon r, petit rayon r × y
+    return length(vec2f(length(q.xz) - r, q.y)) - r * P.shape.y;
+  }
+  return length(q) - r; // SPHÈRE
+}
+
 
 // Grille non cubique : positions et bornes per-axe, vitesses en N horizontal
 // (les cellules sont cubiques) — même règle que les braises.
@@ -176,7 +201,7 @@ fn update(@builtin(global_invocation_id) gid: vec3u) {
   // Hors boîte ou dans la boule : morte (ne renaîtra qu'au prochain tir).
   let margin = 1.0;
   if (any(pos < vec3f(margin)) || any(pos > n_sizef() - vec3f(margin)) ||
-      (P.sphere.w > 0.0 && distance(pos, P.sphere.xyz) < P.sphere.w)) {
+      (solid_sd(pos) < 0.0)) {
     age = e.vel.w + 1.0;
   }
   sparks[i] = Spark(vec4f(pos, age), vec4f(v, e.vel.w), e.tint);

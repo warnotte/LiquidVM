@@ -95,6 +95,9 @@ export interface Frame3DInput {
   explosionSpark: number;
   /** Sphère-obstacle présente. */
   sphereActive: boolean;
+  /** FORME de l'obstacle : index dans OBSTACLE_SHAPES (0 = sphère). La sphère
+   *  reste le défaut et le cas exact — voir PLAN-OBSTACLES. */
+  obstacleShape: number;
   /** Retours visuels (fuseau du souffle…) — débrayables (touche F). */
   feedback: boolean;
   exposure: number;
@@ -120,6 +123,21 @@ const GIZMO_VERTS = 3 * (64 * 2 * 3 + 6) + 4 * (32 * 2 + 6) + 24 + 3 * 6 + (24 *
 const ROCKET_G = 0.55;
 /** Hauteur de départ de la fusée (fraction de N) : juste au-dessus du sol. */
 const ROCKET_Y0 = 0.04;
+
+/** FORMES D'OBSTACLE. Les paramètres sont des RATIOS du rayon : le curseur de
+ *  taille de l'utilisateur vaut donc pour toute forme, et le rendu comme la
+ *  simulation lisent la même `solid_sd` (PLAN-OBSTACLES). */
+export const OBSTACLE_SHAPES: readonly {
+  readonly label: string;
+  readonly params: readonly [number, number, number];
+}[] = [
+  { label: '⚪ sphère', params: [1, 1, 1] },
+  // Cube de côté 2R — la forme qui montre le mieux qu'un bord n'est plus lisse.
+  { label: '⬛ boîte', params: [1, 1, 1] },
+  // Tore d'axe vertical : petit rayon 0,38 R. Le panache le TRAVERSE — c'est la
+  // preuve à l'image qu'un obstacle peut avoir un trou.
+  { label: '🍩 tore', params: [0.38, 0, 0] },
+];
 
 const COMPUTE = GPUShaderStage.COMPUTE;
 const FRAGMENT = GPUShaderStage.FRAGMENT;
@@ -234,9 +252,14 @@ export class FluidSim3D {
   // charge aux slots 116-147 ; 92-99, l'ancien slot unique, sont libres) puis
   // TROIS vec4 en queue (148-159) pour l'événement de tir des étincelles.
   private readonly simData = new Float32Array(160);
-  // 92 floats utilisés (23 vec4) depuis la suie.
-  private readonly renderData = new Float32Array(92);
-  private lastRender = new Float32Array(92).fill(Number.NaN);
+  // 96 floats : les quatre derniers portent la FORME de l'obstacle (slot #23).
+  // PIÈGE PAYÉ : ce tableau faisait exactement 92, et une écriture en 92-95 est
+  // SILENCIEUSEMENT IGNORÉE par un Float32Array — la simulation voyait la boîte
+  // et le tore, le rendu dessinait toujours une sphère.
+  private readonly renderData = new Float32Array(96);
+  // MÊME TAILLE que renderData, impérativement : `lastRender.set(d)` LÈVE si la
+  // source est plus longue, et la comparaison lirait `undefined` sur la queue.
+  private lastRender = new Float32Array(96).fill(Number.NaN);
 
   /** Émetteurs (positions en voxels) — le premier est l'émetteur historique. */
   private readonly emitters: { pos: [number, number, number]; ink: number }[] = [
@@ -2991,7 +3014,14 @@ export class FluidSim3D {
       d[o + 6] = f?.axis[2] ?? 0;
       d[o + 7] = (f?.strength ?? 0) * SCALE3;
     }
-    // (Slots 92-99 : libres — les charges vivent en 116-147, en fin de tampon.)
+    // OBSTACLE : forme et paramètres (slot #23 = floats 92-95, l'ancien slot
+    // d'explosion unique). Les dix passes lisent la même `solid_sd`.
+    const shape = OBSTACLE_SHAPES[input.obstacleShape] ?? OBSTACLE_SHAPES[0]!;
+    d[92] = input.obstacleShape;
+    d[93] = shape.params[0];
+    d[94] = shape.params[1];
+    d[95] = shape.params[2];
+    // (Slots 96-99 : libres — les charges vivent en 116-147, en fin de tampon.)
     // Suie : rendement et évanouissement (le rendu lit sa densité côté render).
     d[100] = p.sootYield;
     d[101] = p.sootFade;
@@ -3182,6 +3212,12 @@ export class FluidSim3D {
     // Hauteur monde du domaine : le rendu en a besoin pour borner la boîte et
     // pour normaliser la coordonnée verticale de texture.
     d[91] = HEIGHT3;
+    // OBSTACLE : la même forme que la simulation, en slot #23 côté rendu aussi.
+    const shapeR = OBSTACLE_SHAPES[input.obstacleShape] ?? OBSTACLE_SHAPES[0]!;
+    d[92] = input.obstacleShape;
+    d[93] = shapeR.params[0];
+    d[94] = shapeR.params[1];
+    d[95] = shapeR.params[2];
     let dirty = false;
     for (let i = 0; i < d.length; i++) {
       if (d[i] !== this.lastRender[i]) {

@@ -30,6 +30,9 @@ struct RenderParams {
   soot: vec4f,      // x: MODE PRISE DE VUE (0 = atelier, 1 = extérieur),
                     // y: hauteur du soleil, z: densité de suie au rendu,
                     // w: HAUTEUR MONDE du domaine (1 = cube)
+  // OBSTACLE (#23 = floats 92-95, APRÈS `soot` : les slots 88-91 sont déjà
+  // écrits, insérer avant les aurait tous décalés d'un vec4 en silence).
+  shape: vec4f,     // x: type (0 sphère · 1 boîte · 2 tore), yzw: paramètres
   // Suivent les gizmos des champs de force (2 vec4 par champ) — dessinés par
   // gizmo3d.wgsl en LIGNES après la présentation, pas ici : un repère doit être
   // net, pas un halo noyé dans le volume.
@@ -135,19 +138,88 @@ fn phase_hg(mu: f32) -> f32 {
   return 0.55 + 0.45 * (1.0 - g2) / pow(1.0 + g2 - 2.0 * g * mu, 1.5);
 }
 
-// Intersection rayon / sphère-obstacle : t d'entrée, ou 1e9 si manquée/absente.
-fn sphere_hit(ro: vec3f, rd: vec3f) -> f32 {
+// OBSTACLE — DISTANCE SIGNÉE en unités MONDE, négative dedans (PLAN-OBSTACLES).
+// Même fonction que côté simulation, mais la vue travaille en monde : `R.sphere`
+// y est déjà converti, et les paramètres de forme sont des RATIOS, sans
+// dimension — ils traversent la conversion inchangés.
+fn solid_sd(p: vec3f) -> f32 {
+  let r = R.sphere.w;
+  if (r <= 0.0) {
+    return 1e9;
+  }
+  let q = p - R.sphere.xyz;
+  let kind = i32(R.shape.x + 0.5);
+  if (kind == 1) {
+    let d = abs(q) - r * R.shape.yzw;
+    return length(max(d, vec3f(0.0))) + min(max(d.x, max(d.y, d.z)), 0.0);
+  }
+  if (kind == 2) {
+    return length(vec2f(length(q.xz) - r, q.y)) - r * R.shape.y;
+  }
+  return length(q) - r;
+}
+
+// Rayon de la sphère ENGLOBANTE (monde) — il borne toute marche.
+fn solid_bound() -> f32 {
+  let kind = i32(R.shape.x + 0.5);
+  if (kind == 1) {
+    return R.sphere.w * (length(R.shape.yzw) + 0.02);
+  }
+  if (kind == 2) {
+    return R.sphere.w * (1.0 + R.shape.y + 0.02);
+  }
+  return R.sphere.w * 1.02;
+}
+
+// Intersection par SPHERE TRACING, BORNÉE à l'englobante : hors d'elle on ne
+// marche pas du tout, ce qui garde le coût quasi nul pour l'immense majorité
+// des rayons — c'était l'objection perf du passage de l'analytique à la marche.
+// La SPHÈRE reste résolue exactement, en une évaluation : c'est le cas par
+// défaut, il ne doit rien payer à la généralisation.
+fn solid_hit_max(ro: vec3f, rd: vec3f, t_max: f32, steps: i32) -> f32 {
   if (R.sphere.w <= 0.0) {
     return 1e9;
   }
   let oc = ro - R.sphere.xyz;
+  let rb = solid_bound();
   let b = dot(oc, rd);
-  let disc = b * b - (dot(oc, oc) - R.sphere.w * R.sphere.w);
+  let disc = b * b - (dot(oc, oc) - rb * rb);
   if (disc < 0.0) {
     return 1e9;
   }
-  let t = -b - sqrt(disc);
-  return select(1e9, t, t > 0.0);
+  let sq = sqrt(disc);
+  if (i32(R.shape.x + 0.5) == 0) {
+    let td = -b - sq;
+    return select(1e9, td, td > 0.0 && td < t_max);
+  }
+  var t = max(-b - sq, 0.0);
+  let t_end = min(-b + sq, t_max);
+  for (var i = 0; i < steps; i++) {
+    if (t >= t_end) {
+      break;
+    }
+    let d = solid_sd(ro + rd * t);
+    if (d < 0.0015) {
+      return t;
+    }
+    t += max(d, 0.003);
+  }
+  return 1e9;
+}
+// Normale par différences centrées de la distance signée.
+fn solid_normal(p: vec3f) -> vec3f {
+  let e = vec2f(0.0015, 0.0);
+  return normalize(vec3f(
+    solid_sd(p + e.xyy) - solid_sd(p - e.xyy),
+    solid_sd(p + e.yxy) - solid_sd(p - e.yxy),
+    solid_sd(p + e.yyx) - solid_sd(p - e.yyx),
+  ));
+}
+
+// Intersection rayon / obstacle : t d'entrée, ou 1e9. 48 pas suffisent pour les
+// formes lisses de J0 ; la sphère n'en consomme aucun.
+fn sphere_hit(ro: vec3f, rd: vec3f) -> f32 {
+  return solid_hit_max(ro, rd, 1e8, 48);
 }
 
 // Hachage rapide pour décaler le départ de chaque rayon (casse le banding).
@@ -486,7 +558,7 @@ fn fs_main(frag: VSOut) -> @location(0) vec4f {
     // et elle ROUGEOIE au corps noir quand la flamme la lèche.
     if (t_sphere < hit.y && transmit > 0.005) {
       let sp = ro + rd * t_sphere;
-      let nrm = normalize(sp - R.sphere.xyz);
+      let nrm = solid_normal(sp);
       let diff = max(dot(nrm, R.light.xyz), 0.0);
       let rim = pow(1.0 - max(dot(nrm, -rd), 0.0), 3.0);
       let heat_here = textureSampleLevel(density_tex, lin, tex_uvw(sp + nrm * 0.012), 0.0).w;

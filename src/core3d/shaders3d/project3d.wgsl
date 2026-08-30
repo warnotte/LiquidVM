@@ -19,15 +19,41 @@ struct Params {
   emitter3: vec4f,
   emit_inks: vec4f,
   sphere_vel: vec4f, // xyz: vitesse de la sphère (voxels/s)
+  // Traversée jusqu'à `shape` : la disposition de l'uniforme est COMMUNE, un
+  // shader n'en déclare qu'un PRÉFIXE et doit décrire tout ce qui précède.
+  // Neuf vec4 séparent `sphere_vel` (#13) de `shape` (#23 = floats 92-95,
+  // l'ancien slot d'explosion unique, libre depuis les charges multiples).
+  pad_shape: array<vec4f, 9>,
+  shape: vec4f,      // x: type d'obstacle, yzw: paramètres (ratios du rayon)
 }
 
-// Sphère-obstacle : même règle « centre de cellule » que les écritures de vélocité —
-// le lisseur reste l'adjoint exact du couple divergence/gradient.
-fn solid_cell(c: vec3i) -> bool {
-  if (P.sphere.w <= 0.0) {
-    return false;
+// OBSTACLE — DISTANCE SIGNÉE en voxels, négative dedans. Une seule fonction
+// pour toutes les passes : le prédicat n'est plus « dans la sphère » mais
+// « sd < 0 », et l'opérateur ne change pas — seul le masque binaire de cellules
+// change, donc le lisseur reste l'adjoint exact du couple divergence/gradient.
+// `sphere.w` reste LE rayon (≤ 0 = pas d'obstacle) et les paramètres de forme
+// sont des RATIOS de ce rayon : le curseur « taille » vaut pour toute forme.
+// (Dupliquée dans les passes qui en ont besoin — les shaders sont autonomes.)
+fn solid_sd(p: vec3f) -> f32 {
+  let r = P.sphere.w;
+  if (r <= 0.0) {
+    return 1e9;
   }
-  return distance(vec3f(c) + vec3f(0.5), P.sphere.xyz) < P.sphere.w;
+  let q = p - P.sphere.xyz;
+  let kind = i32(P.shape.x + 0.5);
+  if (kind == 1) { // BOÎTE : demi-côtés = rayon × ratios
+    let d = abs(q) - r * P.shape.yzw;
+    return length(max(d, vec3f(0.0))) + min(max(d.x, max(d.y, d.z)), 0.0);
+  }
+  if (kind == 2) { // TORE d'axe vertical : grand rayon r, petit rayon r × y
+    return length(vec2f(length(q.xz) - r, q.y)) - r * P.shape.y;
+  }
+  return length(q) - r; // SPHÈRE
+}
+
+// Même règle « centre de cellule » que les écritures de vélocité.
+fn solid_cell(c: vec3i) -> bool {
+  return solid_sd(vec3f(c) + vec3f(0.5)) < 0.0;
 }
 
 @group(0) @binding(0) var<uniform> P: Params;

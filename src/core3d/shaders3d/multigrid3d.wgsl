@@ -19,9 +19,36 @@ struct Params {
   blow_dir: vec4f,
   blow_force: vec4f,
   sphere: vec4f,    // xyz: centre (voxels fins), w: rayon (voxels fins, ≤0 = absente)
+  // Traversée jusqu'à `shape` (#23 = floats 92-95, l'ancien slot
+  // d'explosion unique, libre depuis les charges multiples).
+  pad_shape: array<vec4f, 15>,
+  shape: vec4f,     // x: type d'obstacle, yzw: paramètres
 }
 
 @group(0) @binding(0) var<uniform> P: Params;
+
+// OBSTACLE — DISTANCE SIGNÉE en voxels, négative dedans (voir PLAN-OBSTACLES).
+// Le prédicat n'est plus « dans la sphère » mais « sd < 0 » : l'opérateur ne
+// change pas, seul le masque binaire de cellules change. `sphere.w` reste LE
+// rayon (≤ 0 = pas d'obstacle), les paramètres de forme sont des RATIOS de ce
+// rayon. Dupliquée dans chaque passe — les shaders sont autonomes.
+fn solid_sd(p: vec3f) -> f32 {
+  let r = P.sphere.w;
+  if (r <= 0.0) {
+    return 1e9;
+  }
+  let q = p - P.sphere.xyz;
+  let kind = i32(P.shape.x + 0.5);
+  if (kind == 1) { // BOÎTE : demi-côtés = rayon × ratios
+    let d = abs(q) - r * P.shape.yzw;
+    return length(max(d, vec3f(0.0))) + min(max(d.x, max(d.y, d.z)), 0.0);
+  }
+  if (kind == 2) { // TORE d'axe vertical : grand rayon r, petit rayon r × y
+    return length(vec2f(length(q.xz) - r, q.y)) - r * P.shape.y;
+  }
+  return length(q) - r; // SPHÈRE
+}
+
 @group(0) @binding(1) var lin: sampler;
 @group(1) @binding(0) var src_tex: texture_3d<f32>;  // restrict : résidu fin ; prolong : correction grossière
 @group(1) @binding(1) var p_src: texture_3d<f32>;
@@ -80,7 +107,9 @@ fn solid_cell(c: vec3i, n: vec3i) -> bool {
   // Demi-diagonale de la cellule grossière, en voxels fins : ce qu'il faut
   // retrancher au rayon pour exiger la cellule ENTIÈRE à l'intérieur.
   let half_diag = scale * 0.866025;
-  return distance((vec3f(c) + vec3f(0.5)) * scale, P.sphere.xyz) < P.sphere.w - half_diag;
+  // « Entièrement dedans » s'écrit sd < −demi-diagonale : la même inégalité
+  // qu'avec le rayon, valable pour toute forme.
+  return solid_sd((vec3f(c) + vec3f(0.5)) * scale) < -half_diag;
 }
 
 fn neighbor_sum(c: vec3i, n: vec3i) -> f32 {

@@ -31,7 +31,8 @@ struct Params {
   field2_b: vec4f,
   // (libres — l'ancien slot d'explosion UNIQUE ; les charges vivent dans
   // `bursts`, en queue de struct.)
-  libre_a: vec4f,
+  // OBSTACLE : x type, yzw paramètres (ratios du rayon).
+  shape: vec4f,
   libre_b: vec4f,
   // x: rendement de suie, y: évanouissement, z: refroidissement PAR la suie.
   soot: vec4f,
@@ -139,6 +140,29 @@ fn emitter_ink(i: u32) -> u32 {
 }
 
 @group(0) @binding(0) var<uniform> P: Params;
+
+// OBSTACLE — DISTANCE SIGNÉE en voxels, négative dedans (voir PLAN-OBSTACLES).
+// Le prédicat n'est plus « dans la sphère » mais « sd < 0 » : l'opérateur ne
+// change pas, seul le masque binaire de cellules change. `sphere.w` reste LE
+// rayon (≤ 0 = pas d'obstacle), les paramètres de forme sont des RATIOS de ce
+// rayon. Dupliquée dans chaque passe — les shaders sont autonomes.
+fn solid_sd(p: vec3f) -> f32 {
+  let r = P.sphere.w;
+  if (r <= 0.0) {
+    return 1e9;
+  }
+  let q = p - P.sphere.xyz;
+  let kind = i32(P.shape.x + 0.5);
+  if (kind == 1) { // BOÎTE : demi-côtés = rayon × ratios
+    let d = abs(q) - r * P.shape.yzw;
+    return length(max(d, vec3f(0.0))) + min(max(d.x, max(d.y, d.z)), 0.0);
+  }
+  if (kind == 2) { // TORE d'axe vertical : grand rayon r, petit rayon r × y
+    return length(vec2f(length(q.xz) - r, q.y)) - r * P.shape.y;
+  }
+  return length(q) - r; // SPHÈRE
+}
+
 
 // TAILLE DE LA GRILLE, par axe. Le domaine n'est plus forcément cubique :
 // Nx = Nz = misc.z, Ny = misc.z × misc.w. Les CELLULES, elles, restent cubiques
@@ -334,7 +358,7 @@ fn correct(@builtin(global_invocation_id) gid: vec3u) {
   val *= sponge3(center, dt);
 
   // Jamais d'encre ni de chaleur dans la sphère-obstacle.
-  if (P.sphere.w > 0.0 && distance(center, P.sphere.xyz) < P.sphere.w) {
+  if (solid_sd(center) < 0.0) {
     val = vec4f(0.0);
   }
 

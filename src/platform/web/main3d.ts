@@ -20,7 +20,7 @@ import {
   SIM3_DEFAULTS,
   type Sim3Tuning,
 } from '../../core3d/config3d';
-import { FluidSim3D, type Frame3DInput } from '../../core3d/sim3d';
+import { FluidSim3D, OBSTACLE_SHAPES, type Frame3DInput } from '../../core3d/sim3d';
 import { encodeVdb } from '../../core3d/vdb';
 import { Panel3D, Toolbar3D } from './panel3d';
 import { acquireDevice } from './gpu';
@@ -195,6 +195,7 @@ class DemoDriver {
     exposure: number;
     boom: BoomTune;
     sphereActive: boolean;
+    obstacleShape: number;
     feedback: boolean;
   } | null = null;
 
@@ -249,6 +250,7 @@ class DemoDriver {
         explosionSpark: this.input.explosionSpark,
       },
       sphereActive: this.input.sphereActive,
+      obstacleShape: this.input.obstacleShape,
       feedback: this.input.feedback,
     };
     this.t = at;
@@ -265,6 +267,7 @@ class DemoDriver {
       this.input.exposure = this.saved.exposure;
       Object.assign(this.input, this.saved.boom);
       this.input.sphereActive = this.saved.sphereActive;
+      this.input.obstacleShape = this.saved.obstacleShape;
       this.input.feedback = this.saved.feedback;
       this.saved = null;
     }
@@ -644,6 +647,7 @@ async function boot(): Promise<void> {
     dustRadius: SIM3_DEFAULTS.dustRadius,
     explosionSpark: SIM3_DEFAULTS.explosionSpark,
     sphereActive: true,
+    obstacleShape: 0,
     feedback: true,
     exposure: SIM3_DEFAULTS.exposure,
     raymarchSteps: SIM3_DEFAULTS.raymarchSteps,
@@ -1074,7 +1078,6 @@ async function boot(): Promise<void> {
         { label: 'pas de marche', min: 64, max: 1024, step: 16, get: () => input.raymarchSteps, set: (x) => (input.raymarchSteps = x), format: (x) => x.toFixed(0) },
       ],
       checks: [
-        { label: 'boule-obstacle (O)', get: () => input.sphereActive, set: (v) => (input.sphereActive = v) },
         { label: 'braises (B)', get: () => input.embersOn, set: (v) => (input.embersOn = v) },
         { label: 'retours visuels (F)', get: () => input.feedback, set: (v) => (input.feedback = v) },
       ],
@@ -1112,6 +1115,28 @@ async function boot(): Promise<void> {
         // toujours eu sa place — il n'a jamais eu de rapport avec l'explosion.)
       ],
       buttons: [{ label: '💥 détoner (G)', action: () => (input.explode = true) }],
+    },
+    {
+      // L'OBSTACLE et sa FORME. Elle n'est plus « la boule » : toutes les passes
+      // lisent une DISTANCE SIGNÉE (PLAN-OBSTACLES), donc changer de forme ne
+      // change rien à l'opérateur de pression — seul le masque de cellules
+      // solides change. La sphère reste le défaut ET le cas exact.
+      title: 'obstacle (O)',
+      buttonsFirst: true,
+      buttons: OBSTACLE_SHAPES.map((shape, i) => ({
+        label: shape.label,
+        isActive: () => input.obstacleShape === i,
+        action: (): void => {
+          input.obstacleShape = i;
+          input.sphereActive = true;
+          panel.refresh();
+          toolbar.refresh();
+          toast(`obstacle : ${shape.label}`);
+        },
+      })),
+      checks: [
+        { label: 'présent (O)', get: () => input.sphereActive, set: (v) => (input.sphereActive = v) },
+      ],
     },
     {
       // MODIFICATEURS : objets posés dans la scène, saisissables comme les

@@ -26,6 +26,7 @@ struct RenderParams {
   sel: vec4f,
   aim: vec4f,
   soot: vec4f,      // w: hauteur monde du domaine
+  shape: vec4f,     // OBSTACLE : x type, yzw paramètres (#23)
 }
 
 /** Coordonnée de texture d'un point monde — y normalisé par la hauteur du
@@ -48,6 +49,76 @@ struct Spark {
 // Occlusion PRÉCALCULÉE par particule (passe compute `occlude` ci-dessous).
 @group(0) @binding(4) var<storage, read> occ_in: array<f32>;
 @group(0) @binding(5) var<storage, read_write> occ_out: array<f32>;
+
+// OBSTACLE — DISTANCE SIGNÉE en unités MONDE, négative dedans (PLAN-OBSTACLES).
+// Même fonction que côté simulation, mais la vue travaille en monde : `R.sphere`
+// y est déjà converti, et les paramètres de forme sont des RATIOS, sans
+// dimension — ils traversent la conversion inchangés.
+fn solid_sd(p: vec3f) -> f32 {
+  let r = R.sphere.w;
+  if (r <= 0.0) {
+    return 1e9;
+  }
+  let q = p - R.sphere.xyz;
+  let kind = i32(R.shape.x + 0.5);
+  if (kind == 1) {
+    let d = abs(q) - r * R.shape.yzw;
+    return length(max(d, vec3f(0.0))) + min(max(d.x, max(d.y, d.z)), 0.0);
+  }
+  if (kind == 2) {
+    return length(vec2f(length(q.xz) - r, q.y)) - r * R.shape.y;
+  }
+  return length(q) - r;
+}
+
+// Rayon de la sphère ENGLOBANTE (monde) — il borne toute marche.
+fn solid_bound() -> f32 {
+  let kind = i32(R.shape.x + 0.5);
+  if (kind == 1) {
+    return R.sphere.w * (length(R.shape.yzw) + 0.02);
+  }
+  if (kind == 2) {
+    return R.sphere.w * (1.0 + R.shape.y + 0.02);
+  }
+  return R.sphere.w * 1.02;
+}
+
+// Intersection par SPHERE TRACING, BORNÉE à l'englobante : hors d'elle on ne
+// marche pas du tout, ce qui garde le coût quasi nul pour l'immense majorité
+// des rayons — c'était l'objection perf du passage de l'analytique à la marche.
+// La SPHÈRE reste résolue exactement, en une évaluation : c'est le cas par
+// défaut, il ne doit rien payer à la généralisation.
+fn solid_hit_max(ro: vec3f, rd: vec3f, t_max: f32, steps: i32) -> f32 {
+  if (R.sphere.w <= 0.0) {
+    return 1e9;
+  }
+  let oc = ro - R.sphere.xyz;
+  let rb = solid_bound();
+  let b = dot(oc, rd);
+  let disc = b * b - (dot(oc, oc) - rb * rb);
+  if (disc < 0.0) {
+    return 1e9;
+  }
+  let sq = sqrt(disc);
+  if (i32(R.shape.x + 0.5) == 0) {
+    let td = -b - sq;
+    return select(1e9, td, td > 0.0 && td < t_max);
+  }
+  var t = max(-b - sq, 0.0);
+  let t_end = min(-b + sq, t_max);
+  for (var i = 0; i < steps; i++) {
+    if (t >= t_end) {
+      break;
+    }
+    let d = solid_sd(ro + rd * t);
+    if (d < 0.0015) {
+      return t;
+    }
+    t += max(d, 0.003);
+  }
+  return 1e9;
+}
+
 
 // Dupliqués (les shaders sont autonomes).
 fn extinction(s: vec4f) -> f32 {
@@ -100,13 +171,10 @@ fn vs_sparks(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -
   }
   var brightness = fade * occ_in[ii];
   // Boule devant l'étoile : occultée.
-  if (R.sphere.w > 0.0) {
-    let oc = world - R.sphere.xyz;
-    let b = dot(oc, dir);
-    let d2 = dot(oc, oc) - b * b;
-    if (d2 < R.sphere.w * R.sphere.w && b > 0.0 && b < dist) {
-      brightness = 0.0;
-    }
+  // OBSTACLE devant la particule : marche courte (16 pas suffisent — c'est une
+  // occultation binaire, pas une image), bornée à l'englobante comme partout.
+  if (solid_hit_max(world, dir, dist, 16) < 1e8) {
+    brightness = 0.0;
   }
   if (brightness < 0.003) {
     return out;

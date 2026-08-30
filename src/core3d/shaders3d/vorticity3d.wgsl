@@ -28,13 +28,17 @@ struct Params {
                      //  hauteur du domaine, seul slot déclaré par TOUS les
                      //  shaders — c'est ce qui a permis de rendre la grille non
                      //  cubique sans rallonger le préfixe d'uniforme de chacun.)
+  // Traversée jusqu'à `shape` (#23 = floats 92-95, l'ancien slot
+  // d'explosion unique, libre depuis les charges multiples).
+  pad_shape: array<vec4f, 9>,
+  shape: vec4f,      // x: type d'obstacle, yzw: paramètres
 }
 
 fn solid_cell(c: vec3i) -> bool {
   if (P.sphere.w <= 0.0) {
     return false;
   }
-  return distance(vec3f(c) + vec3f(0.5), P.sphere.xyz) < P.sphere.w;
+  return solid_sd(vec3f(c) + vec3f(0.5)) < 0.0;
 }
 
 fn face_blocked(c: vec3i, axis: vec3i) -> bool {
@@ -42,6 +46,29 @@ fn face_blocked(c: vec3i, axis: vec3i) -> bool {
 }
 
 @group(0) @binding(0) var<uniform> P: Params;
+
+// OBSTACLE — DISTANCE SIGNÉE en voxels, négative dedans (voir PLAN-OBSTACLES).
+// Le prédicat n'est plus « dans la sphère » mais « sd < 0 » : l'opérateur ne
+// change pas, seul le masque binaire de cellules change. `sphere.w` reste LE
+// rayon (≤ 0 = pas d'obstacle), les paramètres de forme sont des RATIOS de ce
+// rayon. Dupliquée dans chaque passe — les shaders sont autonomes.
+fn solid_sd(p: vec3f) -> f32 {
+  let r = P.sphere.w;
+  if (r <= 0.0) {
+    return 1e9;
+  }
+  let q = p - P.sphere.xyz;
+  let kind = i32(P.shape.x + 0.5);
+  if (kind == 1) { // BOÎTE : demi-côtés = rayon × ratios
+    let d = abs(q) - r * P.shape.yzw;
+    return length(max(d, vec3f(0.0))) + min(max(d.x, max(d.y, d.z)), 0.0);
+  }
+  if (kind == 2) { // TORE d'axe vertical : grand rayon r, petit rayon r × y
+    return length(vec2f(length(q.xz) - r, q.y)) - r * P.shape.y;
+  }
+  return length(q) - r; // SPHÈRE
+}
+
 
 // TAILLE DE LA GRILLE, par axe. Le domaine n'est plus forcément cubique :
 // Nx = Nz = misc.z, Ny = misc.z × misc.w. Les CELLULES, elles, restent cubiques
@@ -158,10 +185,9 @@ fn omega_len(p: vec3f) -> f32 {
 const PEAU_SANS_CONFINEMENT = 3.0;
 
 fn fondu_obstacle(p: vec3f) -> f32 {
-  if (P.sphere.w <= 0.0) {
-    return 1.0;
-  }
-  return smoothstep(0.0, PEAU_SANS_CONFINEMENT, distance(p, P.sphere.xyz) - P.sphere.w);
+  // C'ÉTAIT DÉJÀ une distance signée (distance − rayon) : la peau se
+  // généralise sans rien changer d'autre. Absent → sd = 1e9 → fondu 1.
+  return smoothstep(0.0, PEAU_SANS_CONFINEMENT, solid_sd(p));
 }
 
 // Force de confinement à la position p : ε (N̂ × ω), N̂ = ∇|ω|flou normalisé.
