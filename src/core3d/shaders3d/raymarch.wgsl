@@ -233,6 +233,47 @@ fn ground(p: vec3f, rd: vec3f) -> vec3f {
   return mix(tint, sky(vec3f(rd.x, 0.03, rd.z)), clamp(d / 26.0, 0.0, 1.0));
 }
 
+// LA SALLE (nuit). Le sol seul ne fait pas un lieu : il manquait l'information
+// VERTICALE, ce mur voisin sur lequel la lumière d'un feu tombe et s'éteint.
+// Deux précautions, parce qu'une salle mal posée masque le sujet :
+//  · on n'en garde que la face LOINTAINE (l'intersection de SORTIE) — c'est le
+//    quatrième mur du théâtre : celui qui serait entre la caméra et le feu
+//    n'existe pas, donc rien ne peut cacher la scène, où que la caméra aille
+//    (et elle orbite plus loin que les parois : une vraie salle fermée se
+//    verrait de l'extérieur, boîte noire flottante) ;
+//  · elle n'est éclairée QUE par le feu, avec une atténuation en 1/d² depuis la
+//    boîte de simulation : une paroi lointaine ne reçoit presque rien, et la
+//    salle ne peut donc pas redevenir le gris moyen qu'on vient de chasser.
+const ROOM_HALF = 1.8;
+const ROOM_TOP = 1.9;
+
+fn room_far(ro: vec3f, rd: vec3f) -> f32 {
+  let lo = vec3f(-ROOM_HALF, -0.5, -ROOM_HALF);
+  let hi = vec3f(ROOM_HALF, ROOM_TOP, ROOM_HALF);
+  let t1 = (lo - ro) / rd;
+  let t2 = (hi - ro) / rd;
+  let tmax = max(t1, t2);
+  let tmin = min(t1, t2);
+  let t_far = min(min(tmax.x, tmax.y), tmax.z);
+  let t_near = max(max(tmin.x, tmin.y), tmin.z);
+  return select(-1.0, t_far, t_far > max(t_near, 0.0));
+}
+
+fn room_shade(p: vec3f) -> vec3f {
+  // Lumière reçue : la lueur du feu échantillonnée au point de la BOÎTE le plus
+  // proche (le volume est clampé à son bord), atténuée par le carré de la
+  // distance à cette boîte.
+  let q = clamp(p, vec3f(-0.5, -0.5, -0.5), vec3f(0.5, box_top(), 0.5));
+  let d = distance(p, q);
+  // Sa propre ambiante est celle du CIEL DE NUIT, pas une de plus : au premier
+  // essai la salle portait la sienne (0,008), et comme elle occupe presque tout
+  // l'écran, elle relevait le fond entier — le voile gris revenait par la porte
+  // qu'on venait de fermer. Là où le feu ne porte pas, la paroi doit être
+  // indiscernable de la nuit ; ce qui la révèle est la LUMIÈRE QUI Y TOMBE, et
+  // rien d'autre.
+  return vec3f(0.0020, 0.0025, 0.0040) + glow_at(q) * (0.9 / (1.0 + 3.0 * d * d));
+}
+
 // Ombrage du sol sous la boîte : tapis sombre qui reçoit l'ombre volumétrique de
 // la fumée (marche courte vers la lumière à travers la boîte) et celle de la boule.
 fn floor_shade(fp: vec3f, bg: vec3f, ldir: vec3f) -> vec3f {
@@ -288,6 +329,13 @@ fn fs_main(frag: VSOut) -> @location(0) vec4f {
     // APRÈS tone-map (exposition 1,25 puis gamma 2.2) : elles arrivent vers
     // 15-25 sur 255, un ciel de nuit qui garde son dégradé.
     bg = mix(vec3f(0.0016, 0.0021, 0.0036), vec3f(0.0052, 0.0062, 0.0100), frag.uv.y * 0.5 + 0.5);
+    // La salle par-dessus le dégradé : elle prend tous les rayons qui la
+    // traversent, le dégradé ne reste que pour ce qui la manque (au-dessus du
+    // plafond, ou franchement de côté).
+    let t_room = room_far(ro, rd);
+    if (t_room > 0.0) {
+      bg = room_shade(ro + rd * t_room);
+    }
   }
   if (is_outdoor()) {
     bg = sky(rd);

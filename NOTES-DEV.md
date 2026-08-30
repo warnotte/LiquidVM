@@ -568,6 +568,19 @@ particules. Quand une limite n'apparaît qu'en WARNING console, écouter
   soleil au milieu du noir. Encodage : `soot.x` porte TROIS valeurs
   (0 atelier · 1 extérieur · 2 nuit) — le test d'extérieur devient donc un
   INTERVALLE, sinon la nuit se lit comme un extérieur (ciel bleu à minuit).
+  **LA SALLE (2026-08-30, second temps)** : le sol seul ne fait pas un lieu, il
+  manquait l'information VERTICALE — ce mur voisin où la lumière du feu tombe
+  et s'éteint. Deux précautions, parce qu'une salle mal posée masque le sujet :
+  on n'en garde que la face LOINTAINE (l'intersection de SORTIE, `room_far`) —
+  c'est le quatrième mur du théâtre, celui qui serait entre la caméra et le feu
+  n'existe pas, donc RIEN ne peut cacher la scène et la caméra peut orbiter
+  aussi loin qu'elle veut (une salle réellement fermée se verrait de
+  l'extérieur, boîte noire flottante) ; et elle n'est éclairée QUE par le feu,
+  atténué en 1/d² depuis la boîte. PIÈGE payé du premier coup : la salle
+  portait sa propre ambiante (0,008) et, comme elle occupe presque tout
+  l'écran, elle RELEVAIT LE FOND ENTIER — le voile gris rentrait par la porte
+  qu'on venait de fermer. Son ambiante est donc celle du ciel de nuit : là où
+  le feu ne porte pas, la paroi est indiscernable de la nuit.
   Coût nul (des `select` par pas), 60 FPS à 256³, défaut inchangé (atelier).
   Au passage : les presets ne réinitialisent plus la prise de vue
   (`applyPreset`) — un point de vue n'est pas une propriété de la scène, et
