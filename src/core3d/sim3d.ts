@@ -139,7 +139,7 @@ export const OBSTACLE_SHAPES: readonly {
   { label: '🍩 tore', params: [0.38, 0, 0] },
   // CLOCHE de verre : coquille de rayon 3,2 R (le rayon nominal est petit — il
   // faut couvrir la flamme) et d'épaisseur 9 % de ce rayon. Le SOL ferme le bas.
-  { label: '🔔 cloche', params: [0.10, 2.1, 0] },
+  { label: '🔔 cloche', params: [0.17, 1.5, 0] },
 ];
 
 const COMPUTE = GPUShaderStage.COMPUTE;
@@ -3024,7 +3024,9 @@ export class FluidSim3D {
     d[93] = shape.params[0];
     d[94] = shape.params[1];
     d[95] = shape.params[2];
-    // (Slots 96-99 : libres — les charges vivent en 116-147, en fin de tampon.)
+    // CHIMIE (slot #24 = floats 96-99) : stœchiométrie de l'oxygène.
+    d[96] = p.oxygenBurn;
+    // (Slots 97-99 : libres — les charges vivent en 116-147, en fin de tampon.)
     // Suie : rendement et évanouissement (le rendu lit sa densité côté render).
     d[100] = p.sootYield;
     d[101] = p.sootFade;

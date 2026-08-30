@@ -132,3 +132,45 @@ groups pré-créés, mots réservés WGSL (from, target, move, smooth, ref, acti
   Probablement la BOÎTE PLEINE de vapeur (le raymarch paie chaque voxel non
   vide — leçon documentée des braises), pas la cloche ; à vérifier au
   profileur avant de conclure quoi que ce soit.
+
+- **J1 (suite, 2026-08-30) — LA SCÈNE EST LÀ, L'ÉTOUFFEMENT N'EST PAS PROUVÉ.**
+  Livré, cliquable, vérifié : un preset **🔔 cloche** qui monte la scène en un
+  clic — flamme PILOTE (encre 0, chaude) + émetteur de CARBURANT collé à elle,
+  cloche de verre posée, air non renouvelé. L'allumage marche : une vraie
+  combustion brûle dans le verre, et l'image est superbe. Trois choses apprises
+  en chemin, toutes payées au banc :
+   1. **La pose se fait APRÈS le reset** (compteur différé `bellIn`), sinon la
+      position par défaut de l'obstacle écrase la nôtre.
+   2. **Le joint au sol a un critère exact** : la coquille INTÉRIEURE (R − e)
+      doit passer sous le plancher. À 0,2 voxel près d'affleurer, la cavité
+      fuit et la boîte se remplit — ce n'est pas « à peu près posé », c'est
+      une inégalité.
+   3. **Une source de masse dans un vase clos est intenable.** L'EXPANSION est
+      une source de divergence : sans sortie, pression et vitesses montent
+      jusqu'à ce que la matière TUNNELE à travers la coquille (une trace qui
+      parcourt plus que l'épaisseur en un pas la traverse). Expansion à 0 sous
+      cloche, paroi épaissie à 0,17 R.
+  **Ce qui N'EST PAS démontré, et pourquoi je ne le déclare pas fait** : les
+  deux TÉMOINS refusent de séparer. « Cloche + air non renouvelé » et « cloche
+  + air renouvelé » donnent la même image à 14 et 20 s, sur sept réglages
+  successifs. Tant que le témoin ne sépare pas, l'oxygène n'est pas la cause de
+  ce qu'on voit — et une flamme qui faiblit ne prouve rien. Deux facteurs
+  confondants ont été identifiés et retirés, sans que ça suffise :
+   · réduire la flamme pilote après l'allumage éteint la flamme AVEC OU SANS
+     oxygène — c'était une mise en scène, pas une conséquence ;
+   · la chaleur du pilote était injectée SANS CONDITION : un émetteur chaud est
+     pourtant une combustion, il doit demander de l'air. Corrigé (`heat_rate ×
+     oxy_factor`) — physiquement juste, sans effet ailleurs (`oxy_factor`
+     sature à 1 dès un quart d'oxygène) et la scène par défaut est
+     indiscernable.
+  Deux pistes restent, dans cet ordre : (a) l'échelle de temps — avec la
+  stœchiométrie par défaut (0,55) un volume d'air tient près d'une MINUTE ;
+  d'où le nouveau réglage `oxygenBurn` (curseur « O₂ consommé »), mais même à 9
+  la fenêtre de 20 s ne suffit visiblement pas ; (b) **l'oxygène traverse-t-il
+  la paroi ?** Son advection est fusionnée dans `advect_density3d` et sa
+  rétro-trace, elle, N'A AUCUNE notion de solide — c'est la seule grandeur du
+  moteur dans ce cas. À instrumenter AVANT de re-régler quoi que ce soit : il
+  faut mesurer l'O₂ dans la cavité, pas le déduire de l'image.
+  Livré au passage : `oxygenBurn` (défaut 0,55 = l'historique au bit près) et
+  son curseur ; le banc `cdp-etouffe.mjs` (scratchpad) qui clique le PRESET
+  comme l'utilisateur et porte ses deux témoins.

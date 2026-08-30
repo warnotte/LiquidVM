@@ -33,7 +33,11 @@ struct Params {
   // `bursts`, en queue de struct.)
   // OBSTACLE : x type, yzw paramètres (ratios du rayon).
   shape: vec4f,
-  libre_b: vec4f,
+  // CHIMIE : x = O₂ consommé par unité de carburant brûlé (stœchiométrie).
+  // Réglable parce qu'elle fixe le TEMPS d'épuisement d'un volume d'air —
+  // à 0,55 une cloche met près d'une minute à s'étouffer, ce qui n'est pas
+  // une expérience regardable.
+  chem: vec4f,
   // x: rendement de suie, y: évanouissement, z: refroidissement PAR la suie.
   soot: vec4f,
   // x: bande LATÉRALE (voxels, 0 = parois closes), y: sa force,
@@ -197,8 +201,11 @@ fn n_sizef() -> vec3f {
 
 // Fraction d'O₂ de référence : en dessous, la flamme faiblit puis s'étouffe.
 const O2_REF = 0.25;
-// Stœchiométrie : O₂ consommé par unité de carburant brûlé.
-const O2_PER_FUEL = 0.55;
+// Stœchiométrie : O₂ consommé par unité de carburant brûlé — RÉGLABLE
+// (`chem.x`, défaut 0,55 = le comportement historique, au bit près).
+fn o2_per_fuel() -> f32 {
+  return P.chem.x;
+}
 
 fn inv_n() -> vec3f {
   return vec3f(1.0) / n_sizef();
@@ -278,7 +285,7 @@ fn correct(@builtin(global_invocation_id) gid: vec3u) {
   let oxy_factor = clamp(o2 / O2_REF, 0.0, 1.0);
   let ignite = smoothstep(0.28, 0.55, val.w);
   let burn = min(val.z * P.emit_meta.y * dt * ignite, val.z) * oxy_factor;
-  o2 -= O2_PER_FUEL * burn;
+  o2 -= o2_per_fuel() * burn;
   val.z -= burn;
   val.w = min(val.w + P.emit_meta.z * burn, 1.9);
   val.x += 0.35 * burn;
@@ -312,7 +319,15 @@ fn correct(@builtin(global_invocation_id) gid: vec3u) {
     // Le CARBURANT est émis froid : pour l'embraser, il faut l'amener au contact
     // d'une flamme (chaleur d'un autre panache, souffle...). Émission de chaleur
     // pour les autres matières uniquement.
-    let heat_rate = select(P.emit_vals.x, 0.0, ink == 2u);
+    //
+    // ET CETTE CHALEUR DEMANDE DE L'AIR. Un émetteur chaud EST une combustion —
+    // un bec, une mèche. Tant que sa chaleur était injectée sans condition, il
+    // rougeoyait dans le vide : sous une cloche privée d'oxygène la flamme ne
+    // pouvait pas mourir, puisque sa source de chaleur, elle, ne mourait pas.
+    // C'est le facteur qui manquait pour que l'étouffement soit une CONSÉQUENCE
+    // et non une mise en scène. Sans effet ailleurs : `oxy_factor` sature à 1
+    // dès un quart d'oxygène, et l'air par défaut est à 1 partout.
+    let heat_rate = select(P.emit_vals.x * oxy_factor, 0.0, ink == 2u);
     val = vec4f(
       val.xyz + inject * (P.emit_vals.y * dt * g),
       val.w + heat_rate * dt * g,
@@ -378,7 +393,7 @@ fn correct(@builtin(global_invocation_id) gid: vec3u) {
   // première version à suie invisible). Une bougie brûle du carburant dilué :
   // propre ; une charge concentre des unités de carburant sur une unité d'air :
   // elle noircit. Le même terme donne les deux.
-  let demande = val.z * O2_PER_FUEL;
+  let demande = val.z * o2_per_fuel();
   let manque = clamp(1.0 - o2 / max(demande, 1e-3), 0.0, 1.0);
   var soot = spec.y + P.soot.x * dt * val.z * ignite * manque;
   soot = soot / (1.0 + P.soot.y * dt);

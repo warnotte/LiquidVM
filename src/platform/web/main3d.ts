@@ -152,12 +152,51 @@ const BOOM_MUSHROOM: BoomTune = {
   explosionSpark: 190,
 };
 
+/** LA CLOCHE — l'expérience d'étouffement. Deux émetteurs sont nécessaires et
+ *  c'est TOUT le sujet : le carburant est émis FROID par conception, donc un
+ *  émetteur seul ne peut pas à la fois le cracher et l'allumer. Il faut une
+ *  FLAMME PILOTE (encre 0, chaude) à côté d'un émetteur de CARBURANT — la
+ *  combustion qui en résulte est la seule chose qui consomme de l'oxygène, et
+ *  donc la seule chose qu'une cloche puisse étouffer.
+ *  `oxygenRecover: 0` : le monde ne fabrique plus d'air. Sans cela la cavité se
+ *  recharge et rien ne meurt jamais. */
+const TUNE_BELL: Partial<Sim3Tuning> = {
+  // (pas de `night` ici : `applyPreset` PRÉSERVE la prise de vue à dessein —
+  // un point de vue n'est pas une propriété de la scène. Le mettre serait un
+  // mensonge silencieux, la valeur étant écrasée.)
+  oxygenRecover: 0,
+  // Stœchiométrie POUSSÉE : à 0,55 (le défaut) l'air de la cloche tient près
+  // d'une minute — l'étouffement existe mais ne se REGARDE pas. À 9 il tient
+  // une dizaine de secondes, ce qui est la durée d'une expérience.
+  oxygenBurn: 9,
+  emitHeat: 3.2,
+  emitInkRate: 1.2,
+  burnRate: 3.0,
+  heatYield: 0.7,
+  // Expansion RÉDUITE : sous cloche, l'expansion nette ne peut pas sortir et
+  // s'accumule (le runaway documenté de la boîte close, en pire).
+  // EXPANSION NULLE, et c'est structurel, pas cosmétique : l'expansion est une
+  // SOURCE DE DIVERGENCE, donc de masse. Dans une cavité scellée elle n'a
+  // aucune sortie, la pression et les vitesses montent, et la matière finit par
+  // TUNNELER à travers la coquille (une trace qui parcourt plus que l'épaisseur
+  // en un pas la traverse) : la boîte se remplissait par le haut. Un vase clos
+  // ne tolère pas de source de masse ; ici la flamme chauffe, elle ne pousse
+  // plus. Même famille que le runaway de la boîte close, en pire.
+  expansion: 0,
+  inkDissipation: 0.30,
+  sootYield: 3,
+  vorticityStrength: 10,
+};
+
 // PRESETS du panneau : appliqués À CHAUD par-dessus les défauts (déterministe
 // quel que soit l'historique de clics). Exposition/pas de marche non touchés.
 const PRESETS: readonly {
   label: string;
   values: Partial<Sim3Tuning>;
   boom?: BoomTune;
+  /** Scène à POSER quelques frames après (émetteurs, obstacle) : le reset
+   *  écrase tout ce qu'on placerait tout de suite. */
+  bell?: true;
 }[] = [
   { label: '↺ défaut', values: {} },
   { label: '🕯 bougie', values: TUNE_CANDLE },
@@ -165,6 +204,7 @@ const PRESETS: readonly {
   { label: '🌫 fumée épaisse', values: TUNE_SMOKE },
   { label: '🌬 vent', values: TUNE_WIND },
   { label: '🍄 champignon', values: TUNE_MUSHROOM, boom: BOOM_MUSHROOM },
+  { label: '🔔 cloche', values: TUNE_BELL, bell: true },
 ];
 
 /**
@@ -925,6 +965,11 @@ async function boot(): Promise<void> {
   };
 
   let boomIn = 0;
+  // La scène de la CLOCHE se pose QUELQUES FRAMES APRÈS le preset : le reset
+  // remet les émetteurs à un et l'obstacle à sa position par défaut, donc tout
+  // ce qu'on placerait dans le même geste serait écrasé (piège payé au banc,
+  // PLAN-OBSTACLES J1).
+  let bellIn = 0;
   const runMushroom = (): void => {
     const preset = PRESETS.find((x) => x.boom !== undefined);
     if (preset === undefined) {
@@ -998,6 +1043,13 @@ async function boot(): Promise<void> {
           if (scenario) {
             input.reset = true;
           }
+          if (preset.bell === true) {
+            input.reset = true;
+            input.emitInk = 0; // la flamme PILOTE : chaude, donc pas du carburant
+            input.embersOn = false;
+            bellIn = 4;
+
+          }
           panel.refresh();
           if (input.feedback) {
             toast(
@@ -1064,6 +1116,7 @@ async function boot(): Promise<void> {
         { label: 'chaleur dégagée', min: 0, max: 1.5, step: 0.05, get: () => p.heatYield, set: (x) => (p.heatYield = x) },
         { label: 'expansion', min: 0, max: 60, step: 1, get: () => p.expansion, set: (x) => (p.expansion = x), format: (x) => x.toFixed(0) },
         { label: 'retour d’oxygène', min: 0, max: 0.08, step: 0.002, get: () => p.oxygenRecover, set: (x) => (p.oxygenRecover = x), format: (x) => x.toFixed(3) },
+        { label: 'O₂ consommé', min: 0.1, max: 15, step: 0.1, get: () => p.oxygenBurn, set: (x) => (p.oxygenBurn = x), format: (x) => x.toFixed(1) },
       ],
     },
     {
@@ -1259,6 +1312,19 @@ async function boot(): Promise<void> {
     input.explode = false;
     if (boomIn > 0 && --boomIn === 0) {
       input.explode = true;
+    }
+    if (bellIn > 0 && --bellIn === 0) {
+      input.obstacleShape = 3;
+      input.sphereActive = true;
+      // Le CARBURANT, collé à la flamme pilote : il s'y embrase tout de suite.
+      sim.addEmitterAt(0.535, 0.055, 0.5, 2);
+      // La cloche POSÉE ASSEZ BAS. Le critère est exact : la coquille INTÉRIEURE
+      // (rayon R − e) doit passer sous le plancher, sinon le joint au sol est
+      // d'épaisseur nulle et la cavité fuit. À 0,16 elle affleurait à 0,2 voxel
+      // près — la flamme ne s'étouffait pas et la boîte se remplissait par le
+      // bas (capturé). À 0,09, le sol coupe un anneau de solide d'une dizaine
+      // de voxels : c'est ça, le joint.
+      sim.driveSphere(0.5, 0.055, 0.5, 0.016);
     }
     input.removeEmitter = false;
     frames++;
