@@ -19,11 +19,15 @@ struct Params {
   emitter3: vec4f,
   emit_inks: vec4f,
   sphere_vel: vec4f, // xyz: vitesse de la sphère (voxels/s)
-  // Traversée jusqu'à `shape` : la disposition de l'uniforme est COMMUNE, un
-  // shader n'en déclare qu'un PRÉFIXE et doit décrire tout ce qui précède.
-  // Neuf vec4 séparent `sphere_vel` (#13) de `shape` (#23 = floats 92-95,
-  // l'ancien slot d'explosion unique, libre depuis les charges multiples).
-  pad_shape: array<vec4f, 9>,
+  // La disposition de l'uniforme est COMMUNE, un shader n'en déclare qu'un
+  // PRÉFIXE et doit décrire tout ce qui précède ce qui l'intéresse. La
+  // divergence lit désormais les CHAMPS DE FORCE (l'ASPIRATEUR y vit).
+  ink_weights: vec4f,
+  wind: vec4f,
+  field_meta: vec4f, // x: nombre de champs, yzw: types
+  field0_a: vec4f, field0_b: vec4f,
+  field1_a: vec4f, field1_b: vec4f,
+  field2_a: vec4f, field2_b: vec4f,
   shape: vec4f,      // x: type d'obstacle, yzw: paramètres (ratios du rayon)
 }
 
@@ -83,6 +87,31 @@ fn in_bounds(c: vec3i) -> bool {
   return all(c < n);
 }
 
+// Accès aux champs de force (mêmes switch que les autres passes).
+fn field_a(i: u32) -> vec4f {
+  switch i {
+    case 0u: { return P.field0_a; }
+    case 1u: { return P.field1_a; }
+    default: { return P.field2_a; }
+  }
+}
+
+fn field_b(i: u32) -> vec4f {
+  switch i {
+    case 0u: { return P.field0_b; }
+    case 1u: { return P.field1_b; }
+    default: { return P.field2_b; }
+  }
+}
+
+fn field_type(i: u32) -> f32 {
+  switch i {
+    case 0u: { return P.field_meta.y; }
+    case 1u: { return P.field_meta.z; }
+    default: { return P.field_meta.w; }
+  }
+}
+
 @compute @workgroup_size(4, 4, 4)
 fn divergence(@builtin(global_invocation_id) gid: vec3u) {
   let c = vec3i(gid);
@@ -128,6 +157,25 @@ fn divergence(@builtin(global_invocation_id) gid: vec3u) {
   let o2 = textureLoad(oxy_src, c, 0).x;
   let ignite = smoothstep(0.28, 0.55, dn.w);
   div -= P.emit_meta.w * min(dn.z, 1.0) * ignite * clamp(o2 / 0.25, 0.0, 1.0);
+  // ASPIRATEUR : un PUITS de divergence — l'outil « impossible » du bac à
+  // sable. Un champ de FORCE radial est exactement annulé par la projection
+  // (irrotationnel — leçon du souffle 2D) ; un PUITS, lui, est une condition
+  // que la projection doit SATISFAIRE : c'est elle qui fabrique l'appel d'air,
+  // depuis toutes les directions, en respectant murs et obstacles. Même
+  // mécanisme que l'expansion de combustion, au signe près (source ↔ puits :
+  // l'expansion s'écrit div -=, le puits div +=). Son débit est en 1/s et ne
+  // se met PAS à l'échelle de la résolution — la règle documentée des
+  // divergences (le CPU n'applique pas ×SCALE3 au type 2).
+  let fcount = u32(P.field_meta.x);
+  for (var i = 0u; i < fcount; i++) {
+    if (field_type(i) > 1.5) {
+      let fa = field_a(i);
+      let fd = distance(vec3f(c) + vec3f(0.5), fa.xyz) / max(fa.w, 1e-4);
+      if (fd < 2.5) {
+        div += field_b(i).w * exp(-fd * fd * 2.0);
+      }
+    }
+  }
   textureStore(scalar_dst, gid, vec4f(div, 0.0, 0.0, 0.0));
 }
 

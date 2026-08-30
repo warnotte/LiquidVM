@@ -217,11 +217,15 @@ fn field_force(p: vec3f, matter: f32) -> vec3f {
     let d = length(rel) / radius;
     let fall = exp(-d * d * 2.0);
     if (fall > 1e-3) {
-      if (field_type(i) < 0.5) {
+      let t = field_type(i);
+      if (t < 0.5) {
         f += cross(b.xyz, rel) / radius * b.w * fall;
-      } else {
+      } else if (t < 1.5) {
         f += b.xyz * b.w * fall * matter;
       }
+      // Type 2 (ASPIRATEUR) : AUCUNE force ici — une force radiale serait
+      // annulée par la projection. Le puits vit dans la passe de DIVERGENCE,
+      // et c'est la projection elle-même qui fabrique l'appel d'air.
     }
   }
   return f;

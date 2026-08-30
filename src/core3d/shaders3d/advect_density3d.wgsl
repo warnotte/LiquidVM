@@ -240,6 +240,31 @@ fn forwardtrace(p: vec3f, dt: f32) -> vec3f {
   return p + dt * velocity_at(mid);
 }
 
+// Accès aux champs de force (l'ASPIRATEUR avale la matière — voir correct).
+fn field_a(i: u32) -> vec4f {
+  switch i {
+    case 0u: { return P.field0_a; }
+    case 1u: { return P.field1_a; }
+    default: { return P.field2_a; }
+  }
+}
+
+fn field_b(i: u32) -> vec4f {
+  switch i {
+    case 0u: { return P.field0_b; }
+    case 1u: { return P.field1_b; }
+    default: { return P.field2_b; }
+  }
+}
+
+fn field_type(i: u32) -> f32 {
+  switch i {
+    case 0u: { return P.field_meta.y; }
+    case 1u: { return P.field_meta.z; }
+    default: { return P.field_meta.w; }
+  }
+}
+
 @compute @workgroup_size(4, 4, 4)
 fn predict(@builtin(global_invocation_id) gid: vec3u) {
   let n = n_size();
@@ -373,6 +398,22 @@ fn correct(@builtin(global_invocation_id) gid: vec3u) {
 
   val = min(val, vec4f(3.0, 3.0, 3.0, max(P.dust.w, 2.0)));
 
+  // ASPIRATEUR : la matière qui atteint le CŒUR du puits est AVALÉE — sans ce
+  // terme, le puits de divergence l'y empile en un nœud toujours plus dense
+  // (l'appel d'air amène la fumée, rien ne la retire). Même mécanique que
+  // l'éponge des parois ouvertes : une absorption multiplicative, resserrée
+  // (rayon ÷2) pour que la fumée SPIRALE visiblement vers la bouche avant de
+  // disparaître au lieu de s'effacer en approche.
+  let fcount = u32(P.field_meta.x);
+  for (var i = 0u; i < fcount; i++) {
+    if (field_type(i) > 1.5) {
+      let fa = field_a(i);
+      let fd = distance(center, fa.xyz) / max(fa.w * 0.5, 1e-4);
+      if (fd < 2.5) {
+        val *= 1.0 / (1.0 + field_b(i).w * 1.5 * dt * exp(-fd * fd * 2.0));
+      }
+    }
+  }
   // Éponge : la matière s'éteint près des parois ouvertes au lieu de s'y empiler.
   val *= sponge3(center, dt);
 

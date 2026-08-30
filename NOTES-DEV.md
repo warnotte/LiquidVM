@@ -633,13 +633,32 @@ particules. Quand une limite n'apparaît qu'en WARNING console, écouter
   à côté de −1 pour la boule et 0..n pour les émetteurs), la saisie les déplace
   sur le plan face caméra, et deux vec4 par champ vivent dans l'uniforme
   (slots 64-91 ; le tampon sim est passé à 512 o).
-  DEUX TYPES, traités différemment pour une raison PHYSIQUE :
+  TROIS TYPES, traités différemment pour une raison PHYSIQUE :
    · **tourbillon** — rotation solide autour d'un axe. Un champ rotationnel est
      à divergence nulle, donc la projection le PRÉSERVE : il agit sur l'air
      lui-même, matière ou pas.
    · **vent local** — direction constante, donc irrotationnel : uniforme il
      serait annulé par la projection (leçon du souffle radial 2D). Il doit être
      DIFFÉRENTIEL, pondéré par la matière, comme la poussée.
+   · **aspirateur (2026-08-31)** — l'outil réputé IMPOSSIBLE, précisément à
+     cause de la leçon ci-dessus : un champ de force radial est annulé par la
+     projection. La réponse n'est PAS une force mais un PUITS DE DIVERGENCE
+     (passe divergence de project3d, même mécanisme que l'expansion de
+     combustion au signe près) : la projection doit le SATISFAIRE, c'est elle
+     qui fabrique l'appel d'air — de toutes les directions, en respectant murs
+     et obstacles. `field_force` ne lui donne AUCUNE force. Deux compléments
+     obligatoires : la matière qui atteint le CŒUR est AVALÉE (absorption
+     multiplicative resserrée à rayon ÷2, sinon le puits l'empile en un nœud
+     toujours plus dense), et son débit est une DIVERGENCE en 1/s qui ne se
+     met PAS à l'échelle — le CPU n'applique pas ×SCALE3 au type 2 (la règle
+     documentée des unités, déjà payée une fois par l'expansion). Défaut 15
+     (l'expansion tourne à 10). Gizmo TURQUOISE ; l'encodage gizmo porte
+     désormais le type entier + 4 si actif (+2 était ambigu à trois types).
+     Vérifié A/B (`cdp-aspirateur.mjs`, scratchpad) : fumée épaisse établie,
+     émetteur coupé — avec aspirateur le nuage spirale dans la bouche et
+     disparaît en ~4 s ; témoin sans lui, le nuage reste ; 60 FPS.
+     Pilotage scripté : `__sim3d.addFieldAt(x, y, z, type, force, rayon)` —
+     le pendant d'addEmitterAt pour les modificateurs.
   Réglages (type / force / rayon) appliqués aux FUTURS champs et à celui qu'on
   TIENT, jamais à distance — le même piège que l'encre des émetteurs, qui
   éteignait la flamme pilote. GIZMOS : coque lumineuse à la frontière du champ

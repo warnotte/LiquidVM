@@ -24,6 +24,7 @@ import {
   DISPATCH3,
   DISPATCH3Y,
   EMBERS3,
+  FIELD_NAMES,
   GRID3,
   GRID3Y,
   HEIGHT3,
@@ -2152,6 +2153,26 @@ export class FluidSim3D {
     this.selected = this.emitters.length - 1;
   }
 
+  /** Pilotage scripté : pose un CHAMP DE FORCE à (nx,ny,nz) ∈ [0,1]³ — le
+   *  pendant de addEmitterAt pour les modificateurs (bancs et démo posent
+   *  leurs marques en clair, jamais au pointeur). Type : 0 tourbillon,
+   *  1 vent local, 2 aspirateur. Rayon et force : mêmes conventions que le
+   *  panneau (rayon en fraction de N, force en unités du type). */
+  addFieldAt(nx: number, ny: number, nz: number, type: number, strength: number, radius: number): void {
+    if (this.fields.length >= SIM3_DEFAULTS.maxFields) {
+      return;
+    }
+    const t = Math.min(Math.max(Math.round(type), 0), FIELD_NAMES.length - 1);
+    this.fields.push({
+      pos: [nx * GRID3, ny * GRID3, nz * GRID3],
+      type: t,
+      strength,
+      radius,
+      axis: t === 1 ? [1, 0, 0] : [0, 1, 0],
+    });
+    this.selected = FluidSim3D.FIELD_TAG + this.fields.length - 1;
+  }
+
   /** Pilotage scripté : DÉTONATION à (nx,ny,nz) — le pendant de driveSphere et
    *  addEmitterAt. La démo et les bancs posent leurs charges en clair au lieu
    *  de viser au pointeur : un plan de charge BAS vu d'une caméra rasante se
@@ -3013,7 +3034,11 @@ export class FluidSim3D {
       d[o + 4] = f?.axis[0] ?? 0;
       d[o + 5] = f?.axis[1] ?? 1;
       d[o + 6] = f?.axis[2] ?? 0;
-      d[o + 7] = (f?.strength ?? 0) * SCALE3;
+      // UNITÉS PAR TYPE : tourbillon et vent sont des ACCÉLÉRATIONS (×SCALE3),
+      // l'aspirateur est une DIVERGENCE (1/s) qui ne se met PAS à l'échelle —
+      // la règle documentée (l'expansion multipliée par SCALE3 à tort a déjà
+      // été payée une fois).
+      d[o + 7] = (f?.strength ?? 0) * (f?.type === 2 ? 1 : SCALE3);
     }
     // OBSTACLE : forme et paramètres (slot #23 = floats 92-95, l'ancien slot
     // d'explosion unique). Les dix passes lisent la même `solid_sd`.
@@ -3153,7 +3178,9 @@ export class FluidSim3D {
     d[34] = input.embersOn ? input.emberStrength : 0;
     d[35] = GRID3;
     // Gizmos des champs de force : deux vec4 par champ — (centre monde, rayon
-    // monde) et (axe unitaire, type + 2 si actif). La boîte étant le cube
+    // monde) et (axe unitaire, type + 4 si actif — +2 était ambigu depuis le
+    // troisième type : un tourbillon actif (0+2) valait un aspirateur (2)).
+    // La boîte étant le cube
     // unité, le rayon en fraction de grille EST le rayon monde. Coupés avec les
     // retours visuels (F), comme le fuseau du souffle.
     for (let i = 0; i < 3; i++) {
@@ -3167,7 +3194,10 @@ export class FluidSim3D {
       d[o + 5] = f?.axis[1] ?? 1;
       d[o + 6] = f?.axis[2] ?? 0;
       const fieldSel = i === this.selected - FluidSim3D.FIELD_TAG;
-      d[o + 7] = f === undefined ? 0 : (f.type < 0.5 ? 0 : 1) + (fieldSel ? 2 : 0);
+      // Le type voyage ENTIER (0/1/2) et « actif » vaut +4 : l'ancien
+      // écrasement en 0/1 + 2 rendait un tourbillon actif identique à un
+      // aspirateur au décodage.
+      d[o + 7] = f === undefined ? 0 : Math.min(f.type, 2) + (fieldSel ? 4 : 0);
     }
     // Gizmos des ÉMETTEURS : un vec4 chacun — (centre monde, w = −1 si le slot
     // est vide, sinon numéro d'encre + 4 si c'est l'émetteur actif). Un émetteur

@@ -114,7 +114,7 @@ export const INK_COLORS = [
 ] as const;
 export const INK_NAMES = ['fumée', 'encre', 'carburant'] as const;
 /** Types de champ de force, dans l'ordre de l'uniforme (0, 1). */
-export const FIELD_NAMES = ['tourbillon', 'vent local'] as const;
+export const FIELD_NAMES = ['tourbillon', 'vent local', 'aspirateur'] as const;
 
 /** Réglages à chaud (panneau) : tous initialisés depuis SIM3_DEFAULTS. */
 export interface Sim3Tuning {
@@ -265,6 +265,10 @@ export const SIM3_DEFAULTS = {
    *  (rotationnel, préservé par la projection), le vent local sur la matière. */
   fieldVortexStrength: 260,
   fieldWindStrength: 120,
+  /** Débit de l'ASPIRATEUR — une DIVERGENCE (1/s), donc jamais ×SCALE3 (la
+   *  règle documentée des unités). ~15 aspire franchement sans emballer la
+   *  boîte close ; l'expansion, sa jumelle de signe opposé, tourne à 10. */
+  fieldSinkStrength: 15,
   /** EXPLOSION : une bouffée de carburant + son amorce, lâchées d'un coup. Aucune
    *  physique nouvelle — la combustion existante fait la boule de feu, la suie et
    *  le souffle (l'expansion au front de flamme EST une source de divergence, que

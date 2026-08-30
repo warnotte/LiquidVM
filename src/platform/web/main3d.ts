@@ -1152,8 +1152,12 @@ async function boot(): Promise<void> {
           get: () => input.fieldType,
           set: (x) => {
             input.fieldType = x;
+            // Chaque type a SON échelle : le tourbillon et le vent sont des
+            // forces (~100-300), l'aspirateur un débit en 1/s (~15).
             input.fieldStrength =
-              x < 0.5 ? SIM3_DEFAULTS.fieldVortexStrength : SIM3_DEFAULTS.fieldWindStrength;
+              x < 0.5 ? SIM3_DEFAULTS.fieldVortexStrength
+              : x < 1.5 ? SIM3_DEFAULTS.fieldWindStrength
+              : SIM3_DEFAULTS.fieldSinkStrength;
           },
           format: (x) => FIELD_NAMES[Math.round(x)] ?? '',
         },

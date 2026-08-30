@@ -256,9 +256,12 @@ fn vs_gizmo(@builtin(vertex_index) vi: u32) -> VSOut {
     // en blanc chaud et opaque — la sélection se voit sans avoir à la deviner.
     // « ref » et « active » sont des mots RÉSERVÉS WGSL (famille from / target /
     // move / smooth) : d'où is_active.
-    let kind = b.w - select(0.0, 2.0, b.w >= 2.0);
-    let is_active = b.w >= 2.0;
+    let kind = b.w - select(0.0, 4.0, b.w >= 4.0);
+    let is_active = b.w >= 4.0;
     var col = select(vec3f(0.42, 0.72, 1.0), vec3f(1.0, 0.70, 0.28), kind > 0.5);
+    // Turquoise pour l'ASPIRATEUR — ni le bleu du tourbillon ni l'ambre du
+    // vent : la bouche d'aspiration se reconnaît de loin.
+    col = select(col, vec3f(0.30, 0.95, 0.80), kind > 1.5);
     var alpha = 0.55;
     if (is_active) {
       col = mix(col, vec3f(1.0), 0.55);
