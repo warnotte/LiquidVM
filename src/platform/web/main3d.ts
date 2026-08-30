@@ -1070,6 +1070,9 @@ async function boot(): Promise<void> {
       title: 'interaction & rendu',
       sliders: [
         { label: 'force du souffle', min: 0, max: 800, step: 10, get: () => p.blowForce, set: (x) => (p.blowForce = x), format: (x) => x.toFixed(0) },
+        // L'impulsion du jet des émetteurs — avec les émetteurs ORIENTABLES,
+        // c'est elle qui fait le chalumeau (l'axe donne le cap, elle le débit).
+        { label: 'jet : poussée', min: 0, max: 400, step: 5, get: () => p.emitImpulse, set: (x) => (p.emitImpulse = x), format: (x) => x.toFixed(0) },
         { label: 'exposition', min: 0.4, max: 3, step: 0.05, get: () => input.exposure, set: (x) => (input.exposure = x) },
         { label: 'lueur du feu', min: 0, max: 3, step: 0.05, get: () => input.glowStrength, set: (x) => (input.glowStrength = x) },
         { label: 'bloom', min: 0, max: 1, step: 0.05, get: () => input.bloomStrength, set: (x) => (input.bloomStrength = x) },

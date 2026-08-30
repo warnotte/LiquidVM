@@ -38,6 +38,11 @@ struct Params {
   // STRATIFICATION : x = chaleur gagnée par l'air ambiant entre l'altitude de
   // base et le plafond, y = cette altitude de base (voxels).
   strat: vec4f,
+  // Traversée jusqu'aux AXES D'ÉMISSION (#40-43) : les vec4 #29-39 portent les
+  // charges et l'événement d'étincelles, que cette passe ne lit pas.
+  pad_axes: array<vec4f, 11>,
+  // Axe d'émission unitaire par émetteur — (0,1,0) = l'ancien jet montant.
+  emit_axis: array<vec4f, 4>,
 }
 
 // BANDE ÉPONGE (« ciel ouvert ») — la boîte 3D est close de partout (Neumann par
@@ -182,15 +187,30 @@ fn density_at(p: vec3f) -> vec4f {
   return textureSampleLevel(den_src, lin, p * inv_n(), 0.0);
 }
 
-fn emitter_gauss(p: vec3f) -> f32 {
-  var g = 0.0;
+// Impulsion des émetteurs : jet LE LONG DE L'AXE de chacun + balancement dans
+// le plan perpendiculaire — l'émetteur ORIENTABLE (chalumeau couché, torche
+// murale, jets croisés). Axe (0,1,0) = l'ancien jet montant ; seul le
+// balancement change de phase (permutation d'axes, cosmétique).
+fn emitter_impulse(p: vec3f) -> vec3f {
+  var imp = vec3f(0.0);
+  let t = P.misc.y;
   let count = u32(P.emit_meta.x + 0.5);
   for (var i = 0u; i < count; i++) {
     let e = emitter_pos(i);
     let d = distance(p, e.xyz) / max(e.w, 1e-3);
-    g += exp(-d * d * 3.0);
+    let g = exp(-d * d * 3.0);
+    if (g > 1e-4) {
+      let axis = P.emit_axis[i].xyz;
+      // Base perpendiculaire à l'axe, pour que le balancement reste un
+      // tremblé du jet quel que soit son cap.
+      let pick = select(vec3f(0.0, 1.0, 0.0), vec3f(1.0, 0.0, 0.0), abs(axis.y) > 0.9);
+      let p1 = normalize(cross(axis, pick));
+      let p2 = cross(axis, p1);
+      let sway = P.emit_vals.w * (sin(t * 2.9 + 1.3) * p1 + cos(t * 2.3) * p2);
+      imp += g * (axis * P.emit_vals.z + sway);
+    }
   }
-  return min(g, 1.5);
+  return imp;
 }
 
 fn blow_gauss(p: vec3f) -> f32 {
@@ -380,11 +400,10 @@ fn correct(@builtin(global_invocation_id) gid: vec3u) {
     w += dt * field_force(pw, mfw.x + mfw.y + mfw.z).z;
   }
 
-  // Impulsion de l'émetteur : jet montant + balancement latéral.
-  let lat = P.emit_vals.w * vec2f(sin(t * 2.9 + 1.3), cos(t * 2.3));
-  u += dt * emitter_gauss(pu) * lat.x;
-  v += dt * emitter_gauss(pv) * P.emit_vals.z;
-  w += dt * emitter_gauss(pw) * lat.y;
+  // Impulsion des émetteurs, par face MAC (chacune échantillonnée chez elle).
+  u += dt * emitter_impulse(pu).x;
+  v += dt * emitter_impulse(pv).y;
+  w += dt * emitter_impulse(pw).z;
 
   // Souffle du pointeur, par face.
   u += dt * blow_gauss(pu) * P.blow_force.x;

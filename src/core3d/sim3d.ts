@@ -253,19 +253,22 @@ export class FluidSim3D {
   // 160 floats = les 640 o du tampon : 148 pour la simulation (2 vec4 par
   // charge aux slots 116-147 ; 92-99, l'ancien slot unique, sont libres) puis
   // TROIS vec4 en queue (148-159) pour l'événement de tir des étincelles.
-  private readonly simData = new Float32Array(160);
+  private readonly simData = new Float32Array(176);
   // 96 floats : les quatre derniers portent la FORME de l'obstacle (slot #23).
   // PIÈGE PAYÉ : ce tableau faisait exactement 92, et une écriture en 92-95 est
   // SILENCIEUSEMENT IGNORÉE par un Float32Array — la simulation voyait la boîte
   // et le tore, le rendu dessinait toujours une sphère.
-  private readonly renderData = new Float32Array(96);
+  private readonly renderData = new Float32Array(112);
   // MÊME TAILLE que renderData, impérativement : `lastRender.set(d)` LÈVE si la
   // source est plus longue, et la comparaison lirait `undefined` sur la queue.
-  private lastRender = new Float32Array(96).fill(Number.NaN);
+  private lastRender = new Float32Array(112).fill(Number.NaN);
 
   /** Émetteurs (positions en voxels) — le premier est l'émetteur historique. */
-  private readonly emitters: { pos: [number, number, number]; ink: number }[] = [
-    { pos: [GRID3 * 0.5, GRID3 * 0.08, GRID3 * 0.5], ink: 0 },
+  /** Émetteurs : position (voxels), encre, et AXE D'ÉMISSION unitaire — le jet
+   *  part le long de l'axe ((0,1,0) = l'ancien jet montant). Orientable par le
+   *  même bouton violet que les champs de force (`selectedAxis`). */
+  private readonly emitters: { pos: [number, number, number]; ink: number; axis: [number, number, number] }[] = [
+    { pos: [GRID3 * 0.5, GRID3 * 0.08, GRID3 * 0.5], ink: 0, axis: [0, 1, 0] },
   ];
 
   /** Champs de force posés dans la scène. `axis` sert d'axe au tourbillon et de
@@ -636,8 +639,9 @@ export class FluidSim3D {
       });
       const simUniforms = device.createBuffer({
         label: 'sim3d-uniforms',
-        // 640 o : 148 floats utilisés depuis les charges multiples.
-        size: 640,
+        // 704 o : 160-175 = axes d'émission (un vec4 par émetteur), au-delà des
+        // 40 vec4 historiques — les structs des shaders restent des PRÉFIXES.
+        size: 704,
         usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
       });
       const renderUniforms = device.createBuffer({
@@ -1972,9 +1976,15 @@ export class FluidSim3D {
    *  ont une ORIENTATION (axe de rotation d'un tourbillon, cap d'un vent local).
    *  Un émetteur souffle vers le haut, la boule est une boule. */
   private selectedAxis(): [number, number, number] | undefined {
-    return this.selected >= FluidSim3D.FIELD_TAG
-      ? this.fields[this.selected - FluidSim3D.FIELD_TAG]?.axis
-      : undefined;
+    if (this.selected >= FluidSim3D.FIELD_TAG) {
+      return this.fields[this.selected - FluidSim3D.FIELD_TAG]?.axis;
+    }
+    // Un ÉMETTEUR aussi a un axe : tout le reste — bouton d'orientation,
+    // coulisse sur sphère, gizmo — découle de ce seul accesseur.
+    if (this.selected >= 0) {
+      return this.emitters[this.selected]?.axis;
+    }
+    return undefined;
   }
 
   /** Longueur des poignées EN VOXELS. Constante à l'écran : elle grandit avec la
@@ -2145,11 +2155,16 @@ export class FluidSim3D {
   }
 
   /** Pilotage scripté : pose un émetteur à (nx,ny,nz) ∈ [0,1]³ avec son encre. */
-  addEmitterAt(nx: number, ny: number, nz: number, ink: number): void {
+  addEmitterAt(nx: number, ny: number, nz: number, ink: number, ax = 0, ay = 1, az = 0): void {
     if (this.emitters.length >= SIM3_DEFAULTS.maxEmitters) {
       return;
     }
-    this.emitters.push({ pos: [nx * GRID3, ny * GRID3, nz * GRID3], ink });
+    const len = Math.hypot(ax, ay, az) || 1;
+    this.emitters.push({
+      pos: [nx * GRID3, ny * GRID3, nz * GRID3],
+      ink,
+      axis: [ax / len, ay / len, az / len],
+    });
     this.selected = this.emitters.length - 1;
   }
 
@@ -2395,7 +2410,7 @@ export class FluidSim3D {
       this.emitters.length = 1;
       this.fields.length = 0;
       this.deselect();
-      this.emitters[0] = { pos: [GRID3 * 0.5, GRID3 * 0.08, GRID3 * 0.5], ink: input.emitInk };
+      this.emitters[0] = { pos: [GRID3 * 0.5, GRID3 * 0.08, GRID3 * 0.5], ink: input.emitInk, axis: [0, 1, 0] };
       this.spherePos[0] = GRID3 * SIM3_DEFAULTS.sphereStart[0];
       this.spherePos[1] = GRID3 * SIM3_DEFAULTS.sphereStart[1];
       this.spherePos[2] = GRID3 * SIM3_DEFAULTS.sphereStart[2];
@@ -2441,7 +2456,7 @@ export class FluidSim3D {
       const clampXZ = (v: number): number => Math.min(Math.max(v, GRID3 * 0.08), GRID3 * 0.92);
       const px = t > 0 ? clampXZ(this.rayO[0] + t * this.rayD[0]) : GRID3 * 0.5;
       const pz = t > 0 ? clampXZ(this.rayO[2] + t * this.rayD[2]) : GRID3 * 0.5;
-      this.emitters.push({ pos: [px, planeY, pz], ink: input.emitInk });
+      this.emitters.push({ pos: [px, planeY, pz], ink: input.emitInk, axis: [0, 1, 0] });
       // Ce qu'on vient de poser est sélectionné : ses poignées sont là tout de
       // suite, précisément quand on veut le relever du plan où il a atterri.
       this.selected = this.emitters.length - 1;
@@ -2953,7 +2968,10 @@ export class FluidSim3D {
     d[8] = p.emitHeat;
     d[9] = p.emitInkRate;
     // Forces absolues calibrées à 128³ → remises à l'échelle de la grille.
-    d[10] = D.emitUpVelocity * SCALE3;
+    // L'impulsion du jet est RÉGLABLE depuis les émetteurs orientables : à 60
+    // (le défaut historique) la flottabilité domine et une torche couchée se
+    // redresse aussitôt ; vers 200 c'est un chalumeau.
+    d[10] = p.emitImpulse * SCALE3;
     d[11] = D.emitWobbleVelocity * SCALE3;
     d[12] = p.velocityDissipation;
     d[13] = p.inkDissipation;
@@ -3101,6 +3119,15 @@ export class FluidSim3D {
     d[157] = sk.seed;
     d[158] = this.sparkEpoch;
     d[159] = sk.pattern;
+    // AXES D'ÉMISSION (floats 160-175, #40-43) : un vec4 par émetteur.
+    for (let i = 0; i < 4; i++) {
+      const ax = this.emitters[i]?.axis;
+      const oa = 160 + i * 4;
+      d[oa] = ax?.[0] ?? 0;
+      d[oa + 1] = ax?.[1] ?? 1;
+      d[oa + 2] = ax?.[2] ?? 0;
+      d[oa + 3] = 0;
+    }
     this.device.queue.writeBuffer(this.simUniforms, 0, d);
   }
 
@@ -3249,6 +3276,16 @@ export class FluidSim3D {
     d[93] = shapeR.params[0];
     d[94] = shapeR.params[1];
     d[95] = shapeR.params[2];
+    // AXES des émetteurs pour le gizmo (#24-27) : l'anneau se couche
+    // perpendiculairement à l'axe, la flèche le suit.
+    for (let i = 0; i < 4; i++) {
+      const eax = input.feedback ? this.emitters[i]?.axis : undefined;
+      const oe = 96 + i * 4;
+      d[oe] = eax?.[0] ?? 0;
+      d[oe + 1] = eax?.[1] ?? 1;
+      d[oe + 2] = eax?.[2] ?? 0;
+      d[oe + 3] = 0;
+    }
     let dirty = false;
     for (let i = 0; i < d.length; i++) {
       if (d[i] !== this.lastRender[i]) {

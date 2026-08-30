@@ -456,6 +456,24 @@ particules. Quand une limite n'apparaît qu'en WARNING console, écouter
   résidente — un test suivant peut tomber à 20 FPS à 256³ ; redémarrer le
   Chrome de test avant de mesurer. L'export VDB suit maxBufferSize : 384³ et
   512³ exportables désormais (multiples de 128 ; fichiers ~450 Mo / ~1,1 Go).
+- **ÉMETTEURS ORIENTABLES + IMPULSION RÉGLABLE (2026-08-31)** : chaque
+  émetteur porte un AXE unitaire — le jet part le long de l'axe, le
+  balancement se fait dans le plan perpendiculaire, (0,1,0) rend l'ancien jet
+  montant (seule la phase du tremblé change, cosmétique). Orientation par le
+  MÊME bouton violet que les champs : tout découle de `selectedAxis()`, qui
+  rend maintenant l'axe d'un émetteur sélectionné — coulisse sur sphère,
+  poignées et gizmo suivent sans une ligne de plus. Le gizmo d'émetteur
+  s'oriente (anneau perpendiculaire à l'axe, flèche le long). Plomberie :
+  tampon sim 640 → 704 o (axes aux floats 160-175, #40-43 — les structs
+  restent des préfixes), renderData 96 → 112 floats (axes gizmo #24-27,
+  `lastRender` agrandi AUSSI — le piège du Float32Array silencieux, déjà payé
+  aux obstacles). `emitImpulse` devient un RÉGLAGE (« jet : poussée », défaut
+  60 = l'historique) : à 60 la flottabilité domine et une torche couchée se
+  redresse aussitôt ; vers 200 c'est un CHALUMEAU — le jet part couché puis
+  se redresse en montant. Scripté : `addEmitterAt(x, y, z, encre, ax?, ay?,
+  az?)`. Vérifié (`cdp-torche.mjs`, scratchpad) : témoin par défaut inchangé,
+  torche couchée à 210 = signature chalumeau, et le DUO torche + aspirateur —
+  le panache est dévié et avalé par la bouche. 60 FPS partout.
 - **OBSTACLES DE FORME QUELCONQUE (2026-08-30)** : le prédicat d'obstacle est
   une DISTANCE SIGNÉE partagée par les dix passes (`solid_sd`, dupliquée —
   les shaders sont autonomes) : sphère · boîte · tore, choisis dans la section

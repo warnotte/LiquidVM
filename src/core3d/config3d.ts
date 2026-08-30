@@ -124,6 +124,8 @@ export interface Sim3Tuning {
   velocityDissipation: number;
   emitHeat: number;
   emitInkRate: number;
+  /** Impulsion du jet le long de l'axe d'émission (voxels/s à 128³). */
+  emitImpulse: number;
   heatCooling: number;
   inkDissipation: number;
   burnRate: number;
@@ -164,6 +166,7 @@ export function defaultTuning3(): Sim3Tuning {
     velocityDissipation: SIM3_DEFAULTS.velocityDissipation,
     emitHeat: SIM3_DEFAULTS.emitHeat,
     emitInkRate: SIM3_DEFAULTS.emitSmoke,
+    emitImpulse: SIM3_DEFAULTS.emitUpVelocity,
     heatCooling: SIM3_DEFAULTS.heatCooling,
     inkDissipation: SIM3_DEFAULTS.smokeDissipation,
     burnRate: SIM3_DEFAULTS.burnRate,

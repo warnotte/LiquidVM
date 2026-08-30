@@ -70,6 +70,10 @@ struct RenderParams {
   // drapeau ET de position.
   aim: vec4f,
   soot: vec4f,      // w: HAUTEUR monde du domaine (1 = cube)
+  shape: vec4f,     // (obstacle — non lu ici, traversé)
+  // Axe d'émission par émetteur (#24-27) : l'anneau se couche
+  // perpendiculairement, la flèche le suit.
+  emit_axis: array<vec4f, 4>,
 }
 
 @group(0) @binding(0) var<uniform> R: RenderParams;
@@ -283,14 +287,18 @@ fn vs_gizmo(@builtin(vertex_index) vi: u32) -> VSOut {
       return hidden();
     }
 
+    // L'axe d'émission oriente le repère entier : anneau perpendiculaire
+    // (la surface qui souffle), flèche le long de l'axe (le sens du jet).
+    let eaxis = normalize(R.emit_axis[ei].xyz);
+    let epick = select(vec3f(0.0, 1.0, 0.0), vec3f(1.0, 0.0, 0.0), abs(eaxis.y) > 0.9);
+    let eb1 = normalize(cross(eaxis, epick));
+    let eb2 = cross(eaxis, eb1);
     var p: vec3f;
     if (li < EMIT_RING) {
-      // Anneau posé à plat : la surface qui souffle, à son vrai rayon.
       let ang = (f32(li / 2u) + f32(li % 2u)) * 6.2831853 / f32(ESEG);
-      p = e.xyz + vec3f(cos(ang) * r, 0.0, sin(ang) * r);
+      p = e.xyz + (eb1 * cos(ang) + eb2 * sin(ang)) * r;
     } else {
-      // Tige fléchée vers le haut : le sens du panache.
-      p = arrow_point(li - EMIT_RING, e.xyz, vec3f(0.0, 1.0, 0.0), r * 2.6);
+      p = arrow_point(li - EMIT_RING, e.xyz, eaxis, r * 2.6);
     }
 
     let is_active = e.w >= 4.0;
