@@ -458,6 +458,26 @@ particules. Quand une limite n'apparaît qu'en WARNING console, écouter
   512³ exportables désormais (multiples de 128 ; fichiers ~450 Mo / ~1,1 Go).
 - **Interface (panel3d.ts)** : panneau à sections (Tab) + barre d'outils,
   ENTIÈREMENT déclaratifs — ajouter un réglage = une entrée de spec dans main3d.
+  **RANGEMENT DE LA PRISE DE VUE (2026-08-30, signalé par Renaud : « l'interface
+  devient un peu un bordel »)** — atelier / extérieur / nuit vivent désormais
+  dans UNE table (`ENVIRONMENTS` + `setEnv`/`currentEnv`, main3d) et dans une
+  section de panneau à eux, « environnement (prise de vue) », juste sous les
+  presets. Trois choses en sortent, et la troisième est la vraie leçon :
+   1. la barre n'a plus qu'UN bouton, qui AFFICHE la prise de vue en cours et
+      la fait défiler (`dynamicLabel`) — deux interrupteurs séparés pouvaient
+      mentir : aucun allumé = atelier, mais rien ne le disait ;
+   2. « soleil : hauteur » a quitté la fin de la section « explosion », où il
+      n'avait aucun rapport avec le sujet, pour rejoindre l'environnement ;
+   3. **l'exclusion des trois modes vit à UN seul endroit.** Tant qu'elle était
+      re-jurée à chaque bouton (`if (outdoor) night = false`), rien
+      n'empêchait un troisième chemin d'oublier la clause. Même famille que
+      `grabbed`/`heldEmitter` : une invariante qu'on répète est une invariante
+      qu'on finira par trahir.
+  Ajouts déclaratifs au passage : `isActive` sur les boutons de PANNEAU (une
+  rangée exclusive doit montrer lequel est en cours) et `buttonsFirst` sur une
+  section (on choisit d'abord, on affine ensuite ; l'ordre inverse se lit à
+  l'envers). Groupes de la barre : matières · objets · scénarios · regard et
+  session · pages.
   Toute la physique est réglable à chaud via Sim3Tuning (Frame3DInput.params,
   défauts de defaultTuning3()) : combustion, débits, dissipations, poussée,
   souffle, vitesse du temps, rendu. Barre : matières en pastilles, ± émetteur,

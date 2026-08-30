@@ -23,11 +23,19 @@ export interface Check3Spec {
 
 export interface Button3Spec {
   readonly label: string;
+  /** État « actif », resynchronisé au refresh — comme la barre d'outils. C'est
+   *  lui qui permet à une rangée de boutons EXCLUSIFS (les environnements) de
+   *  montrer lequel est en cours, au lieu de trois boutons muets. */
+  readonly isActive?: () => boolean;
   readonly action: () => void;
 }
 
 export interface Panel3Section {
   readonly title: string;
+  /** Boutons AVANT les curseurs. Pour une section où l'on CHOISIT d'abord et
+   *  où l'on affine ensuite (l'environnement : on prend la prise de vue, puis
+   *  on règle son soleil) — l'ordre inverse se lit à l'envers. */
+  readonly buttonsFirst?: boolean;
   readonly sliders?: readonly Slider3Spec[];
   readonly checks?: readonly Check3Spec[];
   readonly buttons?: readonly Button3Spec[];
@@ -51,13 +59,10 @@ export class Panel3D {
       title.className = 'panel3d-section';
       title.textContent = section.title;
       this.root.appendChild(title);
-      for (const spec of section.sliders ?? []) {
-        this.addSlider(spec);
-      }
-      for (const spec of section.checks ?? []) {
-        this.addCheck(spec);
-      }
-      if (section.buttons && section.buttons.length > 0) {
+      const addButtons = (): void => {
+        if (!section.buttons || section.buttons.length === 0) {
+          return;
+        }
         const row = document.createElement('div');
         row.className = 'panel3d-buttons';
         for (const spec of section.buttons) {
@@ -68,9 +73,28 @@ export class Panel3D {
             spec.action();
             button.blur();
           });
+          if (spec.isActive) {
+            const sync = (): void => {
+              button.classList.toggle('active', spec.isActive!());
+            };
+            this.refreshers.push(sync);
+            sync();
+          }
           row.appendChild(button);
         }
         this.root.appendChild(row);
+      };
+      if (section.buttonsFirst === true) {
+        addButtons();
+      }
+      for (const spec of section.sliders ?? []) {
+        this.addSlider(spec);
+      }
+      for (const spec of section.checks ?? []) {
+        this.addCheck(spec);
+      }
+      if (section.buttonsFirst !== true) {
+        addButtons();
       }
     }
     parent.appendChild(this.root);
@@ -142,6 +166,9 @@ export class Panel3D {
 
 export interface ToolbarItem {
   readonly label: string;
+  /** Libellé RECALCULÉ au refresh, pour un bouton qui affiche un état et le
+   *  fait défiler (la prise de vue) au lieu d'en basculer un seul. */
+  readonly dynamicLabel?: () => string;
   /** Pastille de couleur (matières). */
   readonly color?: string;
   /** L'état « actif » du bouton, resynchronisé au refresh. */
@@ -168,11 +195,22 @@ export class Toolbar3D {
           chip.style.background = item.color;
           button.appendChild(chip);
         }
-        button.appendChild(document.createTextNode(item.label));
+        const text = document.createTextNode(item.label);
+        button.appendChild(text);
         button.addEventListener('click', () => {
           item.action();
           button.blur();
         });
+        if (item.dynamicLabel) {
+          const syncLabel = (): void => {
+            const next = item.dynamicLabel!();
+            if (text.nodeValue !== next) {
+              text.nodeValue = next;
+            }
+          };
+          this.refreshers.push(syncLabel);
+          syncLabel();
+        }
         if (item.isActive) {
           const sync = (): void => {
             button.classList.toggle('active', item.isActive!());

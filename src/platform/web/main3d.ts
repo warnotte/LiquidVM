@@ -848,6 +848,37 @@ async function boot(): Promise<void> {
   // preset était donc caché derrière une étape que personne ne devine.
   // La détonation est DIFFÉRÉE de quelques frames : le nettoyage de la scène
   // occupe la frame courante, et tirer dedans donnerait une boule amputée.
+  // ENVIRONNEMENTS (prise de vue). UNE table, trois entrées exclusives : la
+  // barre les fait défiler d'un bouton, le panneau les montre en rangée. Ils
+  // étaient éparpillés — deux boutons perdus entre une détonation et la démo,
+  // la hauteur du soleil égarée en fin de section « explosion » —, or ce n'est
+  // pas un réglage de la scène mais le REGARD qu'on porte dessus.
+  // `outdoor` et `night` restent deux booléens (la démo pilote l'extérieur par
+  // acte, et les presets les préservent) : ce qui compte est que PLUS AUCUN
+  // chemin d'interface ne les écrive séparément — l'exclusion vit ici, une
+  // fois, au lieu d'être re-jurée à chaque bouton.
+  const ENVIRONMENTS: readonly {
+    label: string;
+    hint: string;
+    outdoor: boolean;
+    night: boolean;
+  }[] = [
+    { label: '🏠 atelier', hint: 'fond neutre, lumière d’étude', outdoor: false, night: false },
+    { label: '🏞 extérieur', hint: 'ciel, horizon, soleil rasant — c’est lui qui donne l’ÉCHELLE', outdoor: true, night: false },
+    { label: '🌙 nuit', hint: 'le feu devient la seule lumière', outdoor: false, night: true },
+  ];
+  const currentEnv = (): number => (p.outdoor ? 1 : p.night ? 2 : 0);
+  const setEnv = (i: number): void => {
+    const e = ENVIRONMENTS[i] ?? ENVIRONMENTS[0]!;
+    p.outdoor = e.outdoor;
+    p.night = e.night;
+    // Les repères et la boîte de verre appartiennent à l'ATELIER : dans une
+    // prise de vue de spectacle ils cadrent le feu de traits pâles. F les
+    // ramène quand on veut poser un objet.
+    input.feedback = i === 0;
+    toast(`${e.label} — ${e.hint}${i === 0 ? '' : ' · F : repères'}`);
+  };
+
   /** Applique un preset SANS toucher à la PRISE DE VUE. Un preset règle la
    *  physique et le rendu du feu ; atelier / extérieur / nuit sont un POINT DE
    *  VUE sur la scène, pas une propriété d'elle. Sans cette exception, chaque
@@ -948,6 +979,28 @@ async function boot(): Promise<void> {
       })),
     },
     {
+      // La PRISE DE VUE, et rien d'autre : on choisit d'abord (les trois
+      // boutons, exclusifs, celui en cours en surbrillance), on affine ensuite
+      // (le soleil, qui n'a de sens qu'en extérieur). Ces réglages ne touchent
+      // PAS la simulation — c'est leur raison d'avoir leur propre coin.
+      title: 'environnement (prise de vue)',
+      buttonsFirst: true,
+      buttons: ENVIRONMENTS.map((e, i) => ({
+        label: e.label,
+        isActive: () => currentEnv() === i,
+        action: (): void => {
+          setEnv(i);
+          panel.refresh();
+          toolbar.refresh();
+        },
+      })),
+      sliders: [
+        // Le libellé porte la restriction, pas la valeur : la colonne de droite
+        // est étroite et un « (extérieur) » y était rogné.
+        { label: 'soleil (extérieur)', min: 0.02, max: 0.9, step: 0.01, get: () => p.sunHeight, set: (x) => (p.sunHeight = x), format: (x) => x.toFixed(2) },
+      ],
+    },
+    {
       title: 'simulation',
       sliders: [
         { label: 'vitesse du temps', min: 0, max: 1.5, step: 0.05, get: () => p.timeScale, set: (x) => (p.timeScale = x), format: (x) => `×${x.toFixed(2)}` },
@@ -1027,7 +1080,8 @@ async function boot(): Promise<void> {
         { label: 'plafond : absorption', min: 1, max: 90, step: 1, get: () => p.openCeilStrength, set: (x) => (p.openCeilStrength = x), format: (x) => x.toFixed(0) },
         { label: 'inversion', min: 0, max: 5, step: 0.05, get: () => p.stratStrength, set: (x) => (p.stratStrength = x), format: (x) => (x <= 0 ? 'air neutre' : x.toFixed(2)) },
         { label: 'inversion : base', min: 0.05, max: 0.9, step: 0.01, get: () => p.stratBase, set: (x) => (p.stratBase = x), format: (x) => x.toFixed(2) },
-        { label: 'soleil : hauteur', min: 0.02, max: 0.9, step: 0.01, get: () => p.sunHeight, set: (x) => (p.sunHeight = x), format: (x) => x.toFixed(2) },
+        // (« soleil : hauteur » a rejoint la section ENVIRONNEMENT, où il a
+        // toujours eu sa place — il n'a jamais eu de rapport avec l'explosion.)
       ],
       buttons: [{ label: '💥 détoner (G)', action: () => (input.explode = true) }],
     },
@@ -1095,30 +1149,32 @@ async function boot(): Promise<void> {
       },
       { label: '⚪ boule', isActive: () => input.sphereActive, action: () => (input.sphereActive = !input.sphereActive) },
     ],
+    // Les GROUPES de la barre disent de quoi chaque bouton relève : matières ·
+    // objets · scénarios · regard et session · pages. Tout ce qui restait
+    // finissait dans une file unique où une prise de vue voisinait avec une
+    // détonation — d'où le sentiment de fourre-tout.
     [
       { label: '💥 boum', action: () => (input.explode = true) },
       { label: '🍄 champignon', action: runMushroom },
+    ],
+    [
+      // UN seul bouton pour la prise de vue : il AFFICHE celle en cours et la
+      // fait défiler. Deux interrupteurs séparés, c'était l'autre moitié du
+      // désordre — et ils pouvaient mentir (aucun allumé = atelier, mais rien
+      // ne le disait). Le détail des trois vit dans le panneau.
       {
-        label: '🏞 extérieur',
-        isActive: () => p.outdoor,
+        label: '🏠 atelier',
+        isActive: () => currentEnv() !== 0,
         action: () => {
-          p.outdoor = !p.outdoor;
-          // Les trois prises de vue s'excluent.
-          if (p.outdoor) p.night = false;
-          // Les repères et la boîte de verre n'ont plus de sens en extérieur.
-          input.feedback = !p.outdoor;
+          setEnv((currentEnv() + 1) % ENVIRONMENTS.length);
+          panel.refresh();
         },
-      },
-      {
-        label: '🌙 nuit',
-        isActive: () => p.night,
-        action: () => {
-          p.night = !p.night;
-          if (p.night) p.outdoor = false;
-        },
+        dynamicLabel: () => ENVIRONMENTS[currentEnv()]!.label,
       },
       { label: '🎬 démo', isActive: () => demoOn, action: toggleDemo },
       { label: '⚙ réglages', action: () => panel.toggle() },
+    ],
+    [
       // Autres pages (URL relatives : valides en dev et sous /LiquidVM/ sur Pages).
       { label: '🌊 2D', action: () => (location.href = './') },
       { label: '💧 eau', action: () => (location.href = './eau.html') },
