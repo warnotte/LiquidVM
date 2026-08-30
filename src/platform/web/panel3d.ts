@@ -166,9 +166,6 @@ export class Panel3D {
 
 export interface ToolbarItem {
   readonly label: string;
-  /** Libellé RECALCULÉ au refresh, pour un bouton qui affiche un état et le
-   *  fait défiler (la prise de vue) au lieu d'en basculer un seul. */
-  readonly dynamicLabel?: () => string;
   /** Pastille de couleur (matières). */
   readonly color?: string;
   /** L'état « actif » du bouton, resynchronisé au refresh. */
@@ -195,22 +192,11 @@ export class Toolbar3D {
           chip.style.background = item.color;
           button.appendChild(chip);
         }
-        const text = document.createTextNode(item.label);
-        button.appendChild(text);
+        button.appendChild(document.createTextNode(item.label));
         button.addEventListener('click', () => {
           item.action();
           button.blur();
         });
-        if (item.dynamicLabel) {
-          const syncLabel = (): void => {
-            const next = item.dynamicLabel!();
-            if (text.nodeValue !== next) {
-              text.nodeValue = next;
-            }
-          };
-          this.refreshers.push(syncLabel);
-          syncLabel();
-        }
         if (item.isActive) {
           const sync = (): void => {
             button.classList.toggle('active', item.isActive!());

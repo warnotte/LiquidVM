@@ -991,7 +991,6 @@ async function boot(): Promise<void> {
         action: (): void => {
           setEnv(i);
           panel.refresh();
-          toolbar.refresh();
         },
       })),
       sliders: [
@@ -1158,19 +1157,10 @@ async function boot(): Promise<void> {
       { label: '🍄 champignon', action: runMushroom },
     ],
     [
-      // UN seul bouton pour la prise de vue : il AFFICHE celle en cours et la
-      // fait défiler. Deux interrupteurs séparés, c'était l'autre moitié du
-      // désordre — et ils pouvaient mentir (aucun allumé = atelier, mais rien
-      // ne le disait). Le détail des trois vit dans le panneau.
-      {
-        label: '🏠 atelier',
-        isActive: () => currentEnv() !== 0,
-        action: () => {
-          setEnv((currentEnv() + 1) % ENVIRONMENTS.length);
-          panel.refresh();
-        },
-        dynamicLabel: () => ENVIRONMENTS[currentEnv()]!.label,
-      },
+      // (La PRISE DE VUE n'est plus ici : elle vit dans la section
+      // « environnement » du panneau. Ce n'est pas un geste de scène — on la
+      // choisit une fois, on n'y revient pas toutes les dix secondes ; la
+      // barre est réservée à ce qu'on fait, pas à ce qu'on règle.)
       { label: '🎬 démo', isActive: () => demoOn, action: toggleDemo },
       { label: '⚙ réglages', action: () => panel.toggle() },
     ],

@@ -463,9 +463,15 @@ particules. Quand une limite n'apparaît qu'en WARNING console, écouter
   dans UNE table (`ENVIRONMENTS` + `setEnv`/`currentEnv`, main3d) et dans une
   section de panneau à eux, « environnement (prise de vue) », juste sous les
   presets. Trois choses en sortent, et la troisième est la vraie leçon :
-   1. la barre n'a plus qu'UN bouton, qui AFFICHE la prise de vue en cours et
-      la fait défiler (`dynamicLabel`) — deux interrupteurs séparés pouvaient
-      mentir : aucun allumé = atelier, mais rien ne le disait ;
+   1. la barre n'en porte PLUS RIEN. Passage en deux temps : d'abord un seul
+      bouton défilant à la place des deux interrupteurs (qui pouvaient mentir —
+      aucun allumé = atelier, mais rien ne le disait), puis, Renaud tranchant,
+      plus de bouton du tout. La règle qui en sort : **la barre est ce qu'on
+      FAIT, le panneau ce qu'on RÈGLE** — une prise de vue se choisit une fois,
+      ce n'est pas un geste de scène. (Le `dynamicLabel` ajouté pour ce bouton
+      est reparti avec lui : du code mort se supprime le jour où il meurt, pas
+      « au cas où » — même hygiène que les accesseurs `fieldCount` /
+      `activeFieldIndex` partis avec les curseurs par famille.) ;
    2. « soleil : hauteur » a quitté la fin de la section « explosion », où il
       n'avait aucun rapport avec le sujet, pour rejoindre l'environnement ;
    3. **l'exclusion des trois modes vit à UN seul endroit.** Tant qu'elle était
