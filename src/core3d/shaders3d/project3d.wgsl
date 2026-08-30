@@ -53,7 +53,17 @@ fn solid_sd(p: vec3f) -> f32 {
     // non-pénétration) qui ferme le bas. Le gaz est enfermé, la lumière
     // non : le rendu la traite en VERRE (voir raymarch).
     let rr = r * P.shape.z;
-    return abs(length(q) - rr) - rr * P.shape.y;
+    let shell = abs(length(q) - rr) - rr * P.shape.y;
+    // CHEMINÉE : un puits vertical percé au sommet (soustraction
+    // d'un cylindre). Une cloche HERMÉTIQUE est un piège — la cavité
+    // devient une région de fluide isolée, sans sortie pour la
+    // pression : une détonation à l'intérieur sature en blanc et
+    // éjecte les particules en lignes droites (vu par Renaud). Le
+    // cylindre ne perce QUE la calotte haute : la calotte basse est
+    // sous le plancher, qui la ferme. Assez étroit pour que l'air ne
+    // se renouvelle presque pas — l'étouffement tient (mesuré).
+    let vent = length(q.xz) - rr * 0.16;
+    return max(shell, -vent);
   }
   return length(q) - r; // SPHÈRE
 }

@@ -276,3 +276,29 @@ groups pré-créés, mots réservés WGSL (from, target, move, smooth, ref, acti
   **LEÇON** : un réglage de scène qui porte sur le MONDE ENTIER pour obtenir
   un effet LOCAL finit toujours par se payer ailleurs. La bonne façon d'isoler
   une région, c'est une frontière — pas un réglage global.
+
+- **LA CHEMINÉE (2026-08-30, seconde capture de Renaud : blob BLANC saturé
+  contre la cloche, particules éjectées en LIGNES DROITES).** Signature
+  différente de la précédente, et beaucoup plus parlante : une saturation
+  locale plus des particules en trajectoire rectiligne, c'est un champ de
+  vitesse qui part — donc une pression qui n'a pas de sortie. Cause : une
+  DÉTONATION (ou toute injection forte) dans la cavité HERMÉTIQUE de la cloche.
+  Une charge y verse d'un coup carburant et chaleur ; le volume est clos ; la
+  pression n'a nulle part où aller.
+  **Le correctif est géométrique, pas numérique** : la cloche a maintenant une
+  CHEMINÉE — un puits vertical soustrait au sommet (un cylindre de 0,16 R). La
+  cavité n'est donc plus JAMAIS une région de fluide isolée : il n'y a plus de
+  second espace nul pour la pression, plus de flux à compatibiliser, et une
+  détonation s'évacue par le haut au lieu de saturer. Le cylindre ne perce que
+  la calotte haute ; la basse est sous le plancher, qui la ferme.
+  Et l'étouffement n'y perd rien, parce qu'un trou étroit renouvelle mal l'air :
+  MESURÉ, O₂ sous cloche 0,045-0,052 (seuil de bridage 0,25) pendant que le
+  monde reste à 0,95.
+  Vérifié : détonation tirée PILE dans la cavité — petit jet de fumée à la
+  cheminée, aucune saturation, aucune particule en ligne droite, 60 FPS de bout
+  en bout sur 20 s ; formes standard et étouffement re-capturés, inchangés.
+  **LEÇON, et elle vaut au-delà de la cloche** : dans un solveur à pression de
+  Poisson, une CAVITÉ HERMÉTIQUE est une bombe à retardement — un second espace
+  nul qu'un seul pin n'ancre pas, et aucune sortie pour ce qu'on y injecte. La
+  bonne réponse n'est pas de blinder le solveur, c'est de ne pas fabriquer la
+  cavité : un trou suffit.
