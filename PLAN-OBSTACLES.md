@@ -174,3 +174,46 @@ groups pré-créés, mots réservés WGSL (from, target, move, smooth, ref, acti
   Livré au passage : `oxygenBurn` (défaut 0,55 = l'historique au bit près) et
   son curseur ; le banc `cdp-etouffe.mjs` (scratchpad) qui clique le PRESET
   comme l'utilisateur et porte ses deux témoins.
+
+- **J1 — VERT (2026-08-30). L'étouffement est DÉMONTRÉ, et c'est l'instrument
+  qui l'a permis.** Après sept réglages jugés à l'image, tous non concluants,
+  j'ai cessé de régler et j'ai MESURÉ : `__sim3d.sampleOxygen()` lit l'oxygène
+  (readback ponctuel, même exception assumée que l'export VDB) et rend sa
+  moyenne DANS la cavité et AUTOUR. Le premier relevé a tout dit :
+  ```
+  A (cloche, air non renouvelé)   O2 dedans 0,81 → 0,53 puis PLATEAU, dehors 1,000
+  ```
+  Un plateau, avec zéro renouvellement et un réservoir extérieur intact : ce
+  n'est pas une combustion qui s'arrête, c'est une FUITE à l'équilibre. Et
+  rétrécir la cavité de 3,6× n'a pas bougé le plateau — la source ne suivait
+  donc pas le VOLUME mais la SURFACE. Ce qui désignait la paroi.
+  **LA CAUSE** : les cellules SOLIDES gardaient leur oxygène initial (1,0) pour
+  toujours — rien ne les consomme — et l'échantillonnage trilinéaire des
+  cellules voisines les mélangeait dans la cavité. La paroi était un
+  RÉSERVOIR D'AIR INFINI. Correctif d'une ligne, et c'est la convention déjà
+  suivie par les densités : **un solide ne contient pas de gaz**.
+  Après correctif, les trois cas SE SÉPARENT enfin :
+  ```
+  A  cloche, air non renouvelé   O2 0,17 → 0,043 → 0,009 → 0,000   (mort)
+  B  sans cloche                 O2 0,90 → 0,94 → 0,96 → 0,95      (vit)
+  C  cloche, air renouvelé       O2 0,17 → 0,11 → 0,13 → 0,12      (bridée)
+  ```
+  et l'IMAGE raconte la même histoire : flamme orange vive à 3 s sous le verre,
+  braise sombre à 20 s ; sans cloche, panache haut et vif au même instant.
+  **Un second correctif de physique, trouvé en chemin** : la chaleur d'un
+  émetteur est désormais modulée par l'oxygène — un émetteur chaud EST une
+  combustion, et tant que la sienne était inconditionnelle, il rougeoyait dans
+  le vide et aucune flamme ne pouvait mourir. Sans effet ailleurs
+  (`oxy_factor` sature à 1 dès un quart d'oxygène) ; scènes standard
+  re-capturées, indiscernables, 60 FPS.
+  **Ce qui n'a PAS lieu, et ne doit pas** : la flamme ne se rallume pas quand
+  on lève la cloche. C'est juste — une mèche étouffée ne se rallume pas seule,
+  il lui faut une source. Ne pas le vendre comme un bug.
+  **LA LEÇON, et elle est la plus chère de la journée** : sept réglages jugés à
+  l'image n'ont rien produit ; une mesure a donné la cause en un relevé. Un
+  témoin qui ne SÉPARE PAS ne dit pas « l'effet est faible », il dit « tu ne
+  mesures pas ce que tu crois ». Instrumenter AVANT de re-régler.
+  Livré : preset **🔔 cloche** (un clic monte la scène), réglage `oxygenBurn`
+  (stœchiométrie, défaut 0,55 = l'historique), instrument `sampleOxygen`, banc
+  `cdp-o2.mjs` (les nombres) et `cdp-etouffe.mjs` (les images), tous deux avec
+  leurs deux témoins.

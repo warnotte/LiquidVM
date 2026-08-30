@@ -1317,14 +1317,14 @@ async function boot(): Promise<void> {
       input.obstacleShape = 3;
       input.sphereActive = true;
       // Le CARBURANT, collé à la flamme pilote : il s'y embrase tout de suite.
-      sim.addEmitterAt(0.535, 0.055, 0.5, 2);
+      sim.addEmitterAt(0.524, 0.035, 0.5, 2);
       // La cloche POSÉE ASSEZ BAS. Le critère est exact : la coquille INTÉRIEURE
       // (rayon R − e) doit passer sous le plancher, sinon le joint au sol est
       // d'épaisseur nulle et la cavité fuit. À 0,16 elle affleurait à 0,2 voxel
       // près — la flamme ne s'étouffait pas et la boîte se remplissait par le
       // bas (capturé). À 0,09, le sol coupe un anneau de solide d'une dizaine
       // de voxels : c'est ça, le joint.
-      sim.driveSphere(0.5, 0.055, 0.5, 0.016);
+      sim.driveSphere(0.5, 0.035, 0.5, 0.016);
     }
     input.removeEmitter = false;
     frames++;

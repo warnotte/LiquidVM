@@ -174,6 +174,28 @@ fn solid_sd(p: vec3f) -> f32 {
   return length(q) - r; // SPHÈRE
 }
 
+// LA RÉTRO-TRACE NE DOIT PAS TRAVERSER UN SOLIDE. À grand pas de temps (donc à
+// bas framerate) elle saute une paroi de plusieurs voxels et va échantillonner
+// DE L'AUTRE CÔTÉ : c'est ainsi que l'oxygène entrait dans une cloche pourtant
+// scellée. MESURÉ avant de conclure (`__sim3d.sampleOxygen`) : O₂ sous la
+// cloche plafonnait à 0,53 au lieu de tomber à 0, l'extérieur restant à 1,000
+// — l'équilibre d'une fuite, pas d'une combustion. On marche le segment et on
+// s'arrête au dernier point resté dans le fluide.
+// (`from` est un mot réservé WGSL — d'où `p0`.)
+fn trace_clamp(p0: vec3f, p1: vec3f) -> vec3f {
+  let d = p1 - p0;
+  let steps = i32(clamp(length(d) / 1.5, 1.0, 12.0));
+  var last = p0;
+  for (var i = 1; i <= steps; i++) {
+    let q = p0 + d * (f32(i) / f32(steps));
+    if (solid_sd(q) < 0.0) {
+      return last;
+    }
+    last = q;
+  }
+  return p1;
+}
+
 
 // TAILLE DE LA GRILLE, par axe. Le domaine n'est plus forcément cubique :
 // Nx = Nz = misc.z, Ny = misc.z × misc.w. Les CELLULES, elles, restent cubiques
@@ -243,7 +265,7 @@ fn predict(@builtin(global_invocation_id) gid: vec3u) {
     return;
   }
   let center = vec3f(c) + vec3f(0.5);
-  let back = backtrace(center, P.misc.x);
+  let back = trace_clamp(center, backtrace(center, P.misc.x));
   textureStore(den_dst, gid, textureSampleLevel(den_src, lin, back * inv_n(), 0.0));
 }
 
@@ -262,7 +284,7 @@ fn correct(@builtin(global_invocation_id) gid: vec3u) {
   var val = hat + 0.5 * (orig - tilde);
 
   // Clamp au stencil trilinéaire du point rétro-advecté (par canal, trace RK2).
-  let back = backtrace(center, dt);
+  let back = trace_clamp(center, backtrace(center, dt));
   let base = vec3i(floor(back - vec3f(0.5)));
   var lo = vec4f(1e30);
   var hi = vec4f(-1e30);
@@ -410,5 +432,18 @@ fn correct(@builtin(global_invocation_id) gid: vec3u) {
     }
   }
 
+  // UN SOLIDE NE CONTIENT PAS DE GAZ — même convention que les densités, qui
+  // sont mises à zéro dans l'obstacle quelques lignes plus haut. Sans cela les
+  // cellules de la PAROI gardent leur oxygène initial (1,0) pour toujours :
+  // rien ne les consomme, et l'échantillonnage trilinéaire des cellules
+  // voisines les mélange dans la cavité. La paroi devient un RÉSERVOIR D'AIR
+  // INFINI, et une cloche scellée ne s'étouffe jamais.
+  // MESURÉ (`__sim3d.sampleOxygen`) : O₂ moyen sous cloche plafonnait à 0,53,
+  // et RÉTRÉCIR la cavité de 3,6× ne changeait rien — la source ne suivait pas
+  // le VOLUME mais la SURFACE, ce qui désignait la paroi.
+  if (solid_sd(center) < 0.0) {
+    textureStore(oxy_dst, gid, vec4f(0.0));
+    return;
+  }
   textureStore(oxy_dst, gid, vec4f(clamp(o2, 0.0, 1.0), min(soot, 4.0), spec.zw));
 }
