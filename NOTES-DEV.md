@@ -1070,9 +1070,29 @@ particules. Quand une limite n'apparaît qu'en WARNING console, écouter
   Vérifié par `cdp-artifice.mjs` (chronologie des trois segments + tour 2 de
   boucle), 60 FPS constants à 256³. Le champignon extérieur du bouquet est à
   parité avec sa référence EXT256-*.
-- **Prochaines briques** : séquences VDB animées (File System Access API) ;
-  encres colorées (canaux yz réservés dans la densité) ; qualité du confinement
-  de vorticité (flouter |ω|).
+- **DÉMO RELIGHTÉE (2026-08-30)** — la démo datait d'avant la prise de vue
+  NUIT et jouait ses quatre premiers actes en atelier gris, alors que l'acte I
+  s'appelle « une bougie DANS LE NOIR » depuis le remaster. Chaque acte
+  déclare désormais sa lumière, comme l'acte VI déclarait déjà « dehors »
+  (`apply()` repart des défauts : ce qui n'est pas dit est de l'atelier) :
+  I bougie NUIT · II-III atelier (on y POSE des émetteurs, les repères
+  servent) · IV fournaise NUIT · V bombardement NUIT · VI dehors. L'arc va
+  de l'intime au didactique, au dramatique, puis à l'épique.
+  Deux choses apprises :
+   1. **Les repères sont des néons dans le noir.** Tracés APRÈS le tone-map,
+      les anneaux d'émetteur, les poignées RGB et les arêtes de la boîte sont
+      pâles sur le gris de l'atelier et éclatants sur le noir — ils cadraient
+      la bougie de traits blancs. Coupés sur les actes de nuit, APRÈS le toast
+      (le narrateur passe par `feedback`, leçon de l'acte V) et rendus à
+      l'acte II.
+   2. **Ne pas juger un acte d'explosion sur le PIC d'une volée** : trois
+      charges superposées saturent l'image, de nuit comme de jour. La crainte
+      que le contraste « boule fraîche devant nuage noirci » se perde de nuit
+      était fondée sur une telle image ; sur la respiration d'après, il tient
+      et il est MEILLEUR — le nuage se lit en rouge sombre contre la nuit et
+      la boule fraîche est enfin une source, pas une tache claire.
+  Vérifié en jouant la démo EN CONTINU (pas de saut d'horloge, pour voir les
+  transitions), dix plans capturés en lisant `__demo3d.t`, 60 FPS.
 
 ## Articulation des trois modes — ANALYSE, PLUS UNE FEUILLE DE ROUTE
 

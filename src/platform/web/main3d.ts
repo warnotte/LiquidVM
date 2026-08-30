@@ -287,6 +287,11 @@ class DemoDriver {
     // ACTE I — une bougie dans le noir (caméra proche, flamme intime).
     this.at(0.02, () => {
       this.apply(TUNE_CANDLE);
+      // DANS LE NOIR, enfin — l'acte porte ce titre depuis le remaster et se
+      // jouait en atelier gris. La prise de vue est un réglage d'ACTE au même
+      // titre que les presets : `apply()` repart des défauts, donc chaque acte
+      // qui veut autre chose que l'atelier le dit, comme l'acte VI dit dehors.
+      input.params.night = true;
       input.embersOn = false;
       input.glowStrength = 1.8;
       // La boule revient : les actes V et VI la retirent, et sans cette ligne
@@ -295,11 +300,19 @@ class DemoDriver {
       input.sphereActive = true;
       this.act({ speed: 0.06, elevation: 0.1, radius: 1.55 });
       this.toast('Acte I — une bougie dans le noir');
+      // Repères coupés APRÈS le toast (le narrateur passe par feedback, leçon
+      // de l'acte V). Ils sont tracés APRÈS le tone-map : pâles sur le gris de
+      // l'atelier, ce sont des néons dans le noir — anneau d'émetteur, poignées
+      // RGB et arêtes de la boîte cadraient la bougie de traits blancs.
+      input.feedback = false;
     });
     // ACTE II — les trois matières : la flamme prend ses aises, l'encre lourde
     // retombe, la vapeur de carburant nappe le sol.
     this.at(9, () => {
       this.apply({});
+      // Retour à l'atelier : les repères reviennent, et ils SERVENT ici — c'est
+      // l'acte où l'on pose des émetteurs, l'anneau dit où ils sont.
+      input.feedback = true;
       this.act({ speed: 0.09, elevation: 0.22, radius: 1.95 });
       this.toast('Acte II — la flamme prend ses aises');
     });
@@ -326,10 +339,16 @@ class DemoDriver {
     // brasier se détache au lieu de se noyer dans la boîte enfumée.
     this.at(33, () => {
       this.apply({ ...TUNE_FURNACE, inkDissipation: 0.4 });
+      // La forge DANS LE NOIR : c'est la scène qui gagne le plus à la nuit —
+      // les braises deviennent des étincelles d'or, la boule rougeoie là où la
+      // flamme la lèche, et la flaque au sol dit d'où vient la lumière.
+      input.params.night = true;
       input.embersOn = true;
       input.glowStrength = 2.3;
       this.act({ speed: 0.12, elevation: 0.3, radius: 2.3 });
       this.toast('Acte IV — FOURNAISE : braises au vent, la fumée boit la lumière');
+      // Idem : la forge de nuit ne veut pas de poignées RGB en travers.
+      input.feedback = false;
     });
     this.at(38, () => this.toast('la boule plonge dans le brasier'));
     if (this.t > 38 && this.t < 52) {
@@ -357,6 +376,16 @@ class DemoDriver {
       // Suie à 10 (contre 6 au montage à un tir) : le contraste de l'acte est
       // là — une boule d'or FRAÎCHE devant le nuage NOIRCI du tir précédent.
       this.apply({ emitHeat: 0, emitInkRate: 0, sootYield: 10, inkDissipation: 0.35 });
+      // Le bombardement reste DANS LE NOIR : une boule de feu est une lumière,
+      // et c'est de nuit qu'elle éclaire quelque chose. La crainte était que le
+      // contraste de l'acte — « boule fraîche devant nuage NOIRCI » — se perde,
+      // un nuage noirci sur fond noir n'étant plus rien. VÉRIFIÉ à l'image :
+      // il tient, et il est même meilleur — le nuage se lit en rouge sombre
+      // contre la nuit, et la boule fraîche est enfin une SOURCE, pas une tache
+      // claire. (Ne pas juger sur le pic d'une volée : les trois charges
+      // superposées y saturent, de nuit comme de jour. C'est la respiration
+      // d'APRÈS qui montre l'acte.)
+      input.params.night = true;
       // Calibre RÉDUIT : trois charges au calibre du tir isolé remplissaient la
       // boîte en mur de fumée avant la fin de la volée (capturé) — le volume
       // injecté par volée doit rester celui d'UN tir d'avant. Amorce 55 (pas
