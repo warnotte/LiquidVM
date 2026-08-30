@@ -1,5 +1,13 @@
 # Chantier EAU — liquide à surface libre (branche `eau`)
 
+> **CHANTIER CLOS depuis le 2026-08-25 (décision de Renaud).** J0–J4 sont verts
+> et MERGÉS dans `main` — `eau.html` reste en ligne tel quel. **J5, J6, la
+> coquille 3D commune et le couplage vapeur ne seront PAS faits** : tout ce qui
+> suit se lit comme un JOURNAL (méthode, batailles gagnées, pièges payés), pas
+> comme une feuille de route, et les « reste à faire » qu'il contient encore
+> sont ceux d'alors. Ne pas re-proposer ; si le sujet revient, il reviendra de
+> Renaud.
+
 Document de conception, écrit AVANT la première ligne de code. Objectif : que
 chaque session de travail sache où elle va, ce qui est déjà décidé, et ce qui
 est un critère de sortie mesurable plutôt qu'une impression.

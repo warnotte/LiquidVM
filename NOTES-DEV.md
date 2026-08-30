@@ -1172,11 +1172,12 @@ budget : la fumée du feu voyant la surface de l'eau comme un obstacle mobile
 
 ## Pistes suivantes
 
-La DÉMO (D) : arrêtée le 2026-08-28 (« pas super super » — l'état de la boîte
-close en cuts, journal dans le commit c1adbd1), RELANCÉE par Renaud le
-2026-08-29 sur la capacité charges multiples : acte V en volées superposées,
-acte VI feu d'artifice + bouquet (entrée « DÉMO RELANCÉE » du chantier 3D).
-En attente de son verdict sur cette version.
+La DÉMO (D) : arrêtée le 2026-08-28 (« pas super super »), relancée le
+2026-08-29 sur les charges multiples (acte V en volées superposées, acte VI
+barrage d'artillerie + bouquet), puis RELIGHTÉE le 2026-08-30 — chaque acte
+déclare sa prise de vue, I/IV/V de nuit (entrées « DÉMO RELANCÉE » et « DÉMO
+RELIGHTÉE » du chantier 3D). En attente du verdict de Renaud sur cette
+version.
 
 Le chantier de l'EAU est **CLOS** (décision du 2026-08-25) : `eau.html` reste en
 ligne tel quel, J5 et J6 de PLAN-EAU ne seront pas faits, et l'articulation des
@@ -1217,40 +1218,28 @@ et une décision explicite. Se souvenir, si réouverture : mesurer au PROFILEUR,
 plus aux toggles ; les gains de rendu se jugent sur une scène DENSE (le panache
 par défaut a trop peu de pas occupés).
 
-Pistes restantes, côté feu : qualité du confinement de vorticité · test
-smartphone (1024², limites WebGPU mobiles). Les charges multiples : FAITES
-(2026-08-29, entrée « CHARGES MULTIPLES » du chantier 3D).
+Pistes restantes, côté feu : test smartphone (1024², limites WebGPU mobiles) ·
+un modificateur « ASPIRATEUR », jamais écrit — un champ radial est annulé par
+la projection (leçon payée), mais aspirer n'est pas une FORCE radiale : c'est
+un PUITS DE DIVERGENCE, et le moteur sait déjà en poser (l'expansion de
+combustion en est une source, au signe près). Faites et donc parties d'ici :
+charges multiples (2026-08-29), qualité du confinement (|ω| flouté,
+2026-08-24), encres colorées (2026-08-21).
 
-**FEUX D'ARTIFICE COLORÉS — commande de Renaud (2026-08-29), les NÉCESSITÉS.**
-Le feu d'artifice aérien a échoué d'abord par la COULEUR : la lumière d'une
-explosion est du corps noir (or/orange/blanc) et sa fumée porte l'albédo des
-trois matières — il n'existe AUCUN chemin pour du vert ou du bleu
-pyrotechnique aujourd'hui. Ce qu'il faudrait, en deux étages :
- 1. **CHARGES D'ENCRE (l'étage bon marché — 2-3 teintes fixes).** Une
-    détonation qui injecte de l'ENCRE (canaux x/y de la densité, palette
-    INK_COLORS) au lieu de fumée+carburant, avec son amorce en chaleur pour le
-    souffle. Le RENDU est déjà prêt (albédo mélangé par voxel). Nécessite : une
-    « encre de la charge » PAR SLOT — burst_b est plein (carburant/amorce/
-    poussière/graine), donc passer à 3 vec4 par charge (tampon sim 640 → 768 o)
-    — et un cas dans l'injection d'advect_density3d. Limite assumée : 2-3
-    teintes, pas une palette.
- 2. **TEINTES ARBITRAIRES (le vrai feu d'artifice).** La grille de densité n'a
-    que 3 canaux à albédos FIXES : deux teintes différentes au même voxel sont
-    structurellement impossibles. La voie grille (2ᵉ texture de densité, ou
-    champ de teinte advecté) coûte cher et reste sale aux mélanges. La voie
-    PROBABLEMENT juste : des ÉTINCELLES COLORÉES par charge, famille des
-    braises — particules additives, occlusion par particule, la couleur vit
-    SUR la particule et pas dans la grille, mélanges propres par construction.
-    Un feu d'artifice est d'ailleurs PHYSIQUEMENT ça : des particules
-    incandescentes, pas un gaz coloré. Nécessite : un tampon d'étincelles par
-    teinte OU une teinte par particule (un float de plus dans le layout), des
-    naissances liées à la charge (position + kick radial) plutôt qu'à la
-    chaleur ambiante, et une variante de embers_draw sans corps noir (couleur
-    prescrite). La LUEUR resterait or (le volume de lueur injecte l'émission
-    corps noir) — une lueur teintée demanderait d'y injecter émission ×
-    albédo local, à juger à l'image.
-Et pour la FORME, la leçon du 2026-08-29 vaut d'avance : partir du moteur de
-réglages du champignon (fin), pas des défauts (gras).
-(« Encres colorées » a longtemps traîné ici : c'est FAIT depuis le 2026-08-21,
-commit 7cefd12 — touches 1/2/3, fumée/encre/carburant, albédo mélangé par voxel.
-La ligne datait d'avant ce commit et a survécu à une réécriture de la section.)
+**FEUX D'ARTIFICE COLORÉS — FAITS, puis RANGÉS.** Ce paragraphe décrivait
+pendant un jour « ce qu'il faudrait » ; tout a été construit le 2026-08-30
+(J0-J3 verts, outil de tir visé, lueur teintée) et le chantier a été rangé sur
+le verdict de Renaud : « pas ce que j'avais vraiment espéré, même s'il y a de
+l'idée ». Le journal complet, l'architecture et les mesures sont dans
+**PLAN-ARTIFICES.md** ; le code vit dans `main`, inerte par défaut. Ne pas
+re-proposer. Ce qui reste vrai et vaut pour la suite : la couleur ne peut PAS
+venir de la grille (trois canaux à albédos fixes, émission de corps noir), donc
+elle vit sur des PARTICULES — et une lueur teintée s'obtient en injectant la
+couleur des particules dans le volume de lueur, ce qui a été fait et mesuré.
+
+**Et la LEÇON DE DOCUMENTATION que cette section a fournie deux fois** : une
+ligne périmée SURVIT à la réécriture de la section qui l'entoure. « Encres
+colorées » y a traîné en « piste suivante » quatre jours après avoir été faite
+(commit 7cefd12), et ce bloc-ci a décrit comme à faire ce qui était fait ET
+rangé. D'où la règle : quand une chose est faite ou close, la marquer LÀ OÙ ELLE
+EST ÉCRITE, dans le même geste — pas seulement dans le journal du jour.

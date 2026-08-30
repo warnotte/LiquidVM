@@ -27,9 +27,14 @@ mais le preset « champignon » est calibré pour un cube et n'y transpose pas e
 (il rend une colonne au lieu d'un chapeau). `?tall=1`, le défaut, est identique au
 cube au poil près.
 
-**Prise de vue** : bouton « 🏞 extérieur » — ciel, sol jusqu'à l'horizon, soleil
-rasant, plus de boîte de verre. Ne touche à aucune physique ; sert à lire une
-ÉCHELLE, que l'atelier sur fond gris ne donne pas.
+**Prise de vue** (section « environnement » du panneau de réglages) : trois
+regards sur la même scène, sans toucher à la physique. **Atelier** — fond
+neutre, boîte de verre, lumière d'étude. **Extérieur** — ciel, sol jusqu'à
+l'horizon, soleil rasant : c'est lui qui donne l'ÉCHELLE, que l'atelier ne
+donne pas. **Nuit** — ambiante, lumière-clé et albédos éteints : le feu devient
+la seule source, sa flaque éclaire le sol et les parois de la salle, et tout
+l'éclairage volumétrique (volume de lueur, in-scattering, ombres à deux
+octaves) devient enfin visible au lieu d'être noyé sous un gris moyen.
 
 **Simulation** : solveur MAC 3D, résolution choisissable 128³ à 512³ (`?grid=` ou
 sélecteur du panneau, estimation VRAM affichée — 512³ ≈ 11,3 Go, mesuré 20 FPS sur
@@ -52,10 +57,12 @@ par la fumée. Coût mesuré nul quand coupées.
 
 **Autour** : presets un-clic (bougie / fournaise / fumée épaisse / vent — ce
 dernier allume un vent horizontal au cap oscillant, coupé par défaut), mode démo
-chorégraphié en six actes (`D` — bougie, trois matières, le souffle qui embrase
-la nappe de carburant, fournaise, une salve de détonations montée en cuts, puis
-un champignon tiré en extérieur ; rendu verrouillé à 100 % pendant le spectacle,
-vos réglages restaurés en sortie), export
+chorégraphié en six actes (`D` — une bougie dans le noir, les trois matières,
+le souffle qui embrase la nappe de carburant, la fournaise, une salve de
+détonations montée en cuts, puis un barrage et un champignon tirés en
+extérieur ; chaque acte a SA lumière — nuit, atelier ou plein jour ; rendu
+verrouillé à 100 % pendant le spectacle, vos réglages restaurés en sortie),
+export
 OpenVDB (`E`, validé dans Blender, jusqu'à 512³), panneau de réglages déclaratif
 (`Tab`, toute la physique à chaud). Même contrat que le 2D : état 100 % GPU, zéro
 readback en boucle de frame, `src/core3d/` portable sans DOM.
