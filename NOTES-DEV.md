@@ -456,6 +456,26 @@ particules. Quand une limite n'apparaît qu'en WARNING console, écouter
   résidente — un test suivant peut tomber à 20 FPS à 256³ ; redémarrer le
   Chrome de test avant de mesurer. L'export VDB suit maxBufferSize : 384³ et
   512³ exportables désormais (multiples de 128 ; fichiers ~450 Mo / ~1,1 Go).
+- **OBSTACLES DE FORME QUELCONQUE (2026-08-30)** : le prédicat d'obstacle est
+  une DISTANCE SIGNÉE partagée par les dix passes (`solid_sd`, dupliquée —
+  les shaders sont autonomes) : sphère · boîte · tore, choisis dans la section
+  « obstacle » du panneau. La sphère reste le cas EXACT et ne paie rien (même
+  inégalité qu'avant, branche analytique au rendu) ; le rendu des autres formes
+  est du sphere tracing BORNÉ par la sphère englobante, donc gratuit hors
+  d'elle. 60 FPS à 256³ pour les trois. Paramètres = RATIOS du rayon, donc le
+  curseur de taille vaut pour toute forme. Journal complet et jalons :
+  PLAN-OBSTACLES.md.
+  ⚠️ **Une CLOCHE creuse a été tentée puis JETÉE** (décision de Renaud) : une
+  cavité fermée est structurellement mauvaise ici — second espace nul de la
+  pression qu'un pin unique n'ancre pas, aucune sortie pour ce qu'on y injecte,
+  et les réglages GLOBAUX (oxygène) cessent d'avoir un sens dès qu'on la
+  déplace. Ne pas re-proposer d'obstacle qui enferme un volume.
+  Deux correctifs en sont restés, valables partout : la rétro-trace des
+  densités ne TRAVERSE plus un solide (à grand pas de temps elle sautait une
+  paroi et échantillonnait de l'autre côté), et un solide ne STOCKE plus de gaz
+  (ses cellules gardaient leur oxygène initial pour toujours et le
+  réinjectaient par filtrage trilinéaire — un obstacle était un réservoir d'air
+  infini).
 - **Interface (panel3d.ts)** : panneau à sections (Tab) + barre d'outils,
   ENTIÈREMENT déclaratifs — ajouter un réglage = une entrée de spec dans main3d.
   **RANGEMENT DE LA PRISE DE VUE (2026-08-30, signalé par Renaud : « l'interface

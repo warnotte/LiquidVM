@@ -137,9 +137,6 @@ export const OBSTACLE_SHAPES: readonly {
   // Tore d'axe vertical : petit rayon 0,38 R. Le panache le TRAVERSE — c'est la
   // preuve à l'image qu'un obstacle peut avoir un trou.
   { label: '🍩 tore', params: [0.38, 0, 0] },
-  // CLOCHE de verre : coquille de rayon 3,2 R (le rayon nominal est petit — il
-  // faut couvrir la flamme) et d'épaisseur 9 % de ce rayon. Le SOL ferme le bas.
-  { label: '🔔 cloche', params: [0.22, 1.0, 0] },
 ];
 
 const COMPUTE = GPUShaderStage.COMPUTE;
@@ -248,7 +245,6 @@ export class FluidSim3D {
   private pressIdx: PingIndex = 0;
   private oxyIdx: PingIndex = 0;
   /** Forme d'obstacle du dernier pas — l'instrument d'oxygène en a besoin. */
-  private lastShape = 0;
   private simTime = 0;
   /** Première frame : initialiser la texture d'espèces (O₂ = 1 partout). */
   private needSpeciesInit = true;
@@ -502,7 +498,6 @@ export class FluidSim3D {
       readonly busy: boolean[];
     } | null,
     private readonly denTextures: Pair<GPUTexture>,
-    private readonly speciesTextures: Pair<GPUTexture>,
     private readonly post: {
       readonly post2dLayout: GPUBindGroupLayout;
       readonly presentLayout: GPUBindGroupLayout;
@@ -569,22 +564,7 @@ export class FluidSim3D {
       // textures ping (le flou lit l'une, écrit l'autre), 2×7 Mo à 384³.
       const curlHalf = pair((i) => tex3d(device, `curl3d-${i}`, 'rgba16float', GRID3 / 2));
       // Espèces transportées : x = oxygène (init 1), yzw réservés.
-      // Les ESPÈCES gardent leur TEXTURE et pas seulement leur vue :
-      // `copyTextureToBuffer` veut la texture, et l'instrument d'oxygène
-      // (`sampleOxygen`) en a besoin. Mêmes usages que `tex3d`.
-      const speciesTextures = pair((i) =>
-        device.createTexture({
-          label: `species3d-${i}`,
-          dimension: '3d',
-          size: { width: GRID3, height: GRID3Y, depthOrArrayLayers: GRID3 },
-          format: 'rgba16float',
-          usage:
-            GPUTextureUsage.TEXTURE_BINDING |
-            GPUTextureUsage.STORAGE_BINDING |
-            GPUTextureUsage.COPY_SRC,
-        }),
-      );
-      const species = pair((i) => speciesTextures[i].createView({ label: `species3d-${i}-view` }));
+      const species = pair((i) => tex3d(device, `species3d-${i}`, 'rgba16float'));
       // Volume de LUEUR (grille grossière) : inject → [0], blurs ping-pong,
       // le rendu lit [1] (3 blurs : 0→1→0→1). Coût mémoire négligeable.
       const GLOW3 = Math.max(GRID3 / 8, 16);
@@ -1534,7 +1514,6 @@ export class FluidSim3D {
         mgLevels,
         prof,
         denTextures,
-        speciesTextures,
         {
           post2dLayout: L.post2d,
           presentLayout: L.present,
@@ -2756,87 +2735,6 @@ export class FluidSim3D {
   }
 
   /**
-   * INSTRUMENT (dev) : oxygène moyen DANS la cavité de la cloche et AUTOUR
-   * d'elle, par lecture GPU→CPU ponctuelle — même exception assumée que
-   * l'export VDB, hors boucle de frame.
-   *
-   * Pourquoi il existe : sept réglages successifs ont été jugés à l'IMAGE et
-   * les deux témoins n'ont jamais séparé. Une flamme qui faiblit ne dit pas
-   * POURQUOI elle faiblit ; seul le champ d'oxygène le dit. On ne lit que la
-   * boîte englobante de l'obstacle (arrondie à 32 pour `bytesPerRow`), pas le
-   * volume entier.
-   */
-  async sampleOxygen(): Promise<{
-    inside: number;
-    outside: number;
-    minInside: number;
-    cellsInside: number;
-  }> {
-    const n = GRID3;
-    const cx = this.spherePos[0];
-    const cy = this.spherePos[1];
-    const cz = this.spherePos[2];
-    const r = SIM3_DEFAULTS.sphereRadius * n;
-    const shape = OBSTACLE_SHAPES[this.lastShape] ?? OBSTACLE_SHAPES[0]!;
-    // Rayon extérieur de la coquille pour la cloche, rayon simple sinon.
-    const rr = this.lastShape === 3 ? r * shape.params[1] : r;
-    const th = this.lastShape === 3 ? rr * shape.params[0] : 0;
-    const span = Math.min(Math.ceil((rr + th) * 2.6 / 32) * 32, n);
-    const clampO = (v: number, ext: number, max: number): number =>
-      Math.max(0, Math.min(Math.round(v - ext / 2), max - ext));
-    const ox = clampO(cx, span, n);
-    const oy = clampO(cy, span, GRID3Y);
-    const oz = clampO(cz, span, n);
-    const buffer = this.device.createBuffer({
-      label: 'oxygen3d-readback',
-      size: span * span * span * 8,
-      usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
-    });
-    const encoder = this.device.createCommandEncoder({ label: 'oxygen3d-sample' });
-    encoder.copyTextureToBuffer(
-      { texture: this.speciesTextures[this.oxyIdx], origin: { x: ox, y: oy, z: oz } },
-      { buffer, bytesPerRow: span * 8, rowsPerImage: span },
-      { width: span, height: span, depthOrArrayLayers: span },
-    );
-    this.device.queue.submit([encoder.finish()]);
-    await buffer.mapAsync(GPUMapMode.READ);
-    const halves = new Uint16Array(buffer.getMappedRange());
-    let sumIn = 0;
-    let cntIn = 0;
-    let sumOut = 0;
-    let cntOut = 0;
-    let minIn = 1;
-    for (let z = 0; z < span; z++) {
-      for (let y = 0; y < span; y++) {
-        for (let x = 0; x < span; x++) {
-          const i = (z * span + y) * span + x;
-          const o2 = halfToFloat(halves[i * 4]!);
-          const dx = ox + x + 0.5 - cx;
-          const dy = oy + y + 0.5 - cy;
-          const dz = oz + z + 0.5 - cz;
-          const d = Math.hypot(dx, dy, dz);
-          // Dedans = sous la coquille et au-dessus du plancher ; dehors = au-delà.
-          if (d < rr - th && oy + y >= 0) {
-            sumIn += o2;
-            cntIn++;
-            minIn = Math.min(minIn, o2);
-          } else if (d > rr + th) {
-            sumOut += o2;
-            cntOut++;
-          }
-        }
-      }
-    }
-    buffer.destroy();
-    return {
-      inside: cntIn > 0 ? sumIn / cntIn : Number.NaN,
-      outside: cntOut > 0 ? sumOut / cntOut : Number.NaN,
-      minInside: minIn,
-      cellsInside: cntIn,
-    };
-  }
-
-  /**
    * Encode un V-cycle multigrid complet sur la pression du niveau 0 (warm start).
    * Descente : balayages rouge-noir, résidu, restriction ; plus grossier :
    * lissage long ; remontée : prolongation trilinéaire ajoutée EN PLACE +
@@ -3079,9 +2977,7 @@ export class FluidSim3D {
     // (Les accélérations, elles, se mettent bien à l'échelle : une accélération
     //  en monde/s² vaut N fois plus en voxels/s². D'où la poussée, le vent, le
     //  poids des matières et la force des champs, tous ×SCALE3 à juste titre.)
-    // (voir `hollow` plus bas : une coquille fermée n'accepte aucune source de
-    // masse — l'expansion y est coupée, quel que soit le preset en cours.)
-    d[35] = input.obstacleShape === 3 && this.sphereOn ? 0 : p.expansion;
+    d[35] = p.expansion;
     for (let i = 1; i < 4; i++) {
       if (i < this.emitters.length) {
         emitterSlot(32 + i * 4, i);
@@ -3091,26 +2987,9 @@ export class FluidSim3D {
       d[48 + i] = this.emitters[i]?.ink ?? 0;
     }
     // Vitesse de la sphère (voxels/s) : condition de bord mobile.
-    // OBSTACLE CREUX (la cloche) : sa vitesse n'est PAS prescrite au bord, et
-    // l'expansion de combustion est coupée. Les deux pour la même raison, qui
-    // est structurelle et pas cosmétique — une COQUILLE FERMÉE crée une seconde
-    // région de fluide, isolée :
-    //  · le solveur de pression n'ancre qu'UNE constante (le pin p(0,0,0)=0) ;
-    //    la cavité a son propre espace nul, et un débit prescrit sur son bord
-    //    doit s'y sommer EXACTEMENT à zéro pour que le système reste soluble.
-    //    En escalier discret il ne le fait pas : le résidu n'a nulle part où
-    //    aller, la pression enfle, et la scène part en vrille.
-    //  · une SOURCE DE MASSE (l'expansion) dans un volume clos est
-    //    intenable par construction — c'est le runaway déjà payé à la boîte
-    //    close, en pire.
-    // Physiquement ce n'est pas un renoncement : on soulève une cloche de
-    // verre, l'air qu'elle enferme ne se fait pas traîner en bloc.
-    // `input` est la SOURCE : ne pas dépendre d'un champ écrit par une autre
-    // passe (l'ordre des écritures d'uniformes est un détail, pas un contrat).
-    const hollow = input.obstacleShape === 3;
-    d[52] = this.sphereOn && !hollow ? this.sphereVel[0] : 0;
-    d[53] = this.sphereOn && !hollow ? this.sphereVel[1] : 0;
-    d[54] = this.sphereOn && !hollow ? this.sphereVel[2] : 0;
+    d[52] = this.sphereOn ? this.sphereVel[0] : 0;
+    d[53] = this.sphereOn ? this.sphereVel[1] : 0;
+    d[54] = this.sphereOn ? this.sphereVel[2] : 0;
     // Poids propre des matières (fumée / encre / carburant).
     d[56] = D.inkWeights[0] * SCALE3;
     d[57] = D.inkWeights[1] * SCALE3;
@@ -3139,14 +3018,11 @@ export class FluidSim3D {
     // OBSTACLE : forme et paramètres (slot #23 = floats 92-95, l'ancien slot
     // d'explosion unique). Les dix passes lisent la même `solid_sd`.
     const shape = OBSTACLE_SHAPES[input.obstacleShape] ?? OBSTACLE_SHAPES[0]!;
-    this.lastShape = input.obstacleShape;
     d[92] = input.obstacleShape;
     d[93] = shape.params[0];
     d[94] = shape.params[1];
     d[95] = shape.params[2];
-    // CHIMIE (slot #24 = floats 96-99) : stœchiométrie de l'oxygène.
-    d[96] = p.oxygenBurn;
-    // (Slots 97-99 : libres — les charges vivent en 116-147, en fin de tampon.)
+    // (Slots 96-99 : libres — les charges vivent en 116-147, en fin de tampon.)
     // Suie : rendement et évanouissement (le rendu lit sa densité côté render).
     d[100] = p.sootYield;
     d[101] = p.sootFade;

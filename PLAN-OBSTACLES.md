@@ -302,3 +302,32 @@ groups pré-créés, mots réservés WGSL (from, target, move, smooth, ref, acti
   nul qu'un seul pin n'ancre pas, et aucune sortie pour ce qu'on y injecte. La
   bonne réponse n'est pas de blinder le solveur, c'est de ne pas fabriquer la
   cavité : un trou suffit.
+
+- **LA CLOCHE EST JETÉE (2026-08-30, décision de Renaud : « ce truc déconne
+  complètement dès que je déplace la cloche, on va oublier ça »).** Trois
+  rapports de casse d'affilée, trois causes différentes trouvées et corrigées
+  (préréglage qui affamait le monde, cavité hermétique, vitesse prescrite sur
+  une coquille) — et ça cassait encore. Retirée entièrement : la forme, son
+  preset, la scène d'étouffement, le rendu « verre », l'instrument d'oxygène,
+  la stœchiométrie réglable et la chaleur d'émetteur conditionnée à l'air. Le
+  moteur revient sur ces points à ce qu'il était.
+  **CE QUI RESTE, et qui n'a jamais posé problème** : les obstacles de forme
+  quelconque (sphère · boîte · tore), 60 FPS à 256³, la sphère exacte et
+  indiscernable de l'historique ; plus deux correctifs qui valent
+  indépendamment de la cloche — la rétro-trace ne traverse plus un solide, et
+  un solide ne stocke plus de gaz.
+  **LEÇON DE MÉTHODE, chèrement payée** : la CLOCHE était une mauvaise idée
+  d'architecture, pas une suite de bugs. Une cavité fermée dans un solveur à
+  pression de Poisson, c'est un second espace nul qu'un pin unique n'ancre
+  pas, aucune sortie pour ce qu'on y injecte, et une géométrie qui invalide
+  les réglages globaux (l'oxygène) dès qu'on la déplace. Chaque correctif
+  était juste et découvrait le défaut suivant : le signe qu'on répare une
+  conception, pas un bug. **Il fallait arrêter au deuxième rapport, pas au
+  quatrième.**
+  **ET UN PIÈGE DE BANC, retombé dedans en jetant** : la suppression a
+  d'abord semblé coûter 3× le framerate (20 FPS contre 60). Un A/B contre
+  HEAD a paru le confirmer. C'était FAUX — l'état du GPU entre deux mesures,
+  exactement le piège déjà écrit dans NOTES-DEV. Après bissection complète,
+  chaque étape rend 60 FPS, y compris la suppression entière. Le tort était
+  de traiter deux mesures successives comme comparables : il faut les
+  ALTERNER (A-B-A-B), la leçon des braises, et je ne l'ai pas appliquée.

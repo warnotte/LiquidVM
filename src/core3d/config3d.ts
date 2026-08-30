@@ -130,8 +130,6 @@ export interface Sim3Tuning {
   heatYield: number;
   expansion: number;
   oxygenRecover: number;
-  /** Stœchiométrie : O₂ consommé par unité de carburant brûlé. */
-  oxygenBurn: number;
   blowForce: number;
   /** VENT horizontal (voxels/s² par unité de matière). 0 = aucun vent, et la
    *  scène est alors STRICTEMENT identique à ce qu'elle était sans la fonction. */
@@ -186,7 +184,6 @@ export function defaultTuning3(): Sim3Tuning {
     night: SIM3_DEFAULTS.night,
     sunHeight: SIM3_DEFAULTS.sunHeight,
     oxygenRecover: SIM3_DEFAULTS.oxygenRecover,
-    oxygenBurn: SIM3_DEFAULTS.oxygenBurn,
     blowForce: SIM3_DEFAULTS.blowForce,
     windStrength: SIM3_DEFAULTS.windStrength,
     windSwing: SIM3_DEFAULTS.windSwing,
@@ -372,10 +369,6 @@ export const SIM3_DEFAULTS = {
    *  combustion le consomme (stœchiométrie dans le shader), il revient lentement
    *  (la boîte « fuit ») et le SOUFFLE en apporte — le soufflet de forge. */
   oxygenRecover: 0.015,
-  /** O₂ consommé par unité de carburant. 0,55 = l'historique. C'est LUI qui
-   *  fixe combien de temps un volume d'air fermé tient : le monter permet de
-   *  voir une flamme s'étouffer en quelques secondes au lieu d'une minute. */
-  oxygenBurn: 0.55,
   blowOxygen: 2.5,
   /** Poids propre des matières (voxels/s² par unité — remis à l'échelle SCALE3) :
    *  la fumée flotte, l'encre magenta est lourde, la vapeur de carburant coule

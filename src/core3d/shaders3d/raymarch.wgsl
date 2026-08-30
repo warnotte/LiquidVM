@@ -156,23 +156,6 @@ fn solid_sd(p: vec3f) -> f32 {
   if (kind == 2) {
     return length(vec2f(length(q.xz) - r, q.y)) - r * R.shape.y;
   }
-  if (kind == 3) { // CLOCHE : coquille sphérique, OUVERTE PAR LE SOL —
-    // pas de plan de coupe : c'est le plancher de la boîte (déjà un mur de
-    // non-pénétration) qui ferme le bas. Le gaz est enfermé, la lumière
-    // non : le rendu la traite en VERRE (voir raymarch).
-    let rr = r * R.shape.z;
-    let shell = abs(length(q) - rr) - rr * R.shape.y;
-    // CHEMINÉE : un puits vertical percé au sommet (soustraction
-    // d'un cylindre). Une cloche HERMÉTIQUE est un piège — la cavité
-    // devient une région de fluide isolée, sans sortie pour la
-    // pression : une détonation à l'intérieur sature en blanc et
-    // éjecte les particules en lignes droites (vu par Renaud). Le
-    // cylindre ne perce QUE la calotte haute : la calotte basse est
-    // sous le plancher, qui la ferme. Assez étroit pour que l'air ne
-    // se renouvelle presque pas — l'étouffement tient (mesuré).
-    let vent = length(q.xz) - rr * 0.16;
-    return max(shell, -vent);
-  }
   return length(q) - r;
 }
 
@@ -184,9 +167,6 @@ fn solid_bound() -> f32 {
   }
   if (kind == 2) {
     return R.sphere.w * (1.0 + R.shape.y + 0.02);
-  }
-  if (kind == 3) {
-    return R.sphere.w * R.shape.z * (1.0 + R.shape.y) + 0.02;
   }
   return R.sphere.w * 1.02;
 }
@@ -386,9 +366,7 @@ fn floor_shade(fp: vec3f, bg: vec3f, ldir: vec3f) -> vec3f {
       occ += extinction(textureSampleLevel(density_tex, lin, tex_uvw(sp), 0.0)) * step_len;
     }
   }
-  // Le VERRE ne porte pas d'ombre : elle serait une tache noire sous une
-  // cloche transparente — et coûterait une marche complète par pixel de sol.
-  if (i32(R.shape.x + 0.5) != 3 && sphere_hit(fp, ldir) < 1e8) {
+  if (sphere_hit(fp, ldir) < 1e8) {
     occ += 3.0;
   }
   let shadow = exp(-occ * 0.8);
@@ -445,13 +423,8 @@ fn fs_main(frag: VSOut) -> @location(0) vec4f {
 
   let hit = box_hit(ro, rd);
   let t0 = max(hit.x, 0.0);
-  // CLOCHE DE VERRE : opaque au GAZ, transparente à la LUMIÈRE — un obstacle
-  // qui arrête aussi les rayons cacherait précisément ce qu'on veut montrer,
-  // la flamme qu'il enferme. Elle ne tronque donc pas la marche : elle n'y
-  // ajoute qu'un liseré, plus bas.
-  let is_glass = i32(R.shape.x + 0.5) == 3;
   // La marche s'arrête à l'obstacle OPAQUE si le rayon le touche.
-  let t_sphere = select(sphere_hit(ro, rd), 1e9, is_glass);
+  let t_sphere = sphere_hit(ro, rd);
   let t_end = min(hit.y, t_sphere);
   var col: vec3f;
   if (hit.y <= t0) {
@@ -607,16 +580,6 @@ fn fs_main(frag: VSOut) -> @location(0) vec4f {
       sphere_col += glow_at(sp) * 0.7;
       acc += transmit * sphere_col;
       transmit = 0.0;
-    }
-    // Liseré de la CLOCHE : ce qui trahit une paroi de verre est son bord,
-    // pas sa masse. Un peu de la lueur qu'elle capte, et rien d'autre.
-    if (is_glass) {
-      let tg = solid_hit_max(ro, rd, hit.y, 40);
-      if (tg < 1e8) {
-        let gp = ro + rd * tg;
-        let rim = pow(1.0 - abs(dot(solid_normal(gp), rd)), 3.0);
-        acc += vec3f(0.42, 0.50, 0.62) * rim * 0.30 + glow_at(gp) * 0.10;
-      }
     }
     col = acc + transmit * bg;
   }

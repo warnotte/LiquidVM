@@ -33,11 +33,7 @@ struct Params {
   // `bursts`, en queue de struct.)
   // OBSTACLE : x type, yzw paramètres (ratios du rayon).
   shape: vec4f,
-  // CHIMIE : x = O₂ consommé par unité de carburant brûlé (stœchiométrie).
-  // Réglable parce qu'elle fixe le TEMPS d'épuisement d'un volume d'air —
-  // à 0,55 une cloche met près d'une minute à s'étouffer, ce qui n'est pas
-  // une expérience regardable.
-  chem: vec4f,
+  libre_b: vec4f,
   // x: rendement de suie, y: évanouissement, z: refroidissement PAR la suie.
   soot: vec4f,
   // x: bande LATÉRALE (voxels, 0 = parois closes), y: sa force,
@@ -164,33 +160,13 @@ fn solid_sd(p: vec3f) -> f32 {
   if (kind == 2) { // TORE d'axe vertical : grand rayon r, petit rayon r × y
     return length(vec2f(length(q.xz) - r, q.y)) - r * P.shape.y;
   }
-  if (kind == 3) { // CLOCHE : coquille sphérique, OUVERTE PAR LE SOL —
-    // pas de plan de coupe : c'est le plancher de la boîte (déjà un mur de
-    // non-pénétration) qui ferme le bas. Le gaz est enfermé, la lumière
-    // non : le rendu la traite en VERRE (voir raymarch).
-    let rr = r * P.shape.z;
-    let shell = abs(length(q) - rr) - rr * P.shape.y;
-    // CHEMINÉE : un puits vertical percé au sommet (soustraction
-    // d'un cylindre). Une cloche HERMÉTIQUE est un piège — la cavité
-    // devient une région de fluide isolée, sans sortie pour la
-    // pression : une détonation à l'intérieur sature en blanc et
-    // éjecte les particules en lignes droites (vu par Renaud). Le
-    // cylindre ne perce QUE la calotte haute : la calotte basse est
-    // sous le plancher, qui la ferme. Assez étroit pour que l'air ne
-    // se renouvelle presque pas — l'étouffement tient (mesuré).
-    let vent = length(q.xz) - rr * 0.16;
-    return max(shell, -vent);
-  }
   return length(q) - r; // SPHÈRE
 }
 
 // LA RÉTRO-TRACE NE DOIT PAS TRAVERSER UN SOLIDE. À grand pas de temps (donc à
 // bas framerate) elle saute une paroi de plusieurs voxels et va échantillonner
-// DE L'AUTRE CÔTÉ : c'est ainsi que l'oxygène entrait dans une cloche pourtant
-// scellée. MESURÉ avant de conclure (`__sim3d.sampleOxygen`) : O₂ sous la
-// cloche plafonnait à 0,53 au lieu de tomber à 0, l'extérieur restant à 1,000
-// — l'équilibre d'une fuite, pas d'une combustion. On marche le segment et on
-// s'arrête au dernier point resté dans le fluide.
+// DE L'AUTRE CÔTÉ — matière et oxygène passent alors à travers un mur. On
+// marche le segment et on s'arrête au dernier point resté dans le fluide.
 // (`from` est un mot réservé WGSL — d'où `p0`.)
 fn trace_clamp(p0: vec3f, p1: vec3f) -> vec3f {
   let d = p1 - p0;
@@ -233,11 +209,8 @@ fn n_sizef() -> vec3f {
 
 // Fraction d'O₂ de référence : en dessous, la flamme faiblit puis s'étouffe.
 const O2_REF = 0.25;
-// Stœchiométrie : O₂ consommé par unité de carburant brûlé — RÉGLABLE
-// (`chem.x`, défaut 0,55 = le comportement historique, au bit près).
-fn o2_per_fuel() -> f32 {
-  return P.chem.x;
-}
+// Stœchiométrie : O₂ consommé par unité de carburant brûlé.
+const O2_PER_FUEL = 0.55;
 
 fn inv_n() -> vec3f {
   return vec3f(1.0) / n_sizef();
@@ -317,7 +290,7 @@ fn correct(@builtin(global_invocation_id) gid: vec3u) {
   let oxy_factor = clamp(o2 / O2_REF, 0.0, 1.0);
   let ignite = smoothstep(0.28, 0.55, val.w);
   let burn = min(val.z * P.emit_meta.y * dt * ignite, val.z) * oxy_factor;
-  o2 -= o2_per_fuel() * burn;
+  o2 -= O2_PER_FUEL * burn;
   val.z -= burn;
   val.w = min(val.w + P.emit_meta.z * burn, 1.9);
   val.x += 0.35 * burn;
@@ -351,15 +324,7 @@ fn correct(@builtin(global_invocation_id) gid: vec3u) {
     // Le CARBURANT est émis froid : pour l'embraser, il faut l'amener au contact
     // d'une flamme (chaleur d'un autre panache, souffle...). Émission de chaleur
     // pour les autres matières uniquement.
-    //
-    // ET CETTE CHALEUR DEMANDE DE L'AIR. Un émetteur chaud EST une combustion —
-    // un bec, une mèche. Tant que sa chaleur était injectée sans condition, il
-    // rougeoyait dans le vide : sous une cloche privée d'oxygène la flamme ne
-    // pouvait pas mourir, puisque sa source de chaleur, elle, ne mourait pas.
-    // C'est le facteur qui manquait pour que l'étouffement soit une CONSÉQUENCE
-    // et non une mise en scène. Sans effet ailleurs : `oxy_factor` sature à 1
-    // dès un quart d'oxygène, et l'air par défaut est à 1 partout.
-    let heat_rate = select(P.emit_vals.x * oxy_factor, 0.0, ink == 2u);
+    let heat_rate = select(P.emit_vals.x, 0.0, ink == 2u);
     val = vec4f(
       val.xyz + inject * (P.emit_vals.y * dt * g),
       val.w + heat_rate * dt * g,
@@ -425,7 +390,7 @@ fn correct(@builtin(global_invocation_id) gid: vec3u) {
   // première version à suie invisible). Une bougie brûle du carburant dilué :
   // propre ; une charge concentre des unités de carburant sur une unité d'air :
   // elle noircit. Le même terme donne les deux.
-  let demande = val.z * o2_per_fuel();
+  let demande = val.z * O2_PER_FUEL;
   let manque = clamp(1.0 - o2 / max(demande, 1e-3), 0.0, 1.0);
   var soot = spec.y + P.soot.x * dt * val.z * ignite * manque;
   soot = soot / (1.0 + P.soot.y * dt);
@@ -444,13 +409,12 @@ fn correct(@builtin(global_invocation_id) gid: vec3u) {
 
   // UN SOLIDE NE CONTIENT PAS DE GAZ — même convention que les densités, qui
   // sont mises à zéro dans l'obstacle quelques lignes plus haut. Sans cela les
-  // cellules de la PAROI gardent leur oxygène initial (1,0) pour toujours :
+  // cellules de l'obstacle gardent leur oxygène initial (1,0) pour toujours :
   // rien ne les consomme, et l'échantillonnage trilinéaire des cellules
-  // voisines les mélange dans la cavité. La paroi devient un RÉSERVOIR D'AIR
-  // INFINI, et une cloche scellée ne s'étouffe jamais.
-  // MESURÉ (`__sim3d.sampleOxygen`) : O₂ moyen sous cloche plafonnait à 0,53,
-  // et RÉTRÉCIR la cavité de 3,6× ne changeait rien — la source ne suivait pas
-  // le VOLUME mais la SURFACE, ce qui désignait la paroi.
+  // voisines le réinjecte dans le fluide — un obstacle devient un RÉSERVOIR
+  // D'AIR INFINI. Mesuré au chantier obstacles : l'air d'une poche fermée
+  // plafonnait au lieu de s'épuiser, et rétrécir la poche n'y changeait rien
+  // (la source suivait la SURFACE, pas le volume).
   if (solid_sd(center) < 0.0) {
     textureStore(oxy_dst, gid, vec4f(0.0));
     return;
