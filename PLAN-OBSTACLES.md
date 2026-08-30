@@ -246,3 +246,33 @@ groups pré-créés, mots réservés WGSL (from, target, move, smooth, ref, acti
   n'ai pas pu écarter — la SAISIE au pointeur teste encore l'englobante (dette
   connue de J0 : on attrape la cloche par son trou), et rien n'empêche de la
   traîner hors de la boîte.
+
+- **LE BROUILLARD (2026-08-30, capture de Renaud : « j'ai juste déplacé 2-3
+  trucs et tout explose »).** Sa capture montrait la boîte ENTIÈRE noyée dans
+  un voile beige — mais à 44 FPS, avec un rendu cohérent et aucun NaN. Ce
+  n'était donc PAS une divergence numérique, et c'est ce détail qui a orienté :
+  une explosion de solveur ne laisse pas une image propre.
+  **LA CAUSE, et elle était dans mon preset, pas dans le moteur** :
+  `oxygenRecover: 0`. Je l'avais mis pour que la cloche s'étouffe — mais ce
+  réglage est GLOBAL. Il affamait la boîte entière, donc la flamme brûlait en
+  manque d'air en PERMANENCE, et une flamme en manque d'air fabrique de la
+  SUIE (c'est le terme `manque` d'advect_density3d, exactement ce pour quoi il
+  a été écrit). Au bout d'une minute, la suie remplit tout. Il suffisait de
+  déplacer la cloche pour que le feu ne soit plus confiné et que la production
+  parte dans tout le domaine.
+  **Le correctif est celui qu'on n'aurait pas pu faire avant** : le monde
+  retrouve sa récupération d'oxygène normale (le défaut), et c'est la CLOCHE
+  qui isole — ce qui n'était vrai que depuis que les solides ne stockent plus
+  de gaz. Mesuré : sous cloche l'O₂ tombe quand même à **0,047** (le seuil de
+  bridage est 0,25) pendant que le monde reste à 0,95. Plus `sootFade: 0,25`,
+  pour que la suie produite puisse disparaître.
+  **Le prix, assumé et mesuré** : la flamme sous cloche FAIBLIT au lieu de
+  s'éteindre tout à fait (0,047 → 19 % de puissance, un orange terne au lieu
+  du rouge sombre qu'on avait avec le monde asphyxié). Pousser la
+  stœchiométrie ne change rien à ce plancher (essayé à 22 : identique — à ce
+  stade la flamme est limitée par le CARBURANT, plus par l'air). Une scène
+  robuste vaut mieux qu'une mort spectaculaire qui empoisonne la boîte.
+  Vérifié : 100 secondes avec la cloche déplacée, boîte PROPRE, 60 FPS.
+  **LEÇON** : un réglage de scène qui porte sur le MONDE ENTIER pour obtenir
+  un effet LOCAL finit toujours par se payer ailleurs. La bonne façon d'isoler
+  une région, c'est une frontière — pas un réglage global.

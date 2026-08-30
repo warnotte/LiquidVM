@@ -164,7 +164,14 @@ const TUNE_BELL: Partial<Sim3Tuning> = {
   // (pas de `night` ici : `applyPreset` PRÉSERVE la prise de vue à dessein —
   // un point de vue n'est pas une propriété de la scène. Le mettre serait un
   // mensonge silencieux, la valeur étant écrasée.)
-  oxygenRecover: 0,
+  // L'AIR DU MONDE SE RENOUVELLE NORMALEMENT (le défaut). Le mettre à ZÉRO
+  // était le vrai défaut de ce preset : il affamait la boîte ENTIÈRE, donc la
+  // flamme brûlait en manque d'air en permanence et fabriquait de la SUIE sans
+  // fin — au bout d'une minute la boîte est un brouillard beige, ce que Renaud
+  // a vu. Ce n'est pas la cloche qui doit étouffer le monde, c'est le monde qui
+  // doit rester normal et la CLOCHE qui isole : depuis que les solides ne
+  // stockent plus de gaz, la coquille tient réellement le gradient (mesuré).
+  oxygenRecover: SIM3_DEFAULTS.oxygenRecover,
   // Stœchiométrie POUSSÉE : à 0,55 (le défaut) l'air de la cloche tient près
   // d'une minute — l'étouffement existe mais ne se REGARDE pas. À 9 il tient
   // une dizaine de secondes, ce qui est la durée d'une expérience.
@@ -185,6 +192,9 @@ const TUNE_BELL: Partial<Sim3Tuning> = {
   expansion: 0,
   inkDissipation: 0.30,
   sootYield: 3,
+  // La suie produite doit pouvoir DISPARAÎTRE : c'est elle qui empâte une
+  // scène qui dure.
+  sootFade: 0.25,
   vorticityStrength: 10,
 };
 
