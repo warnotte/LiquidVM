@@ -68,6 +68,13 @@ fn solid_sd(p: vec3f) -> f32 {
   if (kind == 2) {
     return length(vec2f(length(q.xz) - r, q.y)) - r * R.shape.y;
   }
+  if (kind == 3) { // CLOCHE : coquille sphérique, OUVERTE PAR LE SOL —
+    // pas de plan de coupe : c'est le plancher de la boîte (déjà un mur de
+    // non-pénétration) qui ferme le bas. Le gaz est enfermé, la lumière
+    // non : le rendu la traite en VERRE (voir raymarch).
+    let rr = r * R.shape.z;
+    return abs(length(q) - rr) - rr * R.shape.y;
+  }
   return length(q) - r;
 }
 
@@ -79,6 +86,9 @@ fn solid_bound() -> f32 {
   }
   if (kind == 2) {
     return R.sphere.w * (1.0 + R.shape.y + 0.02);
+  }
+  if (kind == 3) {
+    return R.sphere.w * R.shape.z * (1.0 + R.shape.y) + 0.02;
   }
   return R.sphere.w * 1.02;
 }
@@ -173,7 +183,8 @@ fn vs_sparks(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -
   // Boule devant l'étoile : occultée.
   // OBSTACLE devant la particule : marche courte (16 pas suffisent — c'est une
   // occultation binaire, pas une image), bornée à l'englobante comme partout.
-  if (solid_hit_max(world, dir, dist, 16) < 1e8) {
+  // (le VERRE n'occulte pas : on voit les braises à travers la cloche)
+  if (i32(R.shape.x + 0.5) != 3 && solid_hit_max(world, dir, dist, 16) < 1e8) {
     brightness = 0.0;
   }
   if (brightness < 0.003) {

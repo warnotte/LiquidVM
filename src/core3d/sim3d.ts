@@ -137,6 +137,9 @@ export const OBSTACLE_SHAPES: readonly {
   // Tore d'axe vertical : petit rayon 0,38 R. Le panache le TRAVERSE — c'est la
   // preuve à l'image qu'un obstacle peut avoir un trou.
   { label: '🍩 tore', params: [0.38, 0, 0] },
+  // CLOCHE de verre : coquille de rayon 3,2 R (le rayon nominal est petit — il
+  // faut couvrir la flamme) et d'épaisseur 9 % de ce rayon. Le SOL ferme le bas.
+  { label: '🔔 cloche', params: [0.10, 2.1, 0] },
 ];
 
 const COMPUTE = GPUShaderStage.COMPUTE;

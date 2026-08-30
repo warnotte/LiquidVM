@@ -97,3 +97,38 @@ groups pré-créés, mots réservés WGSL (from, target, move, smooth, ref, acti
   **Dette connue** : la SAISIE au pointeur teste encore la sphère englobante —
   on attrape un tore par son trou. Sans gravité tant que les formes sont
   convexes-ish ; à traiter avec la cloche si elle gêne.
+
+- **J1 — EN COURS (2026-08-30). La cloche EST là ; l'étouffement ne l'est pas
+  encore.** Ce qui marche et est commité :
+   · **la forme** — coquille sphérique `abs(|q| − R) − e`, sans plan de coupe :
+     c'est le PLANCHER de la boîte (déjà un mur de non-pénétration) qui ferme
+     le bas. Poser le centre assez bas pour que la coquille traverse le sol
+     suffit à sceller. Élégant, et zéro paramètre de plus ;
+   · **le VERRE** — un obstacle qui arrête aussi les rayons cacherait
+     précisément ce qu'on veut montrer. La cloche ne tronque donc pas la marche
+     du raymarch : elle n'ajoute qu'un liseré (Fresnel simplifié) et un peu de
+     la lueur qu'elle capte, ne porte pas d'ombre au sol et n'occulte pas les
+     particules. On voit la flamme brûler DANS le verre — l'image est là.
+  Ce qui ne marche pas encore, et les deux leçons qui l'expliquent :
+   1. **PIÈGE DE BANC : poser l'obstacle AVANT le reset ne sert à rien.** Le
+      reset restaure la position par défaut (`processInteraction`), donc la
+      cloche flottait au-dessus de la flamme et la « mort par étouffement »
+      observée n'était qu'une flamme à l'air libre qui faiblissait. Poser
+      APRÈS, une frame plus tard. Même famille que la leçon des harnais qui
+      préparent la scène : c'est l'ORDRE des gestes qui mentait.
+   2. **Sans COMBUSTION, il n'y a rien à étouffer.** Le preset bougie émet de
+      la fumée CHAUDE, pas du carburant : l'oxygène n'est jamais consommé, et
+      la flamme brûle sous cloche indéfiniment (24 s vérifiées). Mais émettre
+      du carburant ne suffit pas non plus : il est émis FROID par conception,
+      et un émetteur seul ne peut pas à la fois le cracher et l'allumer — la
+      boîte se remplit alors de vapeur imbrûlée (capturé). L'étouffement
+      demande donc le montage de l'acte III de la démo : une FLAMME PILOTE
+      (encre 0, chaude) + un émetteur de CARBURANT, la nappe portée vers la
+      flamme. C'est un travail de SCÉNARIO, pas de moteur.
+  À reprendre par là. Les deux témoins du banc (`cdp-cloche.mjs` du
+  scratchpad : sans cloche · cloche qui fuit) sont écrits et prêts — sans eux
+  une flamme qui meurt ne prouverait rien.
+  **À surveiller** : 25-26 FPS mesurés dans ces scènes contre 60 ailleurs.
+  Probablement la BOÎTE PLEINE de vapeur (le raymarch paie chaque voxel non
+  vide — leçon documentée des braises), pas la cloche ; à vérifier au
+  profileur avant de conclure quoi que ce soit.

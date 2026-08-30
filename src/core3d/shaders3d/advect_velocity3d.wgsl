@@ -114,6 +114,13 @@ fn solid_sd(p: vec3f) -> f32 {
   if (kind == 2) { // TORE d'axe vertical : grand rayon r, petit rayon r × y
     return length(vec2f(length(q.xz) - r, q.y)) - r * P.shape.y;
   }
+  if (kind == 3) { // CLOCHE : coquille sphérique, OUVERTE PAR LE SOL —
+    // pas de plan de coupe : c'est le plancher de la boîte (déjà un mur de
+    // non-pénétration) qui ferme le bas. Le gaz est enfermé, la lumière
+    // non : le rendu la traite en VERRE (voir raymarch).
+    let rr = r * P.shape.z;
+    return abs(length(q) - rr) - rr * P.shape.y;
+  }
   return length(q) - r; // SPHÈRE
 }
 
