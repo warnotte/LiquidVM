@@ -57,10 +57,11 @@ par la fumée. Coût mesuré nul quand coupées.
 
 **Autour** : presets un-clic (bougie / fournaise / fumée épaisse / vent — ce
 dernier allume un vent horizontal au cap oscillant, coupé par défaut), mode démo
-chorégraphié en six actes (`D` — une bougie dans le noir, les trois matières,
+chorégraphié en sept actes (`D` — une bougie dans le noir, les trois matières,
 le souffle qui embrase la nappe de carburant, la fournaise, une salve de
-détonations montée en cuts, puis un barrage et un champignon tirés en
-extérieur ; chaque acte a SA lumière — nuit, atelier ou plein jour ; rendu
+détonations montée en cuts, un barrage et un champignon tirés en extérieur,
+puis l'atelier : un chalumeau couché dont l'aspirateur boit la fumée ; chaque
+acte a SA lumière — nuit, atelier ou plein jour ; rendu
 verrouillé à 100 % pendant le spectacle, vos réglages restaurés en sortie),
 export
 OpenVDB (`E`, validé dans Blender, jusqu'à 512³), panneau de réglages déclaratif
@@ -75,7 +76,7 @@ readback en boucle de frame, `src/core3d/` portable sans DOM.
 | `1`/`2`/`3` | encre de l'émetteur : fumée / encre / carburant |
 | `A` / `X` | ajouter un émetteur sous le pointeur (max 4) / retirer le dernier |
 | `O` / `B` / `F` | boule-obstacle / braises / retours visuels (dont les gizmos des champs) |
-| panneau → champs de force | poser un tourbillon ou un vent local dans la scène, puis le glisser |
+| panneau → champs de force | poser un tourbillon, un vent local ou un ASPIRATEUR dans la scène, puis le glisser |
 | `D` / `E` / `R` / `Espace` | démo / export .vdb / reset / pause |
 
 ## Liquide 3D (`eau.html`)

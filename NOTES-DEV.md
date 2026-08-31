@@ -1150,6 +1150,16 @@ particules. Quand une limite n'apparaît qu'en WARNING console, écouter
       la boule fraîche est enfin une source, pas une tache claire.
   Vérifié en jouant la démo EN CONTINU (pas de saut d'horloge, pour voir les
   transitions), dix plans capturés en lisant `__demo3d.t`, 60 FPS.
+  **ACTE VII — L'ATELIER (2026-08-31)** : la boucle se referme sur les deux
+  outils du jour — une TORCHE COUCHÉE (émetteur orientable, impulsion 210)
+  nourrit la pièce en travers, l'ASPIRATEUR posé en face avale son panache,
+  de nuit, braises au vent (104 → 126 s, boucle allongée en conséquence).
+  Deux règles de montage réapprises ici : la POSE vient un temps APRÈS le
+  reset (le reset balaie émetteurs et champs — même mécanique que les
+  charges), et elle vit dans son PROPRE `at()` : `?demo=<s>` rejoue les actes
+  antérieurs en un tick, une pose qui partagerait le tick du reset serait
+  effacée en démarrant au milieu de l'acte. Tour 2 vérifié : l'acte I
+  revient propre (nuit de l'acte I, torche et aspirateur balayés).
 
 ## Articulation des trois modes — ANALYSE, PLUS UNE FEUILLE DE ROUTE
 

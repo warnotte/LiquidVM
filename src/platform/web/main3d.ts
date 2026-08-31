@@ -169,7 +169,7 @@ const PRESETS: readonly {
 
 /**
  * Mode DÉMO (touche D ou ?demo) : chorégraphie scriptée du moteur — le showcase.
- * SIX actes, ~107 s : bougie → trois matières → le souffle qui embrase la nappe
+ * SEPT actes, ~126 s : bougie → trois matières → le souffle qui embrase la nappe
  * de carburant → fournaise (braises, boule en lemniscate) → BOMBARDEMENT monté
  * en CUTS, trois charges SUPERPOSÉES par plan (les charges multiples : une
  * boule fraîche vit à côté du nuage qui noircit ; le montage garde sa raison
@@ -529,9 +529,46 @@ class DemoDriver {
     });
     this.at(83.2, () => this.boomAt(0.5, input.explosionHeight, 0.5));
     this.at(93, () => this.act({ speed: 0.06, elevation: 0.22, radius: 2.65 }));
-    // Boucle — l'acte I ramène l'atelier (apply() remet outdoor à faux). Le
-    // chapeau se disperse vers 103 : ne pas laisser dix secondes de ciel vide.
-    if (this.t > 107) {
+    // ACTE VII — L'ATELIER DU FEU (2026-08-31) : retour au noir après l'épique.
+    // Deux outils qui n'existaient pas la veille : une TORCHE COUCHÉE (émetteur
+    // orientable, impulsion de chalumeau) nourrit la pièce en travers, et
+    // l'ASPIRATEUR posé en face avale son panache — le puits de divergence
+    // fabrique l'appel d'air, la fumée spirale dans la bouche et disparaît.
+    // C'est l'acte CONTEMPLATIF qui referme la boucle : après le champignon,
+    // deux objets qui se répondent dans une pièce sombre.
+    this.at(104, () => {
+      this.apply({
+        night: true,
+        emitHeat: 3.4,
+        emitInkRate: 1.6,
+        emitImpulse: 210,
+        inkDissipation: 0.28,
+      });
+      input.embersOn = true;
+      input.glowStrength = 2.0;
+      input.reset = true;
+      this.act({ speed: 0.05, elevation: 0.15, radius: 1.95 });
+      input.feedback = true;
+      this.toast("Acte VII — l'atelier : le chalumeau, et l'aspirateur qui boit sa fumée");
+      // Repères coupés APRÈS le toast (le narrateur passe par feedback) : de
+      // nuit ils sont des néons, leçon de l'acte I.
+      input.feedback = false;
+    });
+    // La POSE vient UN TEMPS APRÈS le reset : le reset ramène les émetteurs à
+    // un et vide les champs — tout ce qu'on placerait dans le même geste
+    // serait écrasé (piège payé au chantier obstacles, même mécanique que
+    // bellIn). Et par construction de `?demo=<s>` les actes antérieurs se
+    // rejouent en UN tick : si la pose partageait le tick du reset, démarrer
+    // la démo au milieu de l'acte l'effacerait aussi.
+    this.at(104.5, () => {
+      this.sim.addEmitterAt(0.18, 0.3, 0.5, 0, 1, 0, 0.15);
+      this.sim.addFieldAt(0.72, 0.34, 0.55, 2, 15, 0.15);
+      this.sim.deselect();
+    });
+    // Boucle — l'acte I ramène l'atelier (apply() remet outdoor et night à
+    // faux). L'atelier vit ~22 s : le duo s'installe en cinq secondes et
+    // tourne en régime — assez pour le lire, pas assez pour s'en lasser.
+    if (this.t > 126) {
       input.feedback = this.saved?.feedback ?? true;
       input.reset = true;
       this.t = 0;
