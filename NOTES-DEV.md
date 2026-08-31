@@ -1288,6 +1288,63 @@ et une décision explicite. Se souvenir, si réouverture : mesurer au PROFILEUR,
 plus aux toggles ; les gains de rendu se jugent sur une scène DENSE (le panache
 par défaut a trop peu de pas occupés).
 
+Le PORTAGE NATIF (Vulkan / wgpu-rs) est **ÉVALUÉ ET CLASSÉ** (décision du
+2026-09-01) : mesuré, pas raisonné, et le verdict est NON — pas comme chantier
+de performance. Le chiffre qui tranche : **le défaut est 256³, et il tourne à
+60 FPS.** Tout ce qui suit ne concerne que 384³, une résolution qu'il faut aller
+choisir, et dont l'entrée précédente accepte déjà les 25 FPS.
+
+Ce qu'une sonde wgpu 30 a MESURÉ sur la machine de référence (5070 Ti, pilote
+NVIDIA 610.62, trois passages stables à ±0,5 %) :
+
+- Le natif ajoute bien ce que WebGPU refuse : `r16float` et `rg16float` passent
+  de « pas même utilisable en storage » à storage complet, READ_WRITE compris,
+  et `rgba16float` gagne le read_write (vitesse et densités en place seraient
+  ouvertes aussi). Vérifié À L'EXÉCUTION, pas seulement dans les capability
+  bits. Le commentaire de `sim3d.ts:231` — « r32float est le seul format où cet
+  accès est garanti par WebGPU » — reste exact : c'est une limite d'API, pas de
+  matériel.
+- Le lisseur rouge-noir 7 points (calqué sur `multigrid3d.wgsl`) à 384³ :
+  r32float 1,77 ms/balayage → r16float 1,22, soit **×1,45**. Extrapolé au poste
+  pression : 13,7 → ~9,4 ms, soit **−4,3 ms sur les 39 de frame**, ~29 FPS au
+  lieu de 25. ONZE POUR CENT, contre une réécriture de 9 000 lignes et la perte
+  de la démo web. Le ×2,3 reste hors d'atteinte par cette voie.
+- Le f16 ne rend PAS le ×2 idéal. Au témoin de streaming pur, r32float tient
+  764 Go/s (85 % du théorique — le système mémoire est sain) et le f16 ne gagne
+  que ×1,41 : passé un certain débit, on cesse d'être limité par les octets.
+- **PIÈGE DE BANC, payé une fois.** La première version de la sonde donnait
+  l'INVERSE (le f16 plus lent). Cause : volumes laissés à zéro — la compression
+  mémoire du GPU sur des pages nulles gonfle le r32float et fausse tout. Bruit
+  haché ré-injecté avant chaque lot, et les chiffres se retournent. Vaut pour
+  toute mesure de bande passante à venir, ici comme dans le navigateur.
+- Réserve numérique JAMAIS LEVÉE : le f16 sur la pression peut casser la
+  convergence (~3 chiffres significatifs, et dans un multigrid la correction
+  fine est petite devant la pression accumulée). L'usage est mixte — correction
+  en f16, solution accumulée et niveaux grossiers en f32. Le ×1,45 est un
+  PLAFOND, pas un acquis ; la jauge du panache couché trancherait.
+
+DEUX PISTES SURVIVENT, et aucune ne demande de quitter `src/` :
+
+1. Chrome sur Windows fait tourner Dawn sur **D3D12**. Sur la même passe, le
+   backend Vulkan est **×1,16** (2,05 → 1,77 ms). Un flag de Dawn
+   (`--use-webgpu-adapter=vulkan`, à confirmer) testerait ça en dix minutes et
+   zéro ligne de code. Indice, pas preuve : le chemin D3D12 de wgpu n'est pas
+   celui de Dawn.
+2. `texture-formats-tier1` ajoute r16float en storage CÔTÉ WEBGPU. Si Chrome
+   l'expose, le ×1,45 se prend dans le navigateur sans rien porter du tout — un
+   `createTexture` suffit à le savoir.
+
+Les deux ne valent que si l'envie de pousser 384³ revient. Sinon, elles attendent.
+
+QUAND ROUVRIR : jamais pour des FPS. Seulement pour un PLAFOND que le navigateur
+interdit — 768³, un rendu hors-ligne à plusieurs secondes par image, ou Nsight
+parce qu'une piste structurelle (tuiles creuses, échantillons partagés entre
+faces) mérite enfin d'être instrumentée au lieu d'être tentée à l'aveugle. Le
+jour venu : **wgpu-rs, pas Vulkan brut** (il exécute le WGSL tel quel, et
+`src/core3d/` est déjà sans DOM — il ne tient à `src/core/` que par
+`createShaderModule`/`withValidation` et `flip`/`Pair`/`PingIndex`) ; et **Dawn
+natif ne donne PAS le f16 read_write**, il garde la validation WebGPU.
+
 Pistes restantes, côté feu : test smartphone (1024², limites WebGPU mobiles) —
 refusé par Renaud pour l'instant, ne pas re-proposer sans qu'il le relance.
 Faites et donc parties d'ici : l'ASPIRATEUR (2026-08-31, entrée « champs de
