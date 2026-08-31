@@ -45,8 +45,12 @@ forme de Fedkiw annule déjà la conversion monde→voxels ; le lui ajouter fabr
 tourbillon parasite à 384³ et au-delà), combustion à trois réactifs (carburant / chaleur / **oxygène** — une flamme
 s'étouffe en vase clos, le souffle la ravive) avec expansion volumique au front de
 flamme et refroidissement radiatif T⁴, trois encres colorées, sphère-obstacle
-déplaçable à condition de bord mobile (elle brasse le fluide), multi-émetteurs,
-souffle au pointeur.
+déplaçable à condition de bord mobile (elle brasse le fluide), obstacles de
+FORME quelconque (sphère / boîte / tore — distance signée partagée par toutes
+les passes, la sphère reste le cas exact), multi-émetteurs ORIENTABLES (le jet
+suit l'axe de chacun), champs de force posables (tourbillon, vent local, et
+l'ASPIRATEUR — un puits de divergence : la projection fabrique l'appel d'air
+et la fumée disparaît dans la bouche), souffle au pointeur.
 
 **Rendu** : ray-marching HDR (Beer-Lambert, corps noir), **éclairage volumétrique**
 — la flamme éclaire sa propre fumée via un volume de lueur diffusé, flaque de
@@ -74,7 +78,8 @@ readback en boucle de frame, `src/core3d/` portable sans DOM.
 | clic droit + glisser | souffler (fuseau lumineux le long du rayon) |
 | molette | zoom |
 | `1`/`2`/`3` | encre de l'émetteur : fumée / encre / carburant |
-| `A` / `X` | ajouter un émetteur sous le pointeur (max 4) / retirer le dernier |
+| `A` / `X` | ajouter un émetteur sous le pointeur (max 4) / retirer le désigné |
+| bouton violet d'un objet sélectionné | ORIENTER : un émetteur devient un jet dirigé (chalumeau — monter « jet : poussée »), un champ change d'axe |
 | `O` / `B` / `F` | boule-obstacle / braises / retours visuels (dont les gizmos des champs) |
 | panneau → champs de force | poser un tourbillon, un vent local ou un ASPIRATEUR dans la scène, puis le glisser |
 | `D` / `E` / `R` / `Espace` | démo / export .vdb / reset / pause |

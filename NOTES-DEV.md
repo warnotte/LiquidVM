@@ -683,8 +683,10 @@ particules. Quand une limite n'apparaît qu'en WARNING console, écouter
   dans le raymarch (bleu = tourbillon, ambre = vent), coupée avec les retours
   visuels (F). La zone de SAISIE suit le rayon visible du champ (même bonus que la
   boule) : sans ça on cliquait sur le gizmo sans rien attraper. Étendre à un
-  nouveau type = un cas dans `field_force` (forces3d.wgsl) et une entrée dans
-  FIELD_NAMES.
+  nouveau type = un cas dans `field_force` (advect_velocity3d.wgsl — forces3d
+  a été fusionné dans le correcteur en 2026-08-28) et une entrée dans
+  FIELD_NAMES ; s'il agit par la DIVERGENCE et non par une force (l'aspirateur),
+  le cas vit dans project3d.wgsl.
   ⚠️ **`grabbed` est un index TAGUÉ** (−2 rien · −1 boule · 0..n émetteur ·
   100+i champ). Un `grabbed >= 0` naïf attrape aussi les champs : c'est le bug
   de l'écran noir du 2026-08-24 — l'encre était appliquée à `emitters[100]`,
@@ -711,7 +713,8 @@ particules. Quand une limite n'apparaît qu'en WARNING console, écouter
   Blender — donne le rayon d'action et se lit sous tout angle) et un axe fléché
   qui donne l'ORIENTATION. Le champ ACTIF passe en blanc opaque : la sélection
   se voit. Uniforme : deux vec4 par champ à partir du slot 36 de `renderData`
-  (centre monde + rayon monde ; axe unitaire + type, +2 si actif).
+  (centre monde + rayon monde ; axe unitaire + type, +4 si actif — +2 est
+  devenu ambigu au troisième type de champ, 2026-08-31).
   Mots réservés WGSL rencontrés ici : **`ref`** et **`active`** — la famille
   compte maintenant `from`, `target`, `move`, `smooth`, `ref`, `active`.
   **Trois familles de repères (2026-08-25)**, dans cet ordre le long de
@@ -1285,13 +1288,13 @@ et une décision explicite. Se souvenir, si réouverture : mesurer au PROFILEUR,
 plus aux toggles ; les gains de rendu se jugent sur une scène DENSE (le panache
 par défaut a trop peu de pas occupés).
 
-Pistes restantes, côté feu : test smartphone (1024², limites WebGPU mobiles) ·
-un modificateur « ASPIRATEUR », jamais écrit — un champ radial est annulé par
-la projection (leçon payée), mais aspirer n'est pas une FORCE radiale : c'est
-un PUITS DE DIVERGENCE, et le moteur sait déjà en poser (l'expansion de
-combustion en est une source, au signe près). Faites et donc parties d'ici :
-charges multiples (2026-08-29), qualité du confinement (|ω| flouté,
-2026-08-24), encres colorées (2026-08-21).
+Pistes restantes, côté feu : test smartphone (1024², limites WebGPU mobiles) —
+refusé par Renaud pour l'instant, ne pas re-proposer sans qu'il le relance.
+Faites et donc parties d'ici : l'ASPIRATEUR (2026-08-31, entrée « champs de
+force » du chantier 3D — c'était bien un puits de divergence, pas une force),
+les émetteurs orientables (2026-08-31), les charges multiples (2026-08-29),
+la qualité du confinement (|ω| flouté, 2026-08-24), les encres colorées
+(2026-08-21).
 
 **FEUX D'ARTIFICE COLORÉS — FAITS, puis RANGÉS.** Ce paragraphe décrivait
 pendant un jour « ce qu'il faudrait » ; tout a été construit le 2026-08-30
